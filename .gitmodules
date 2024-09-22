@@ -1,0 +1,3 @@
+[submodule "Hd"]
+	path = Hd
+	url = git@github.com:hdinc/Hd/
