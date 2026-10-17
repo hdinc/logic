@@ -1,0 +1,20 @@
+BasedOnStyle: WebKit
+IndentWidth: 4
+SortIncludes: false
+# AlignArrayOfStructures: Right
+#AlignConsecutiveAssignments: Consecutive
+#AlignConsecutiveBitFields: Consecutive
+#AlignConsecutiveDeclarations: Consecutive
+AlignConsecutiveMacros: Consecutive
+#AlignEscapedNewlines: Left
+#AlignOperands: Align
+#AlignTrailingComments: true
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortEnumsOnASingleLine: true
+IndentPPDirectives: BeforeHash
+ColumnLimit: 0
+Cpp11BracedListStyle: true
+SpaceBeforeCpp11BracedList: false
+AlignAfterOpenBracket: BlockIndent
+NamespaceIndentation: None

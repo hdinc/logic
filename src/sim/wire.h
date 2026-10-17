@@ -1,7 +1,6 @@
 #pragma once
 
 #include <glm/glm.hpp>
-#include "../draw/draw.h"
 
 class wire {
 public:
@@ -17,8 +16,6 @@ public:
     bool operator==(const wire& other) {
         return p1 == other.p1 && p2 == other.p2;
     }
-
-    void draw(drawer& d);
 
 public:
     glm::ivec2 p1;
