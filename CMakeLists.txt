@@ -1,54 +1,52 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.20)
 
-project(logic)
+project(logic CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_subdirectory(Hd)
 
+find_package(glm REQUIRED)
+find_package(nlohmann_json REQUIRED)
+
+set(LOGIC_WARNINGS -Wall -Wextra -Wpedantic -Wsuggest-override -Wno-sign-compare)
+
+# data model and file io, no gui or opengl dependencies
+add_library(logic_core STATIC
+    src/model/types.cpp
+    src/model/symbol.cpp
+    src/model/schematic.cpp
+    src/model/cell.cpp
+    src/model/library.cpp
+    src/model/workspace.cpp
+    src/io/json.cpp
+    src/io/storage.cpp
+)
+target_include_directories(logic_core PUBLIC src)
+target_link_libraries(logic_core PUBLIC glm::glm nlohmann_json::nlohmann_json)
+target_compile_options(logic_core PRIVATE ${LOGIC_WARNINGS})
+
 add_executable(logic
-    # src/draw/draw.cpp
-    # src/draw/grid.cpp
-    # src/draw/bezier.cpp
-    # src/draw/text.cpp
-    # src/sheet.cpp
-    # src/ui_elements/ui_element.cpp
-    # src/ui_elements/anchor.cpp
-    # src/ui_elements/pin.cpp
-    # src/ui_elements/line.cpp
-    # src/ui_elements/spline.cpp
-    # src/sim/circuit.cpp
-    # src/sim/wire.cpp
-    # src/sim/gate.cpp
-    # src/sim/gates/and_gate.cpp
-    # src/sim/gates/nand_gate.cpp
-    # src/sim/gates/or_gate.cpp
-    # src/sim/gates/input_gate.cpp
-    # src/sim/gates/output_gate.cpp
-    # src/sim/net.cpp
-    # src/sim/pin.cpp
-
     src/main.cpp
-    src/logic.cpp
-    src/editor/editor.cpp
-    src/editor/item.cpp
-    src/editor/symbol.cpp
-    src/editor/circuit_editor/circuit_editor.cpp
-    src/editor/circuit_editor/wire.cpp
-    src/editor/circuit_editor/port.cpp
-    src/editor/circuit_editor/component.cpp
-    src/editor/symbol_editor/symbol_editor.cpp
-    src/editor/symbol_editor/control_point.cpp
-    src/editor/symbol_editor/pin.cpp
-    src/editor/symbol_editor/line.cpp
-    src/editor/symbol_editor/bezier.cpp
-    src/editor/symbol_editor/text.cpp
-    src/editor/symbol_editor/circle.cpp
-
-
+    src/app/app.cpp
+    src/render/renderer.cpp
+    src/editor/canvas.cpp
+    src/editor/schematic_editor.cpp
+    src/editor/symbol_editor.cpp
+    src/editor/cell_editor.cpp
 )
 
 include(Hd/cmake/resource.cmake)
 add_resource_dir(logic res)
 
-target_link_libraries(logic Hd)
+target_link_libraries(logic logic_core Hd)
+target_compile_options(logic PRIVATE ${LOGIC_WARNINGS})
+target_compile_definitions(logic PRIVATE LOGIC_DEFAULT_WORKSPACE="${CMAKE_SOURCE_DIR}/workspace")
 
-target_compile_options(logic PRIVATE -Wall -Wextra -Wpedantic -Wsuggest-override -Wno-sign-compare)
+enable_testing()
+
+add_executable(model_test tests/model_test.cpp)
+target_link_libraries(model_test logic_core)
+target_compile_options(model_test PRIVATE ${LOGIC_WARNINGS})
+add_test(NAME model_test COMMAND model_test ${CMAKE_CURRENT_BINARY_DIR})
