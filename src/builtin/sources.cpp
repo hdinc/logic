@@ -1,6 +1,7 @@
 #include "builder.h"
 #include "builtin.h"
 
+#include <cmath>
 #include <cstdio>
 #include <limits>
 
@@ -10,8 +11,6 @@ namespace {
 
 using model::direction;
 using model::grid;
-
-int round_up(int v, int step) { return (v + step - 1) / step * step; }
 
 // value shown on the symbol: the bit for width 1, hex otherwise
 std::string format_value(int64_t value, int width)
@@ -85,15 +84,18 @@ public:
         int width = (int)model::get_int(v, "width");
         auto str = format_value(model::get_int(v, "value"), width);
 
-        // the model has no font metrics, about 0.6 of the size per character
-        constexpr float size = 10.0f;
-        int text_w = (int)(str.size() * size * 0.6f);
-        int w = std::max(2 * grid, round_up(text_w + 6, grid));
+        // a box like an input port connector: 10 high, 15 from the pin,
+        // wider for longer values. the model has no font metrics, digits are
+        // about 0.55 of the size wide.
+        constexpr float size = 7.0f;
+        int text_w = (int)std::lround(str.size() * size * 0.55f);
+        int w = std::max(10, text_w + 4);
+        int right = grid - 15;
 
         builder b;
-        b.rect({-w, -grid}, {0, grid});
-        b.text({-w + (w - text_w) / 2, -4}, str, size);
-        b.line({0, 0}, {grid, 0});
+        b.rect({right - w, -5}, {right, 5});
+        b.text({right - w + (w - text_w) / 2, -2}, str, size);
+        b.line({right, 0}, {grid, 0});
         b.port("out", direction::output, width, {grid, 0});
         return b.finish();
     }
@@ -121,10 +123,11 @@ public:
 
     model::cell_interface build(const model::param_values&) const override
     {
+        // like an input port connector, wide enough for a pulse
         builder b;
-        b.rect({-3 * grid, -grid}, {0, grid});
-        b.polyline({{-26, -5}, {-20, -5}, {-20, 5}, {-12, 5}, {-12, -5}, {-4, -5}});
-        b.line({0, 0}, {grid, 0});
+        b.rect({-21, -5}, {-5, 5});
+        b.polyline({{-19, -3}, {-15, -3}, {-15, 3}, {-11, 3}, {-11, -3}, {-7, -3}});
+        b.line({-5, 0}, {grid, 0});
         b.port("clk", direction::output, 1, {grid, 0});
         return b.finish();
     }
