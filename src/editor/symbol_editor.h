@@ -2,7 +2,9 @@
 
 #include "canvas.h"
 #include "context.h"
+#include "tool.h"
 
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -11,14 +13,24 @@ namespace logic::editor {
 // edits the symbol of a cell: shapes and the pins that connect to its ports
 //
 //   left click/drag  select and move, drag on empty space for box select
-//   shift            add to selection
+//   shift            add to selection, keep drawing after a click
 //   p                place a pin, linked to the first port without a pin
 //   l / b / c        draw a line / bezier (two ends, then control) / circle
 //   t                place a text
 //   delete           delete selection
+//   esc              cancel the tool / clear selection
 //   g                toggle grid
 class symbol_editor {
 public:
+    enum class tool_kind {
+        select,
+        pin,
+        line,
+        bezier,
+        circle,
+        text,
+    };
+
     explicit symbol_editor(context ctx);
 
     // call every frame after view.set_mouse(). keys and clicks are handled only
@@ -30,9 +42,20 @@ public:
 
     void property_panel();
 
+    tool_kind current_tool() const { return kind; }
+    // ignored while the current tool is busy
+    void set_tool(tool_kind k);
+
+    // the current tool is in the middle of an operation, e.g. a drag
+    bool busy() const { return active->busy(); }
+
+    // after the cell was changed from outside, e.g. by undo
+    void cell_replaced() { validate_selection(); }
+
     canvas view;
 
-private:
+    // used by the tools
+
     struct handle {
         enum kind_t {
             point,
@@ -42,14 +65,6 @@ private:
         int index = 0; // point index for shapes
 
         bool operator==(const handle&) const = default;
-    };
-
-    enum class mode_t {
-        idle,
-        moving,
-        box_select,
-        add_pin,
-        add_shape,
     };
 
     // handles under the point, a shape's body yields all of its points
@@ -64,29 +79,23 @@ private:
     void select(const std::vector<handle>& hs, bool add);
 
     void move_selection(glm::ivec2 d);
+    void finish_move() {}
+    // pins live on the schematic grid, shapes on single units
+    int drag_step() const;
     void delete_selection();
     void validate_selection();
 
-    void begin_shape(model::shape s);
+    // draws a pin with the name of its port
+    void draw_pin(const model::pin& p, glm::vec4 color);
 
     context ctx;
     model::symbol& sym;
 
-    mode_t mode = mode_t::idle;
     std::vector<handle> selection;
 
-    glm::vec2 drag_start{0, 0};
-    glm::ivec2 drag_applied{0, 0};
-    int drag_step = 1;
-    bool drag_moved = false;
-    // drag started on empty space inside the selection bounds
-    bool drag_from_bounds = false;
-
-    glm::vec2 box_start{0, 0};
-
-    model::shape draft;
-    int draft_step = 0;
-    model::pin draft_pin;
+private:
+    tool_kind kind = tool_kind::select;
+    std::unique_ptr<tool<symbol_editor>> active;
 };
 
 }

@@ -2,7 +2,9 @@
 
 #include "canvas.h"
 #include "context.h"
+#include "tool.h"
 
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -11,15 +13,24 @@ namespace logic::editor {
 // edits the wires, instances and port connectors of a schematic cell
 //
 //   left click/drag  select and move, drag on empty space for box select
-//   shift            add to selection
-//   w                draw wires, click to add points, esc to finish
+//   shift            add to selection, keep placing after a click
+//   w                draw wires, click to add points, esc to end the wire
 //   i / o            place an input / output port
-//   space            place an instance (popup opened by the app)
+//   space            place an instance (popup opened by the cell editor)
 //   r                rotate selected instances or the one being placed
 //   delete           delete selection
+//   esc              cancel the tool / clear selection
 //   g                toggle grid
 class schematic_editor {
 public:
+    enum class tool_kind {
+        select,
+        wire,
+        input_port,
+        output_port,
+        place_instance,
+    };
+
     explicit schematic_editor(context ctx);
 
     // call every frame after view.set_mouse(). keys and clicks are handled only
@@ -31,14 +42,22 @@ public:
 
     void property_panel();
 
-    // starts placing an instance of the cell, follows the mouse until clicked
+    tool_kind current_tool() const { return kind; }
+    // ignored while the current tool is busy
+    void set_tool(tool_kind k);
+    // starts placing instances of the cell
     void begin_place(model::id cell);
 
-    bool is_idle() const { return mode == mode_t::idle; }
+    // the current tool is in the middle of an operation, e.g. a drag
+    bool busy() const { return active->busy(); }
+
+    // after the cell was changed from outside, e.g. by undo
+    void cell_replaced();
 
     canvas view;
 
-private:
+    // used by the tools
+
     struct handle {
         enum kind_t {
             port,
@@ -49,15 +68,6 @@ private:
         model::id id;
 
         bool operator==(const handle&) const = default;
-    };
-
-    enum class mode_t {
-        idle,
-        moving,
-        box_select,
-        place_instance,
-        place_port,
-        wire,
     };
 
     // handles under the point, a wire segment yields both of its endpoints
@@ -71,6 +81,8 @@ private:
     void select(const std::vector<handle>& hs, bool add);
 
     void move_selection(glm::ivec2 d);
+    void finish_move() { normalize(); }
+    int drag_step() const { return model::grid; }
     void delete_selection();
     void rotate_selection();
 
@@ -85,22 +97,13 @@ private:
     context ctx;
     model::schematic& sch;
 
-    mode_t mode = mode_t::idle;
     std::vector<handle> selection;
 
-    glm::vec2 drag_start{0, 0};
-    glm::ivec2 drag_applied{0, 0};
-    bool drag_moved = false;
-    // drag started on empty space inside the selection bounds
-    bool drag_from_bounds = false;
+private:
+    void set_tool(tool_kind k, std::unique_ptr<tool<schematic_editor>> t);
 
-    glm::vec2 box_start{0, 0};
-
-    model::instance placing;
-    model::port placing_port;
-
-    bool wire_started = false;
-    glm::ivec2 wire_start{0, 0};
+    tool_kind kind = tool_kind::select;
+    std::unique_ptr<tool<schematic_editor>> active;
 };
 
 }

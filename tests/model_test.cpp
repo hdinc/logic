@@ -3,6 +3,7 @@
 
 #include "../src/io/json.h"
 #include "../src/io/storage.h"
+#include "../src/model/history.h"
 #include "../src/model/workspace.h"
 
 #include <algorithm>
@@ -188,6 +189,62 @@ static void test_save_load(const std::filesystem::path& dir)
     std::filesystem::remove_all(dir);
 }
 
+static void test_history()
+{
+    model::cell c;
+    c.impl = model::schematic{};
+    model::history h(c);
+
+    CHECK(!h.can_undo());
+    CHECK(!h.commit(c));
+
+    c.add_port(model::direction::input, {0, 0});
+    CHECK(h.commit(c));
+    auto in = c.ports[0].id;
+    c.find_port(in)->name = "a";
+    CHECK(h.commit(c));
+
+    // uncommitted changes are undone too
+    c.get_schematic()->wires.push_back({c.new_id(), {0, 0}, {10, 0}});
+
+    CHECK(h.undo(c));
+    CHECK(c.get_schematic()->wires.empty());
+    CHECK(c.find_port(in)->name == "a");
+    CHECK(h.undo(c));
+    CHECK(c.find_port(in)->name != "a");
+    CHECK(h.undo(c));
+    CHECK(c.ports.empty());
+    CHECK(!h.undo(c));
+
+    CHECK(h.redo(c));
+    CHECK(c.ports.size() == 1);
+    CHECK(h.redo(c));
+    CHECK(c.find_port(in)->name == "a");
+    CHECK(h.redo(c));
+    CHECK(c.get_schematic()->wires.size() == 1);
+    CHECK(!h.redo(c));
+
+    // a change after undo drops the redo steps
+    CHECK(h.undo(c));
+    c.find_port(in)->width = 8;
+    CHECK(!h.redo(c));
+    CHECK(!h.can_redo());
+    CHECK(c.find_port(in)->width == 8);
+    CHECK(h.undo(c));
+    CHECK(c.find_port(in)->width == 1);
+
+    // old steps are dropped beyond the limit
+    model::cell d;
+    model::history small(d, 2);
+    for (int i = 0; i < 5; i++) {
+        d.add_port(model::direction::input, {0, i * 10});
+        small.commit(d);
+    }
+    CHECK(small.undo(d) && small.undo(d));
+    CHECK(!small.undo(d));
+    CHECK(d.ports.size() == 3);
+}
+
 int main(int argc, char** argv)
 {
     auto dir = std::filesystem::path(argc > 1 ? argv[1] : ".") / "model_test_workspace";
@@ -197,6 +254,7 @@ int main(int argc, char** argv)
     test_ports_and_check();
     test_generate_symbol();
     test_cycles();
+    test_history();
     test_save_load(dir);
 
     if (failures) {

@@ -78,6 +78,12 @@ void app::draw_gui()
     default_layout(dockspace);
 
     if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S)) save_all();
+
+    // text inputs have their own undo
+    if (auto e = find_editor(active_cell); e && !GetIO().WantTextInput) {
+        if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z)) e->undo();
+        if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y) || IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z)) e->redo();
+    }
     if (IsKeyPressed(ImGuiKey_F1)) show_demo = !show_demo;
     if (show_demo) ShowDemoWindow(&show_demo);
 
@@ -129,6 +135,13 @@ void app::menu_bar()
             EndMenu();
         }
 
+        if (BeginMenu("Edit")) {
+            auto e = find_editor(active_cell);
+            if (MenuItem("Undo", "Ctrl+Z", false, e && e->can_undo())) e->undo();
+            if (MenuItem("Redo", "Ctrl+Y", false, e && e->can_redo())) e->redo();
+            EndMenu();
+        }
+
         if (BeginMenu("Help")) {
             if (MenuItem("Keys")) open_help = true;
             MenuItem("ImGui demo", "F1", &show_demo);
@@ -143,9 +156,11 @@ void app::menu_bar()
         SeparatorText("Both editors");
         BulletText("Wheel: zoom, right drag: pan, G: grid, Tab: schematic/symbol");
         BulletText("Click/drag: select and move, drag on empty space: box select, Shift: add");
-        BulletText("Delete: delete selection, Esc: cancel / clear selection");
+        BulletText("Delete: delete selection, Esc: cancel tool / clear selection");
+        BulletText("Shift+click while placing: keep placing");
+        BulletText("Ctrl+Z: undo, Ctrl+Y / Ctrl+Shift+Z: redo, Ctrl+S: save all");
         SeparatorText("Schematic");
-        BulletText("W: wires (click points, Esc to finish)");
+        BulletText("W: wires (click points, Esc ends the wire, Esc again leaves the tool)");
         BulletText("I / O: input / output port, Space: place a cell, R: rotate");
         SeparatorText("Symbol");
         BulletText("P: pin, L: line, B: bezier, C: circle, T: text");

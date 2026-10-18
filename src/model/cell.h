@@ -18,6 +18,7 @@ struct port {
     // position of the port's connector inside the schematic. unused for cells
     // that are not implemented by a schematic.
     glm::ivec2 pos{0, 0};
+    bool operator==(const port&) const = default;
 };
 
 // where wires connect to the port's connector in the schematic
@@ -26,6 +27,7 @@ glm::ivec2 connection_point(const port& p);
 // cell implemented in c++ by the simulator, identified by kind
 struct builtin_impl {
     std::string kind;
+    bool operator==(const builtin_impl&) const = default;
 };
 
 using implementation = std::variant<schematic, builtin_impl>;

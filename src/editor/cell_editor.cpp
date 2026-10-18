@@ -1,11 +1,25 @@
 #include "cell_editor.h"
 
+#include <imgui_internal.h>
+
 #include <algorithm>
 #include <cctype>
 
 namespace logic::editor {
 
 namespace {
+
+// toggle look for the active tool
+bool tool_button(const char* label, const char* tip, bool active)
+{
+    using namespace ImGui;
+    if (active) PushStyleColor(ImGuiCol_Button, GetStyleColorVec4(ImGuiCol_ButtonActive));
+    bool clicked = Button(label);
+    if (active) PopStyleColor();
+    SetItemTooltip("%s", tip);
+    SameLine();
+    return clicked;
+}
 
 bool contains_ignore_case(const std::string& s, const std::string& sub)
 {
@@ -19,6 +33,7 @@ bool contains_ignore_case(const std::string& s, const std::string& sub)
 
 cell_editor::cell_editor(context c)
     : ctx(c)
+    , hist(c.cell)
     , schematic(c)
     , symbol(c)
 {
@@ -28,13 +43,7 @@ void cell_editor::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
 {
     using namespace ImGui;
 
-    int view = show_symbol ? 1 : 0;
-    RadioButton("Schematic", &view, 0);
-    SameLine();
-    RadioButton("Symbol", &view, 1);
-    SameLine();
-    TextDisabled("(tab to switch)");
-    show_symbol = view == 1;
+    toolbar();
 
     auto size = GetContentRegionAvail();
     size.x = std::min(size.x, (float)tex.GetWidth());
@@ -46,7 +55,7 @@ void cell_editor::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     InvisibleButton("canvas", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     bool hovered = IsItemHovered() && IsWindowFocused();
 
-    if (hovered && IsKeyPressed(ImGuiKey_Tab)) show_symbol = !show_symbol;
+    if (hovered && !busy() && IsKeyPressed(ImGuiKey_Tab)) show_symbol = !show_symbol;
 
     auto mouse = GetMousePos();
     glm::vec2 ndc{2.0f * (mouse.x - screen_pos.x) / size.x - 1.0f, 1.0f - 2.0f * (mouse.y - screen_pos.y) / size.y};
@@ -59,11 +68,7 @@ void cell_editor::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
         symbol.process_inputs(hovered);
     } else {
         schematic.process_inputs(hovered);
-        if (hovered && schematic.is_idle() && IsKeyPressed(ImGuiKey_Space)) {
-            search.clear();
-            focus_search = true;
-            OpenPopup("place");
-        }
+        if (hovered && !schematic.busy() && IsKeyPressed(ImGuiKey_Space)) open_place_popup();
     }
 
     fb.Bind((int)size.x, (int)size.y);
@@ -78,6 +83,98 @@ void cell_editor::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     Image((ImTextureID)tex.Id(), size, {0, size.y / tex.GetHeight()}, {size.x / tex.GetWidth(), 0});
 
     place_popup();
+
+    // one undo step per finished edit: not during a drag or while typing
+    // into a property
+    if (!busy() && !IsAnyItemActive()) hist.commit(ctx.cell);
+}
+
+void cell_editor::toolbar()
+{
+    using namespace ImGui;
+
+    int view = show_symbol ? 1 : 0;
+    RadioButton("Schematic", &view, 0);
+    SetItemTooltip("Tab to switch");
+    SameLine();
+    RadioButton("Symbol", &view, 1);
+    SetItemTooltip("Tab to switch");
+    SameLine();
+    if (!busy()) show_symbol = view == 1;
+
+    SeparatorEx(ImGuiSeparatorFlags_Vertical);
+    SameLine();
+
+    BeginDisabled(busy());
+    if (show_symbol) {
+        using k = symbol_editor::tool_kind;
+        auto t = symbol.current_tool();
+        if (tool_button("Select", "Select and move (Esc)", t == k::select)) symbol.set_tool(k::select);
+        if (tool_button("Pin", "Place a pin linked to a port (P)", t == k::pin)) symbol.set_tool(k::pin);
+        if (tool_button("Line", "Draw a line (L)", t == k::line)) symbol.set_tool(k::line);
+        if (tool_button("Bezier", "Draw a curve: both ends, then the control point (B)", t == k::bezier)) symbol.set_tool(k::bezier);
+        if (tool_button("Circle", "Draw a circle: center, then radius (C)", t == k::circle)) symbol.set_tool(k::circle);
+        if (tool_button("Text", "Place a text (T)", t == k::text)) symbol.set_tool(k::text);
+    } else {
+        using k = schematic_editor::tool_kind;
+        auto t = schematic.current_tool();
+        if (tool_button("Select", "Select and move (Esc)", t == k::select)) schematic.set_tool(k::select);
+        if (tool_button("Wire", "Draw wires, Esc ends a wire (W)", t == k::wire)) schematic.set_tool(k::wire);
+        if (tool_button("Input", "Place an input port (I)", t == k::input_port)) schematic.set_tool(k::input_port);
+        if (tool_button("Output", "Place an output port (O)", t == k::output_port)) schematic.set_tool(k::output_port);
+        if (tool_button("Cell...", "Place an instance of a cell (Space)", t == k::place_instance)) open_place_popup();
+    }
+    EndDisabled();
+
+    SeparatorEx(ImGuiSeparatorFlags_Vertical);
+    SameLine();
+
+    BeginDisabled(!can_undo());
+    if (Button("Undo")) undo();
+    EndDisabled();
+    SetItemTooltip("Ctrl+Z");
+    SameLine();
+    BeginDisabled(!can_redo());
+    if (Button("Redo")) redo();
+    EndDisabled();
+    SetItemTooltip("Ctrl+Y");
+
+    SameLine();
+    TextDisabled("Shift: keep placing");
+}
+
+void cell_editor::open_place_popup()
+{
+    search.clear();
+    focus_search = true;
+    ImGui::OpenPopup("place");
+}
+
+bool cell_editor::can_undo() const
+{
+    return !busy() && hist.can_undo();
+}
+
+bool cell_editor::can_redo() const
+{
+    return !busy() && hist.can_redo();
+}
+
+void cell_editor::undo()
+{
+    if (!busy() && hist.undo(ctx.cell)) after_undo();
+}
+
+void cell_editor::redo()
+{
+    if (!busy() && hist.redo(ctx.cell)) after_undo();
+}
+
+void cell_editor::after_undo()
+{
+    ctx.modified();
+    schematic.cell_replaced();
+    symbol.cell_replaced();
 }
 
 void cell_editor::place_popup()

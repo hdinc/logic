@@ -11,6 +11,7 @@ struct wire {
     model::id id = no_id;
     glm::ivec2 a;
     glm::ivec2 b;
+    bool operator==(const wire&) const = default;
 };
 
 // placement of a cell inside a schematic
@@ -20,6 +21,7 @@ struct instance {
     std::string name;
     glm::ivec2 pos{0, 0};
     transform xf;
+    bool operator==(const instance&) const = default;
 };
 
 struct schematic {
@@ -28,6 +30,7 @@ struct schematic {
 
     wire* find_wire(id i);
     instance* find_instance(id i);
+    bool operator==(const schematic&) const = default;
 };
 
 // merges overlapping collinear wires and splits wires at points where other

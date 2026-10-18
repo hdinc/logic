@@ -20,6 +20,7 @@ add_library(logic_core STATIC
     src/model/cell.cpp
     src/model/library.cpp
     src/model/workspace.cpp
+    src/model/history.cpp
     src/io/json.cpp
     src/io/storage.cpp
 )

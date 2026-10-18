@@ -42,20 +42,122 @@ float distance_to_shape(glm::vec2 p, const model::shape& s)
 
 glm::ivec2 round(glm::vec2 p) { return glm::ivec2(glm::round(p)); }
 
+// places a pin linked to the first port without a pin, shift keeps placing
+class pin_tool : public tool<symbol_editor> {
+public:
+    void update(symbol_editor& e, bool hovered) override
+    {
+        using namespace ImGui;
+
+        preview.pos = model::snap(e.view.mouse_world(), model::grid);
+        preview.port = model::no_id;
+        for (auto& p : e.ctx.cell.ports) {
+            if (!e.sym.find_pin_of_port(p.id)) {
+                preview.port = p.id;
+                break;
+            }
+        }
+        if (!hovered) return;
+
+        if (IsKeyPressed(ImGuiKey_Escape)) {
+            done = true;
+        } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
+            auto p = preview;
+            p.id = e.ctx.cell.new_id();
+            e.sym.pins.push_back(p);
+            e.selection = {{symbol_editor::handle::pin, p.id}};
+            e.ctx.modified();
+            done = !GetIO().KeyShift;
+        }
+    }
+
+    void draw(symbol_editor& e) override { e.draw_pin(preview, render::colors::preview); }
+
+private:
+    model::pin preview;
+};
+
+// draws a shape by clicking its points in order, shift keeps drawing
+class shape_tool : public tool<symbol_editor> {
+public:
+    explicit shape_tool(model::shape s)
+        : proto(std::move(s))
+        , draft(proto)
+    {
+    }
+
+    void update(symbol_editor& e, bool hovered) override
+    {
+        using namespace ImGui;
+
+        // points not placed yet follow the mouse
+        for (int i = step; i < model::point_count(draft); i++)
+            model::set_point(draft, i, round(e.view.mouse_world()));
+        if (!hovered) return;
+
+        if (IsKeyPressed(ImGuiKey_Escape)) {
+            if (step > 0)
+                step = 0;
+            else
+                done = true;
+        } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
+            step++;
+            if (step == model::point_count(draft)) {
+                draft.id = e.ctx.cell.new_id();
+                e.sym.shapes.push_back(draft);
+                e.ctx.modified();
+                done = !GetIO().KeyShift;
+                draft = proto;
+                step = 0;
+            }
+        }
+    }
+
+    void draw(symbol_editor& e) override
+    {
+        auto& r = e.ctx.r;
+        auto& vp = e.view.vp();
+        render::draw_shape(r, vp, draft, {0, 0}, {}, render::colors::preview);
+        r.g.setColor(render::colors::control_point);
+        for (int i = 0; i < model::point_count(draft); i++)
+            r.g.circle(vp, model::get_point(draft, i), 1.0f, true);
+    }
+
+    // a partly drawn shape is not part of the symbol yet
+    bool busy() const override { return step > 0; }
+
+private:
+    model::shape proto;
+    model::shape draft;
+    int step = 0;
+};
+
 }
 
 symbol_editor::symbol_editor(context c)
     : ctx(c)
     , sym(c.cell.symbol)
+    , active(std::make_unique<select_tool<symbol_editor>>())
 {
 }
 
-void symbol_editor::begin_shape(model::shape s)
+void symbol_editor::set_tool(tool_kind k)
 {
-    selection.clear();
-    draft = std::move(s);
-    draft_step = 0;
-    mode = mode_t::add_shape;
+    if (busy()) return;
+
+    std::unique_ptr<tool<symbol_editor>> t;
+    switch (k) {
+    case tool_kind::select: t = std::make_unique<select_tool<symbol_editor>>(); break;
+    case tool_kind::pin: t = std::make_unique<pin_tool>(); break;
+    case tool_kind::line: t = std::make_unique<shape_tool>(model::shape{model::no_id, model::line{}}); break;
+    case tool_kind::bezier: t = std::make_unique<shape_tool>(model::shape{model::no_id, model::bezier{}}); break;
+    case tool_kind::circle: t = std::make_unique<shape_tool>(model::shape{model::no_id, model::circle{{0, 0}, 0.0f}}); break;
+    case tool_kind::text: t = std::make_unique<shape_tool>(model::shape{model::no_id, model::text{}}); break;
+    }
+
+    if (k != tool_kind::select) selection.clear();
+    kind = k;
+    active = std::move(t);
 }
 
 void symbol_editor::process_inputs(bool hovered)
@@ -64,116 +166,30 @@ void symbol_editor::process_inputs(bool hovered)
 
     if (hovered) view.handle_view_input();
 
-    auto m = view.mouse_world();
-    bool shift = GetIO().KeyShift;
+    // shortcuts with ctrl belong to the app (undo, save)
+    if (hovered && !busy() && !GetIO().KeyCtrl) {
+        if (IsKeyPressed(ImGuiKey_G)) view.show_grid = !view.show_grid;
 
-    if (hovered && IsKeyPressed(ImGuiKey_G)) view.show_grid = !view.show_grid;
-
-    switch (mode) {
-    case mode_t::idle: {
-        if (!hovered) break;
-
-        if (IsKeyPressed(ImGuiKey_P)) {
-            draft_pin = {};
-            // link to the first port that has no pin yet
-            for (auto& p : ctx.cell.ports) {
-                if (!sym.find_pin_of_port(p.id)) {
-                    draft_pin.port = p.id;
-                    break;
-                }
-            }
-            draft_pin.pos = model::snap(m, model::grid);
-            selection.clear();
-            mode = mode_t::add_pin;
-        } else if (IsKeyPressed(ImGuiKey_L)) {
-            begin_shape({model::no_id, model::line{}});
-        } else if (IsKeyPressed(ImGuiKey_B)) {
-            begin_shape({model::no_id, model::bezier{}});
-        } else if (IsKeyPressed(ImGuiKey_C)) {
-            begin_shape({model::no_id, model::circle{{0, 0}, 0.0f}});
-        } else if (IsKeyPressed(ImGuiKey_T)) {
-            begin_shape({model::no_id, model::text{}});
-        } else if (IsKeyPressed(ImGuiKey_Delete)) {
-            delete_selection();
-        } else if (IsKeyPressed(ImGuiKey_Escape)) {
-            selection.clear();
-        } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
-            auto hs = hit_test(m);
-            auto bounds = selection_bounds();
-            bool in_bounds = hs.empty() && !shift && bounds && bounds->contains(m);
-            if (hs.empty() && !in_bounds) {
-                if (!shift) selection.clear();
-                box_start = m;
-                mode = mode_t::box_select;
-            } else {
-                if (!hs.empty() && !is_selected(hs[0])) select(hs, shift);
-                // pins live on the schematic grid, shapes on single units
-                bool has_pin = std::any_of(selection.begin(), selection.end(), [](auto& h) { return h.kind == handle::pin; });
-                drag_step = has_pin ? model::grid : 1;
-                drag_start = m;
-                drag_applied = {0, 0};
-                drag_moved = false;
-                drag_from_bounds = in_bounds;
-                mode = mode_t::moving;
-            }
-        }
-    } break;
-
-    case mode_t::moving: {
-        auto d = model::snap(m - drag_start, drag_step) - drag_applied;
-        if (d != glm::ivec2{0, 0}) {
-            move_selection(d);
-            drag_applied += d;
-            drag_moved = true;
-        }
-        if (!IsMouseDown(ImGuiMouseButton_Left)) {
-            // a plain click on empty space still clears the selection
-            if (!drag_moved && drag_from_bounds) selection.clear();
-            mode = mode_t::idle;
-        }
-    } break;
-
-    case mode_t::box_select: {
-        if (!IsMouseDown(ImGuiMouseButton_Left)) {
-            select(handles_in(model::make_rect(box_start, m)), true);
-            mode = mode_t::idle;
-        }
-    } break;
-
-    case mode_t::add_pin: {
-        draft_pin.pos = model::snap(m, model::grid);
-        if (!hovered) break;
-
-        if (IsKeyPressed(ImGuiKey_Escape)) {
-            mode = mode_t::idle;
-        } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
-            draft_pin.id = ctx.cell.new_id();
-            sym.pins.push_back(draft_pin);
-            selection = {{handle::pin, draft_pin.id}};
-            ctx.modified();
-            mode = mode_t::idle;
-        }
-    } break;
-
-    case mode_t::add_shape: {
-        // points not placed yet follow the mouse
-        for (int i = draft_step; i < model::point_count(draft); i++)
-            model::set_point(draft, i, round(m));
-        if (!hovered) break;
-
-        if (IsKeyPressed(ImGuiKey_Escape)) {
-            mode = mode_t::idle;
-        } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
-            draft_step++;
-            if (draft_step == model::point_count(draft)) {
-                draft.id = ctx.cell.new_id();
-                sym.shapes.push_back(draft);
-                ctx.modified();
-                mode = mode_t::idle;
-            }
-        }
-    } break;
+        if (IsKeyPressed(ImGuiKey_P))
+            set_tool(tool_kind::pin);
+        else if (IsKeyPressed(ImGuiKey_L))
+            set_tool(tool_kind::line);
+        else if (IsKeyPressed(ImGuiKey_B))
+            set_tool(tool_kind::bezier);
+        else if (IsKeyPressed(ImGuiKey_C))
+            set_tool(tool_kind::circle);
+        else if (IsKeyPressed(ImGuiKey_T))
+            set_tool(tool_kind::text);
     }
+
+    active->update(*this, hovered);
+    if (active->done) set_tool(tool_kind::select);
+}
+
+int symbol_editor::drag_step() const
+{
+    bool has_pin = std::any_of(selection.begin(), selection.end(), [](auto& h) { return h.kind == handle::pin; });
+    return has_pin ? model::grid : 1;
 }
 
 std::vector<symbol_editor::handle> symbol_editor::hit_test(glm::vec2 p)
@@ -327,39 +343,21 @@ void symbol_editor::draw()
         }
     }
 
-    auto draw_pin = [&](const model::pin& p, glm::vec4 color) {
-        auto port = ctx.cell.find_port(p.port);
-        glm::vec2 pos = p.pos;
-        r.g.setColor(port ? color : render::colors::error);
-        r.g.rect(vp, pos - 2.5f, pos + 2.5f);
-        r.text(vp, port ? port->name : "?", pos + glm::vec2{0, 4}, 6.0f, port ? render::colors::pin : render::colors::error, render::align::center);
-    };
-
     for (auto& p : sym.pins)
         draw_pin(p, is_selected({handle::pin, p.id}) ? render::colors::selection : render::colors::pin);
 
-    switch (mode) {
-    case mode_t::add_pin:
-        draw_pin(draft_pin, render::colors::preview);
-        break;
-    case mode_t::add_shape:
-        render::draw_shape(r, vp, draft, {0, 0}, {}, render::colors::preview);
-        r.g.setColor(render::colors::control_point);
-        for (int i = 0; i < model::point_count(draft); i++)
-            r.g.circle(vp, model::get_point(draft, i), 1.0f, true);
-        break;
-    case mode_t::box_select:
-        r.g.setColor(render::colors::guide);
-        r.g.rect(vp, box_start, view.mouse_world());
-        break;
-    default:
-        if (selection.size() > 1)
-            if (auto b = selection_bounds()) {
-                r.g.setColor(render::colors::guide);
-                r.g.rect(vp, b->min, b->max);
-            }
-        break;
-    }
+    active->draw(*this);
+}
+
+void symbol_editor::draw_pin(const model::pin& p, glm::vec4 color)
+{
+    auto& r = ctx.r;
+    auto& vp = view.vp();
+    auto port = ctx.cell.find_port(p.port);
+    glm::vec2 pos = p.pos;
+    r.g.setColor(port ? color : render::colors::error);
+    r.g.rect(vp, pos - 2.5f, pos + 2.5f);
+    r.text(vp, port ? port->name : "?", pos + glm::vec2{0, 4}, 6.0f, port ? render::colors::pin : render::colors::error, render::align::center);
 }
 
 void symbol_editor::property_panel()

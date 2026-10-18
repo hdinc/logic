@@ -11,6 +11,7 @@ namespace logic::model {
 struct line {
     glm::ivec2 a;
     glm::ivec2 b;
+    bool operator==(const line&) const = default;
 };
 
 // quadratic bezier from a to b with control point c
@@ -18,22 +19,26 @@ struct bezier {
     glm::ivec2 a;
     glm::ivec2 b;
     glm::ivec2 c;
+    bool operator==(const bezier&) const = default;
 };
 
 struct circle {
     glm::ivec2 center;
     float radius;
+    bool operator==(const circle&) const = default;
 };
 
 struct text {
     glm::ivec2 pos;
     std::string str = "text";
     float size = 10.0f;
+    bool operator==(const text&) const = default;
 };
 
 struct shape {
     model::id id = no_id;
     std::variant<line, bezier, circle, text> geom;
+    bool operator==(const shape&) const = default;
 };
 
 // editable points of a shape. circles have their center and a radius handle at
@@ -47,6 +52,7 @@ struct pin {
     model::id id = no_id;
     model::id port = no_id;
     glm::ivec2 pos;
+    bool operator==(const pin&) const = default;
 };
 
 struct symbol {
@@ -59,6 +65,7 @@ struct symbol {
 
     // bounding box of all shapes and pins, used for hit testing instances
     rect bounds() const;
+    bool operator==(const symbol&) const = default;
 };
 
 }

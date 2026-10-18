@@ -21,23 +21,163 @@ struct ivec2_less {
     bool operator()(glm::ivec2 a, glm::ivec2 b) const { return a.x != b.x ? a.x < b.x : a.y < b.y; }
 };
 
+// draws connected wire segments, each click adds a point. esc ends the wire,
+// a second esc leaves the tool.
+class wire_tool : public tool<schematic_editor> {
+public:
+    void update(schematic_editor& e, bool hovered) override
+    {
+        using namespace ImGui;
+        if (!hovered) return;
+
+        auto ms = model::snap(e.view.mouse_world(), model::grid);
+
+        if (IsKeyPressed(ImGuiKey_Escape)) {
+            if (started)
+                started = false;
+            else
+                done = true;
+        } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
+            if (!started) {
+                start = ms;
+                started = true;
+            } else if (ms != start) {
+                e.sch.wires.push_back({e.ctx.cell.new_id(), start, ms});
+                e.ctx.modified();
+                // every segment is an undo step
+                e.normalize();
+                start = ms;
+            }
+        }
+    }
+
+    void draw(schematic_editor& e) override
+    {
+        auto& r = e.ctx.r;
+        auto& vp = e.view.vp();
+        auto ms = model::snap(e.view.mouse_world(), model::grid);
+
+        r.g.setColor(render::colors::guide);
+        r.g.line(vp, {ms.x - 1000, ms.y}, {ms.x + 1000, ms.y});
+        r.g.line(vp, {ms.x, ms.y - 1000}, {ms.x, ms.y + 1000});
+        if (started) render::draw_wire(r, vp, {model::no_id, start, ms}, render::colors::preview);
+    }
+
+private:
+    bool started = false;
+    glm::ivec2 start{0, 0};
+};
+
+// places a port at the click, shift keeps placing
+class port_tool : public tool<schematic_editor> {
+public:
+    explicit port_tool(model::direction d) { preview.dir = d; }
+
+    void update(schematic_editor& e, bool hovered) override
+    {
+        using namespace ImGui;
+
+        preview.pos = model::snap(e.view.mouse_world(), model::grid);
+        preview.name = e.ctx.cell.unique_port_name(preview.dir == model::direction::input ? "in" : "out");
+        if (!hovered) return;
+
+        if (IsKeyPressed(ImGuiKey_Escape)) {
+            done = true;
+        } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
+            auto& p = e.ctx.cell.add_port(preview.dir, preview.pos);
+            e.selection = {{schematic_editor::handle::port, p.id}};
+            e.ctx.modified();
+            e.normalize();
+            done = !GetIO().KeyShift;
+        }
+    }
+
+    void draw(schematic_editor& e) override
+    {
+        render::draw_port(e.ctx.r, e.view.vp(), preview, render::colors::preview);
+    }
+
+private:
+    model::port preview;
+};
+
+// places instances of a cell, r rotates, shift keeps placing
+class instance_tool : public tool<schematic_editor> {
+public:
+    explicit instance_tool(model::id cell) { preview.cell = cell; }
+
+    void update(schematic_editor& e, bool hovered) override
+    {
+        using namespace ImGui;
+
+        preview.pos = model::snap(e.view.mouse_world(), model::grid);
+        if (!hovered) return;
+
+        if (IsKeyPressed(ImGuiKey_Escape)) {
+            done = true;
+        } else if (IsKeyPressed(ImGuiKey_R)) {
+            preview.xf.rotation = (preview.xf.rotation + 1) % 4;
+        } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
+            auto i = preview;
+            i.id = e.ctx.cell.new_id();
+            i.name = e.unique_instance_name();
+            e.sch.instances.push_back(i);
+            e.selection = {{schematic_editor::handle::instance, i.id}};
+            e.ctx.modified();
+            e.normalize();
+            done = !GetIO().KeyShift;
+        }
+    }
+
+    void draw(schematic_editor& e) override
+    {
+        render::draw_instance(e.ctx.r, e.view.vp(), e.ctx.ws, preview, render::colors::preview);
+    }
+
+private:
+    model::instance preview;
+};
+
 }
 
 schematic_editor::schematic_editor(context c)
     : ctx(c)
     , sch(*c.cell.get_schematic())
+    , active(std::make_unique<select_tool<schematic_editor>>())
 {
+}
+
+void schematic_editor::set_tool(tool_kind k, std::unique_ptr<tool<schematic_editor>> t)
+{
+    if (busy()) return;
+    kind = k;
+    active = std::move(t);
+}
+
+void schematic_editor::set_tool(tool_kind k)
+{
+    switch (k) {
+    case tool_kind::select: set_tool(k, std::make_unique<select_tool<schematic_editor>>()); break;
+    case tool_kind::wire:
+        selection.clear();
+        set_tool(k, std::make_unique<wire_tool>());
+        break;
+    case tool_kind::input_port: set_tool(k, std::make_unique<port_tool>(model::direction::input)); break;
+    case tool_kind::output_port: set_tool(k, std::make_unique<port_tool>(model::direction::output)); break;
+    // needs a cell, see begin_place()
+    case tool_kind::place_instance: break;
+    }
 }
 
 void schematic_editor::begin_place(model::id cell)
 {
-    if (mode != mode_t::idle) return;
     if (ctx.ws.would_create_cycle(ctx.cell.id, cell)) return;
+    set_tool(tool_kind::place_instance, std::make_unique<instance_tool>(cell));
+}
 
-    placing = {};
-    placing.cell = cell;
-    placing.pos = model::snap(view.mouse_world(), model::grid);
-    mode = mode_t::place_instance;
+void schematic_editor::cell_replaced()
+{
+    validate_selection();
 }
 
 void schematic_editor::process_inputs(bool hovered)
@@ -46,125 +186,22 @@ void schematic_editor::process_inputs(bool hovered)
 
     if (hovered) view.handle_view_input();
 
-    auto m = view.mouse_world();
-    auto ms = model::snap(m, model::grid);
-    bool shift = GetIO().KeyShift;
+    // shortcuts with ctrl belong to the app (undo, save)
+    if (hovered && !busy() && !GetIO().KeyCtrl) {
+        if (IsKeyPressed(ImGuiKey_G)) view.show_grid = !view.show_grid;
 
-    if (hovered && IsKeyPressed(ImGuiKey_G)) view.show_grid = !view.show_grid;
-
-    switch (mode) {
-    case mode_t::idle: {
-        if (!hovered) break;
-
-        if (IsKeyPressed(ImGuiKey_W)) {
-            selection.clear();
-            wire_started = false;
-            mode = mode_t::wire;
-        } else if (IsKeyPressed(ImGuiKey_I) || IsKeyPressed(ImGuiKey_O)) {
-            placing_port = {};
-            placing_port.dir = IsKeyPressed(ImGuiKey_I) ? model::direction::input : model::direction::output;
-            placing_port.name = ctx.cell.unique_port_name(placing_port.dir == model::direction::input ? "in" : "out");
-            placing_port.pos = ms;
-            mode = mode_t::place_port;
-        } else if (IsKeyPressed(ImGuiKey_Delete)) {
-            delete_selection();
-        } else if (IsKeyPressed(ImGuiKey_Escape)) {
-            selection.clear();
-        } else if (IsKeyPressed(ImGuiKey_R)) {
+        if (IsKeyPressed(ImGuiKey_W))
+            set_tool(tool_kind::wire);
+        else if (IsKeyPressed(ImGuiKey_I))
+            set_tool(tool_kind::input_port);
+        else if (IsKeyPressed(ImGuiKey_O))
+            set_tool(tool_kind::output_port);
+        else if (kind == tool_kind::select && IsKeyPressed(ImGuiKey_R))
             rotate_selection();
-        } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
-            auto hs = hit_test(m);
-            auto bounds = selection_bounds();
-            bool in_bounds = hs.empty() && !shift && bounds && bounds->contains(m);
-            if (hs.empty() && !in_bounds) {
-                if (!shift) selection.clear();
-                box_start = m;
-                mode = mode_t::box_select;
-            } else {
-                if (!hs.empty() && !is_selected(hs[0])) select(hs, shift);
-                drag_start = m;
-                drag_applied = {0, 0};
-                drag_moved = false;
-                drag_from_bounds = in_bounds;
-                mode = mode_t::moving;
-            }
-        }
-    } break;
-
-    case mode_t::moving: {
-        auto d = model::snap(m - drag_start, model::grid) - drag_applied;
-        if (d != glm::ivec2{0, 0}) {
-            move_selection(d);
-            drag_applied += d;
-            drag_moved = true;
-        }
-        if (!IsMouseDown(ImGuiMouseButton_Left)) {
-            if (drag_moved) normalize();
-            // a plain click on empty space still clears the selection
-            else if (drag_from_bounds) selection.clear();
-            mode = mode_t::idle;
-        }
-    } break;
-
-    case mode_t::box_select: {
-        if (!IsMouseDown(ImGuiMouseButton_Left)) {
-            select(handles_in(model::make_rect(box_start, m)), true);
-            mode = mode_t::idle;
-        }
-    } break;
-
-    case mode_t::place_instance: {
-        placing.pos = ms;
-        if (!hovered) break;
-
-        if (IsKeyPressed(ImGuiKey_Escape)) {
-            mode = mode_t::idle;
-        } else if (IsKeyPressed(ImGuiKey_R)) {
-            placing.xf.rotation = (placing.xf.rotation + 1) % 4;
-        } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
-            placing.id = ctx.cell.new_id();
-            placing.name = unique_instance_name();
-            sch.instances.push_back(placing);
-            selection = {{handle::instance, placing.id}};
-            ctx.modified();
-            normalize();
-            mode = mode_t::idle;
-        }
-    } break;
-
-    case mode_t::place_port: {
-        placing_port.pos = ms;
-        if (!hovered) break;
-
-        if (IsKeyPressed(ImGuiKey_Escape)) {
-            mode = mode_t::idle;
-        } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
-            auto id = ctx.cell.add_port(placing_port.dir, placing_port.pos).id;
-            selection = {{handle::port, id}};
-            ctx.modified();
-            normalize();
-            mode = mode_t::idle;
-        }
-    } break;
-
-    case mode_t::wire: {
-        if (!hovered) break;
-
-        if (IsKeyPressed(ImGuiKey_Escape)) {
-            normalize();
-            mode = mode_t::idle;
-        } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
-            if (!wire_started) {
-                wire_start = ms;
-                wire_started = true;
-            } else if (ms != wire_start) {
-                sch.wires.push_back({ctx.cell.new_id(), wire_start, ms});
-                ctx.modified();
-                wire_start = ms;
-            }
-        }
-    } break;
     }
+
+    active->update(*this, hovered);
+    if (active->done) set_tool(tool_kind::select);
 }
 
 std::vector<schematic_editor::handle> schematic_editor::hit_test(glm::vec2 p)
@@ -327,13 +364,19 @@ void schematic_editor::normalize()
             selected_points.insert(h.kind == handle::wire_a ? w->a : w->b);
     }
 
-    auto old = sch.wires;
-    sch.wires = model::normalize_wires(sch.wires, points, ctx.cell.next_id);
+    auto next_id = ctx.cell.next_id;
+    auto wires = model::normalize_wires(sch.wires, points, next_id);
 
-    bool changed = old.size() != sch.wires.size();
-    for (size_t i = 0; !changed && i < old.size(); i++)
-        changed = old[i].a != sch.wires[i].a || old[i].b != sch.wires[i].b;
-    if (changed) ctx.modified();
+    // all wires get new ids, keep the old ones if nothing changed so there is
+    // no undo step without a visible change
+    bool changed = wires.size() != sch.wires.size();
+    for (size_t i = 0; !changed && i < wires.size(); i++)
+        changed = wires[i].a != sch.wires[i].a || wires[i].b != sch.wires[i].b;
+    if (changed) {
+        sch.wires = std::move(wires);
+        ctx.cell.next_id = next_id;
+        ctx.modified();
+    }
 
     std::erase_if(selection, [](auto& h) { return h.kind == handle::wire_a || h.kind == handle::wire_b; });
     for (auto& w : sch.wires) {
@@ -411,33 +454,7 @@ void schematic_editor::draw()
         }
     }
 
-    auto ms = model::snap(view.mouse_world(), model::grid);
-
-    switch (mode) {
-    case mode_t::place_instance:
-        render::draw_instance(r, vp, ctx.ws, placing, render::colors::preview);
-        break;
-    case mode_t::place_port:
-        render::draw_port(r, vp, placing_port, render::colors::preview);
-        break;
-    case mode_t::wire:
-        r.g.setColor(render::colors::guide);
-        r.g.line(vp, {ms.x - 1000, ms.y}, {ms.x + 1000, ms.y});
-        r.g.line(vp, {ms.x, ms.y - 1000}, {ms.x, ms.y + 1000});
-        if (wire_started) render::draw_wire(r, vp, {model::no_id, wire_start, ms}, render::colors::preview);
-        break;
-    case mode_t::box_select:
-        r.g.setColor(render::colors::guide);
-        r.g.rect(vp, box_start, view.mouse_world());
-        break;
-    default:
-        if (selection.size() > 1)
-            if (auto b = selection_bounds()) {
-                r.g.setColor(render::colors::guide);
-                r.g.rect(vp, b->min, b->max);
-            }
-        break;
-    }
+    active->draw(*this);
 }
 
 void schematic_editor::property_panel()

@@ -26,6 +26,7 @@ struct transform {
 
     glm::ivec2 apply(glm::ivec2 p) const;
     glm::vec2 apply(glm::vec2 p) const;
+    bool operator==(const transform&) const = default;
 };
 
 struct rect {
