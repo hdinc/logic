@@ -10,10 +10,22 @@
 
 namespace logic::model {
 
+// bits of two ports wired together inside a primitive, e.g. by a splitter.
+// the simulator joins them like a wire, without delay and in both directions.
+struct bit_link {
+    // port indices and the first bit of each
+    int a = 0;
+    int a_bit = 0;
+    int b = 0;
+    int b_bit = 0;
+    int width = 1;
+};
+
 // what an instance looks like from outside: its ports and symbol
 struct cell_interface {
     std::vector<port> ports;
     model::symbol symbol;
+    std::vector<bit_link> links;
 };
 
 // a cell implemented in code, e.g. a gate or a register. its ports and symbol
@@ -33,6 +45,10 @@ public:
 
     // values are resolved: every parameter has a valid value
     virtual cell_interface build(const param_values& values) const = 0;
+
+    // problem with a combination of resolved values that build() works
+    // around, shown to the user. empty if there is none.
+    virtual std::string check(const param_values&) const { return {}; }
 };
 
 class primitive_registry {

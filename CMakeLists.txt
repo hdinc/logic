@@ -31,6 +31,7 @@ add_library(logic_core STATIC
     src/builtin/gates.cpp
     src/builtin/sources.cpp
     src/builtin/memory.cpp
+    src/builtin/wiring.cpp
     src/netlist/netlist.cpp
     src/sim/value.cpp
     src/sim/simulator.cpp

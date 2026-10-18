@@ -23,6 +23,7 @@ const model::primitive_registry& registry()
         add_gates(r);
         add_sources(r);
         add_memory(r);
+        add_wiring(r);
         return r;
     }();
     return r;

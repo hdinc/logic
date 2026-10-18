@@ -203,6 +203,8 @@ void schematic_editor::process_inputs(bool hovered)
 
     active->update(*this, hovered);
     if (active->done) set_tool(tool_kind::select);
+
+    if (hovered && kind == tool_kind::select) wire_tooltip();
 }
 
 std::vector<schematic_editor::handle> schematic_editor::hit_test(glm::vec2 p)
@@ -232,6 +234,46 @@ std::vector<schematic_editor::handle> schematic_editor::hit_test(glm::vec2 p)
     }
 
     return {};
+}
+
+model::id schematic_editor::wire_at(glm::vec2 p) const
+{
+    float tol = view.pixels(6.0f);
+    for (auto& w : sch.wires)
+        if (distance_to_segment(p, w.a, w.b) <= tol) return w.id;
+    return model::no_id;
+}
+
+void schematic_editor::wire_tooltip()
+{
+    using namespace ImGui;
+
+    auto w = wire_at(view.mouse_world());
+    if (w == model::no_id || busy()) return;
+
+    if (sim) {
+        int n = sim->net_of_wire(*sim_scope, w);
+        if (n < 0) return;
+        int width = sim->net_width(n);
+        auto v = sim->net_value(n);
+        if (width > 1 && v.fully_known(width))
+            SetTooltip("%d bits: %s (%llu)", width, sim::to_string(v, width).c_str(), (unsigned long long)v.bits);
+        else if (width > 1)
+            SetTooltip("%d bits: %s", width, sim::to_string(v, width).c_str());
+        else
+            SetTooltip("%s", width == 0 ? "not connected to a port" : sim::to_string(v, width).c_str());
+        return;
+    }
+
+    int n = nets.net_of_wire(w);
+    if (n < 0) return;
+    auto& net = nets.nets[n];
+    if (net.width_error)
+        SetTooltip("ports of different widths are connected");
+    else if (net.width == 0)
+        SetTooltip("not connected to a port");
+    else
+        SetTooltip(net.width == 1 ? "%d bit" : "%d bits", net.width);
 }
 
 std::vector<schematic_editor::handle> schematic_editor::handles_in(model::rect rc)
@@ -421,27 +463,37 @@ void schematic_editor::draw()
     // elements removed elsewhere (e.g. a port deleted from the properties)
     validate_selection();
 
+    if (!sim) nets = netlist::extract(ctx.ws, ctx.cell);
+
     std::map<glm::ivec2, int, ivec2_less> endpoint_count;
     std::map<glm::ivec2, glm::vec4, ivec2_less> junction_color;
+    std::set<glm::ivec2, ivec2_less> bus_junction;
 
     for (auto& w : sch.wires) {
         bool sel = is_selected({handle::wire_a, w.id}) && is_selected({handle::wire_b, w.id});
         auto color = sel ? render::colors::selection : render::colors::wire;
+        bool bus = false;
         if (sim) {
             int n = sim->net_of_wire(*sim_scope, w.id);
             color = n < 0 ? render::colors::floating : render::value_color(sim->net_value(n), sim->net_width(n));
+            bus = n >= 0 && sim->net_width(n) > 1;
+        } else if (int n = nets.net_of_wire(w.id); n >= 0) {
+            auto& net = nets.nets[n];
+            if (net.width_error && !sel) color = render::colors::width_error;
+            bus = net.width > 1;
         }
-        render::draw_wire(r, vp, w, color);
+        render::draw_wire(r, vp, w, color, bus);
         endpoint_count[w.a]++;
         endpoint_count[w.b]++;
         junction_color[w.a] = junction_color[w.b] = sim ? color : render::colors::wire;
+        if (bus) bus_junction.insert({w.a, w.b});
     }
 
     // junction dots where three or more wires meet
     for (auto& [p, n] : endpoint_count) {
         if (n < 3) continue;
         r.g.setColor(junction_color[p]);
-        r.g.circle(vp, p, 2.0f, true);
+        r.g.circle(vp, p, bus_junction.count(p) ? 3.0f : 2.0f, true);
     }
 
     for (auto& i : sch.instances) {
@@ -513,6 +565,10 @@ void schematic_editor::property_panel()
                 // pins may have moved or appeared
                 normalize();
             }
+            if (auto prim = c ? ctx.ws.primitive_of(*c) : nullptr) {
+                auto problem = prim->check(model::resolve_params(defs, i->params));
+                if (!problem.empty()) TextColored({1, 0.6f, 0.2f, 1}, "%s", problem.c_str());
+            }
         }
         return;
     }
@@ -560,6 +616,8 @@ void schematic_editor::property_panel()
     }
 
     for (auto& problem : ctx.cell.check())
+        TextColored({1, 0.6f, 0.2f, 1}, "%s", problem.c_str());
+    for (auto& problem : nets.problems)
         TextColored({1, 0.6f, 0.2f, 1}, "%s", problem.c_str());
 }
 

@@ -3,6 +3,7 @@
 #include "canvas.h"
 #include "context.h"
 #include "tool.h"
+#include "../netlist/netlist.h"
 #include "../sim/simulator.h"
 
 #include <memory>
@@ -41,6 +42,10 @@ public:
     // draws into the currently bound framebuffer, after view.set_size()
     void draw();
 
+    // width, or the simulated value, of the wire under the mouse. call
+    // while the canvas is hovered.
+    void wire_tooltip();
+
     void property_panel();
 
     tool_kind current_tool() const { return kind; }
@@ -78,6 +83,8 @@ public:
 
     // handles under the point, a wire segment yields both of its endpoints
     std::vector<handle> hit_test(glm::vec2 p);
+    // no_id if there is no wire
+    model::id wire_at(glm::vec2 p) const;
     std::vector<handle> handles_in(model::rect r);
 
     // box around everything selected, dragging inside it moves the selection
@@ -107,6 +114,10 @@ public:
 
 private:
     void set_tool(tool_kind k, std::unique_ptr<tool<schematic_editor>> t);
+
+    // connectivity for drawing buses and width errors while editing,
+    // extracted again every frame
+    netlist::netlist nets;
 
     tool_kind kind = tool_kind::select;
     std::unique_ptr<tool<schematic_editor>> active;

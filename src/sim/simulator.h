@@ -40,7 +40,8 @@ struct scope {
 
 // event driven simulation of a schematic cell and everything it contains.
 // every component takes one step to react to its inputs (unit delay), a
-// change is propagated until nothing changes any more.
+// change is propagated until nothing changes any more. splitters are wiring:
+// the bits they join are one signal.
 //
 // the top cell's input ports are set by the user, its output ports show the
 // values of their nets.
@@ -62,7 +63,7 @@ public:
     // ids of all cells in the hierarchy, the top included
     const std::vector<model::id>& cells() const { return m_cells; }
 
-    value net_value(int net) const { return net_states[net].v; }
+    value net_value(int net) const;
     int net_width(int net) const { return nets[net].width; }
 
     // flat net of a wire / port of the scope's cell, -1 if not connected
@@ -94,18 +95,45 @@ private:
         std::vector<bool> is_output;
     };
 
+    // bits [net_bit, net_bit + width) of a net are bits [node_bit, ...) of
+    // a node
+    struct slice {
+        int node;
+        int node_bit;
+        int net_bit;
+        int width;
+    };
+
     struct net_info {
         int width = 0;
         bool width_error = false;
+        // a net is one node unless splitters join some of its bits to other nets
+        std::vector<slice> slices;
     };
 
-    struct net_state {
+    // bits of another net joined by a splitter, while building
+    struct alias {
+        int a, a_bit, b, b_bit, width;
+    };
+
+    // something driving bits of a node: an output of an instance (instance,
+    // port) or an input of the top cell (-1, port)
+    struct driver {
+        int instance;
+        int port;
+        int src_bit; // first bit in the driving port's value
+        int dst_bit; // first bit in the node
+        int width;
+    };
+
+    // a set of bits that always have the same value, the value is resolved
+    // from all its drivers
+    struct node {
+        int width = 0;
+        bool width_error = false;
         value v;
-        // (instance, port) driving the net
-        std::vector<std::pair<int, int>> drivers;
+        std::vector<driver> drivers;
         std::vector<int> readers;
-        // top cell ports driving the net
-        std::vector<int> port_drivers;
     };
 
     // building
@@ -115,10 +143,15 @@ private:
     int find(int net);
     void join(int a, int b);
     void finish_nets();
+    // splits nets into nodes, joining the aliased bits
+    void build_nodes();
+    void add_driver(int net, int instance, int port);
 
     void schedule(int instance);
-    // recomputes the net value, schedules the readers if it changed
+    // recomputes the values of the net's nodes, schedules the readers of
+    // those that changed
     void update_net(int net);
+    void update_node(int node);
     void settle();
 
     const model::workspace& ws;
@@ -134,7 +167,8 @@ private:
 
     std::vector<instance> instances;
     std::vector<net_info> nets;
-    std::vector<net_state> net_states;
+    std::vector<alias> aliases;
+    std::vector<node> nodes;
 
     std::vector<model::port> top_ports;
     std::vector<value> inputs;

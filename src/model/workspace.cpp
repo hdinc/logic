@@ -159,13 +159,14 @@ interface_view workspace::interface_of(const instance& i) const
     if (!c) return {};
 
     auto p = primitive_of(*c);
-    if (!p) return {&c->ports, &c->symbol};
+    static const std::vector<bit_link> no_links;
+    if (!p) return {&c->ports, &c->symbol, &no_links};
 
     auto values = resolve_params(p->params(), i.params);
     auto key = p->kind() + '\n' + params_key(values);
     auto it = interface_cache.find(key);
     if (it == interface_cache.end()) it = interface_cache.emplace(key, p->build(values)).first;
-    return {&it->second.ports, &it->second.symbol};
+    return {&it->second.ports, &it->second.symbol, &it->second.links};
 }
 
 std::vector<param_def> workspace::params_of(const instance& i) const

@@ -475,6 +475,158 @@ static void test_shorted_ports()
     CHECK(s.port_value(y) == bit(true));
 }
 
+// pin of a port of a placed instance, through its parameters and transform
+static glm::ivec2 instance_pin(fixture& f, int instance, int port)
+{
+    auto& inst = f.sch().instances[instance];
+    auto iface = f.ws.interface_of(inst);
+    auto id = (*iface.ports)[port].id;
+    return model::pin_position(inst, *iface.symbol->find_pin_of_port(id));
+}
+
+// splitter at the origin: bus at (0, 0), end k at (20, -10 (k + 1))
+static void test_splitter()
+{
+    // split
+    {
+        fixture f;
+        f.place("splitter", {0, 0}, {{"width", int64_t(8)}});
+        int bus = f.port(model::direction::input, {0, 0}, 8);
+        int lo = f.port(model::direction::output, {20, -10}, 4);
+        int hi = f.port(model::direction::output, {20, -20}, 4);
+
+        sim::simulator s(f.ws, *f.top, builtin::factory());
+        CHECK(s.problems().empty());
+        s.set_input(bus, sim::known(0xA5, 8));
+        CHECK(s.port_value(lo) == sim::known(0x5, 4));
+        CHECK(s.port_value(hi) == sim::known(0xA, 4));
+    }
+
+    // merge, an undriven end leaves its bits z
+    {
+        fixture f;
+        f.place("splitter", {0, 0}, {{"width", int64_t(8)}});
+        int lo = f.port(model::direction::input, {20, -10}, 4);
+        // not driven until set
+        int hi = f.port(model::direction::inout, {20, -20}, 4);
+        int bus = f.port(model::direction::output, {0, 0}, 8);
+
+        sim::simulator s(f.ws, *f.top, builtin::factory());
+        CHECK(s.problems().empty());
+        s.set_input(lo, sim::known(0x3, 4));
+        CHECK(s.port_value(bus) == (value{0x03, 0, 0xF0}));
+        s.set_input(hi, sim::known(0xC, 4));
+        CHECK(s.port_value(bus) == sim::known(0xC3, 8));
+    }
+
+    // two splitters back to back swap the nibbles, a gate behind them sees
+    // the result in the same step as if it was a wire
+    {
+        fixture f;
+        f.place("splitter", {0, 0}, {{"width", int64_t(8)}});
+        model::param_values swap{{"width", int64_t(8)}, {"bits", std::string("7:4, 3:0")}};
+        f.place("splitter", {40, 0}, swap);
+        f.sch().instances[1].xf.mirror = true;
+        CHECK(instance_pin(f, 1, 1) == glm::ivec2(20, -10));
+        CHECK(instance_pin(f, 1, 0) == glm::ivec2(40, 0));
+
+        f.place("not", {80, 0}, {{"width", int64_t(8)}});
+        f.wire({40, 0}, instance_pin(f, 2, 0));
+        int in = f.port(model::direction::input, {0, 0}, 8);
+        int swapped = f.port(model::direction::output, {40, 0}, 8);
+        int out = f.port(model::direction::output, instance_pin(f, 2, 1), 8);
+
+        sim::simulator s(f.ws, *f.top, builtin::factory());
+        for (auto& p : s.problems())
+            std::printf("  %s\n", p.c_str());
+        CHECK(s.problems().empty());
+        s.set_input(in, sim::known(0xA5, 8));
+        CHECK(s.port_value(swapped) == sim::known(0x5A, 8));
+        CHECK(s.port_value(out) == sim::known(0xA5, 8));
+
+        // one bit of the bus driven twice: from the input and from the output
+        // side through the second splitter
+        f.sch().instances.pop_back();
+        f.top->ports.pop_back();
+        f.top->ports[swapped].dir = model::direction::inout;
+        sim::simulator s2(f.ws, *f.top, builtin::factory());
+        s2.set_input(in, sim::known(0xA5, 8));
+        s2.set_input(swapped, value{0x01, 0, 0xFE}); // bit 0 of the swapped bus is bit 4 of the input, a 0
+        CHECK(s2.port_value(in) == (value{0xA5 & ~0x10, 0x10, 0}));
+        CHECK(s2.port_value(swapped) == (value{0x5A & ~0x01, 0x01, 0}));
+    }
+
+    // ends of the same bit are joined even without a bus
+    {
+        fixture f;
+        f.place("splitter", {0, 0}, {{"width", int64_t(4)}, {"bits", std::string("0, 0")}});
+        int a = f.port(model::direction::input, {20, -10});
+        int b = f.port(model::direction::output, {20, -20});
+
+        sim::simulator s(f.ws, *f.top, builtin::factory());
+        CHECK(s.problems().empty());
+        s.set_input(a, bit(true));
+        CHECK(s.port_value(b) == bit(true));
+    }
+
+    // inside a cell used twice in a row: swapping twice gives the input back
+    {
+        fixture f;
+        auto& sw = f.new_cell("swap");
+        f.place("splitter", {0, 0}, {{"width", int64_t(8)}});
+        model::param_values swap{{"width", int64_t(8)}, {"bits", std::string("7:4, 3:0")}};
+        f.place("splitter", {40, 0}, swap);
+        f.sch().instances[1].xf.mirror = true;
+        f.port(model::direction::input, {0, 0}, 8);
+        f.port(model::direction::output, {40, 0}, 8);
+        sw.generate_symbol();
+
+        auto& top = f.new_cell("top");
+        f.place_cell(sw.id, {0, 0});
+        f.place_cell(sw.id, pin_of(sw, "out1", {0, 0}) - pin_of(sw, "in1", {0, 0}));
+        int in = f.port(model::direction::input, pin_of(sw, "in1", {0, 0}), 8);
+        int out = f.port(model::direction::output, pin_of(sw, "out1", f.sch().instances[1].pos), 8);
+
+        sim::simulator s(f.ws, top, builtin::factory());
+        CHECK(s.problems().empty());
+        s.set_input(in, sim::known(0x12, 8));
+        CHECK(s.port_value(*s.root().child(0), 1) == sim::known(0x21, 8));
+        CHECK(s.port_value(out) == sim::known(0x12, 8));
+    }
+}
+
+static void test_splitter_params()
+{
+    fixture f;
+    auto ports = [&](model::param_values v) {
+        model::instance i;
+        i.cell = model::builtin_cell_id("splitter");
+        i.params = std::move(v);
+        std::vector<int> widths;
+        for (auto& p : *f.ws.interface_of(i).ports)
+            widths.push_back(p.width);
+        return widths;
+    };
+
+    // even split, the first ends get the extra bits
+    CHECK(ports({{"width", int64_t(8)}, {"fanout", int64_t(3)}}) == (std::vector<int>{8, 3, 3, 2}));
+    // fan out above the width: one end per bit
+    CHECK(ports({{"width", int64_t(2)}, {"fanout", int64_t(5)}}) == (std::vector<int>{2, 1, 1}));
+    CHECK(ports({{"width", int64_t(8)}, {"bits", std::string("0, 1,7-2")}}) == (std::vector<int>{8, 1, 1, 6}));
+    // invalid bits fall back to the even split
+    CHECK(ports({{"width", int64_t(8)}, {"bits", std::string("8:0")}}) == (std::vector<int>{8, 4, 4}));
+    CHECK(ports({{"width", int64_t(8)}, {"bits", std::string("1,,2")}}) == (std::vector<int>{8, 4, 4}));
+
+    auto prim = f.ws.primitive_of(*f.ws.find_cell(model::builtin_cell_id("splitter")));
+    auto check = [&](const char* bits) {
+        return prim->check(model::resolve_params(prim->params(), {{"width", int64_t(8)}, {"bits", std::string(bits)}}));
+    };
+    CHECK(check("").empty());
+    CHECK(check("7:0").empty());
+    CHECK(!check("8").empty());
+    CHECK(!check("1;2").empty());
+}
+
 int main()
 {
     test_values();
@@ -489,6 +641,8 @@ int main()
     test_hierarchy();
     test_nested_state();
     test_shorted_ports();
+    test_splitter();
+    test_splitter_params();
 
     if (failures) {
         std::printf("%d check(s) failed\n", failures);

@@ -86,6 +86,8 @@ void sim_view::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     e.view.set_size({size.x, size.y});
     e.view.set_mouse(ndc);
 
+    e.sim = &s->sim;
+    e.sim_scope = &sc;
     if (hovered) e.view.handle_view_input();
     canvas_inputs(hovered, e);
 
@@ -188,6 +190,8 @@ void sim_view::canvas_inputs(bool hovered, schematic_editor& e)
     auto& sim = s->sim;
     auto& sc = current();
     auto m = e.view.mouse_world();
+
+    e.wire_tooltip();
 
     if (IsKeyPressed(ImGuiKey_Space)) sim.tick();
     if (IsKeyPressed(ImGuiKey_Backspace) && !path.empty()) path.pop_back();

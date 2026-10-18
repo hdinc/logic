@@ -20,6 +20,8 @@ constexpr glm::vec4 pin{0.3f, 0.5f, 1.0f, 1.0f};
 constexpr glm::vec4 control_point{1.0f, 0.2f, 0.2f, 1.0f};
 constexpr glm::vec4 error{1.0f, 0.25f, 0.25f, 1.0f};
 constexpr glm::vec4 preview{0.6f, 0.6f, 0.6f, 1.0f};
+// wires connecting ports of different widths
+constexpr glm::vec4 width_error{1.0f, 0.55f, 0.1f, 1.0f};
 
 // signal values while simulating, like logisim
 constexpr glm::vec4 high{0.15f, 0.95f, 0.15f, 1.0f};
@@ -74,6 +76,7 @@ glm::vec4 value_color(const sim::value& v, int width);
 // above it for buses
 void draw_port_value(renderer& r, const glm::mat4& vp, const model::port& p, const sim::value& v);
 
-void draw_wire(renderer& r, const glm::mat4& vp, const model::wire& w, glm::vec4 color);
+// buses (more than one bit) are drawn thicker
+void draw_wire(renderer& r, const glm::mat4& vp, const model::wire& w, glm::vec4 color, bool bus = false);
 
 }

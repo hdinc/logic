@@ -18,14 +18,13 @@ simulator::simulator(const model::workspace& w, const model::cell& top, const co
 {
     elaborate(*m_root, top, std::vector<int>(top.ports.size(), -1), 0);
     finish_nets();
-
-    net_states.resize(nets.size());
+    build_nodes();
 
     for (int k = 0; k < (int)top_ports.size(); k++) {
         auto& p = top_ports[k];
         inputs.push_back(p.dir == model::direction::input ? known(0, p.width) : floating(p.width));
         int n = net_of_port(*m_root, k);
-        if (n >= 0 && p.dir != model::direction::output) net_states[n].port_drivers.push_back(k);
+        if (n >= 0 && p.dir != model::direction::output) add_driver(n, -1, k);
     }
 
     for (int i = 0; i < (int)instances.size(); i++) {
@@ -33,10 +32,13 @@ simulator::simulator(const model::workspace& w, const model::cell& top, const co
         for (int p = 0; p < (int)s.nets.size(); p++) {
             int n = s.nets[p];
             if (n < 0) continue;
-            if (s.is_output[p]) net_states[n].drivers.push_back({i, p});
             // inouts are treated as outputs until there are tri-state primitives
-            if (!s.is_output[p]) {
-                auto& readers = net_states[n].readers;
+            if (s.is_output[p]) {
+                add_driver(n, i, p);
+                continue;
+            }
+            for (auto& sl : nets[n].slices) {
+                auto& readers = nodes[sl.node].readers;
                 if (std::find(readers.begin(), readers.end(), i) == readers.end()) readers.push_back(i);
             }
         }
@@ -96,9 +98,18 @@ void simulator::elaborate(scope& s, const model::cell& c, const std::vector<int>
         }
 
         if (auto prim = ws.primitive_of(*cell)) {
+            // bits joined inside the primitive. an unconnected pin still
+            // joins the others, e.g. two ends of a splitter without a bus.
+            auto& links = *iface.links;
+            for (auto& l : links) {
+                for (int p : {l.a, l.b})
+                    if (pins[p] < 0) pins[p] = new_net((*iface.ports)[p].width, false);
+                aliases.push_back({pins[l.a], l.a_bit, pins[l.b], l.b_bit, l.width});
+            }
+
             auto comp = factory.create(prim->kind(), model::resolve_params(prim->params(), inst.params));
             if (!comp) {
-                m_problems.push_back(where(inst) + ": '" + cell->name + "' has no simulation model");
+                if (links.empty()) m_problems.push_back(where(inst) + ": '" + cell->name + "' has no simulation model");
                 continue;
             }
 
@@ -135,7 +146,9 @@ void simulator::elaborate(scope& s, const model::cell& c, const std::vector<int>
 int simulator::new_net(int width, bool width_error)
 {
     parent.push_back((int)parent.size());
-    nets.push_back({width, width_error});
+    auto& n = nets.emplace_back();
+    n.width = width;
+    n.width_error = width_error;
     return parent.back();
 }
 
@@ -181,6 +194,10 @@ void simulator::finish_nets()
     };
     for (auto& i : instances)
         remap(i.nets);
+    for (auto& a : aliases) {
+        a.a = index[a.a];
+        a.b = index[a.b];
+    }
 
     std::vector<scope*> stack{m_root.get()};
     while (!stack.empty()) {
@@ -192,6 +209,80 @@ void simulator::finish_nets()
     }
 
     parent.clear();
+}
+
+void simulator::build_nodes()
+{
+    // every bit of a net touched by a splitter gets its own place in a union
+    // find, the joined bits become one node. nets with a width error are
+    // not joined, they are unknown anyway.
+    std::vector<int> base(nets.size(), -1);
+    int bits = 0;
+    for (auto& a : aliases) {
+        for (int n : {a.a, a.b}) {
+            if (base[n] >= 0 || nets[n].width_error || nets[n].width == 0) continue;
+            base[n] = bits;
+            bits += nets[n].width;
+        }
+    }
+
+    parent.resize(bits);
+    for (int b = 0; b < bits; b++)
+        parent[b] = b;
+    for (auto& a : aliases) {
+        if (base[a.a] < 0 || base[a.b] < 0) continue;
+        for (int k = 0; k < a.width; k++) {
+            int x = a.a_bit + k, y = a.b_bit + k;
+            if (x >= nets[a.a].width || y >= nets[a.b].width) break;
+            parent[find(base[a.a] + x)] = find(base[a.b] + y);
+        }
+    }
+
+    std::vector<int> bit_node(bits, -1);
+    for (int n = 0; n < (int)nets.size(); n++) {
+        auto& net = nets[n];
+        if (base[n] < 0) {
+            net.slices = {{(int)nodes.size(), 0, 0, net.width}};
+            auto& nd = nodes.emplace_back();
+            nd.width = net.width;
+            nd.width_error = net.width_error;
+            continue;
+        }
+        for (int b = 0; b < net.width; b++) {
+            int r = find(base[n] + b);
+            if (bit_node[r] < 0) {
+                bit_node[r] = (int)nodes.size();
+                nodes.emplace_back().width = 1;
+            }
+            net.slices.push_back({bit_node[r], 0, b, 1});
+        }
+    }
+
+    parent.clear();
+    aliases.clear();
+}
+
+void simulator::add_driver(int net, int instance, int port)
+{
+    for (auto& sl : nets[net].slices)
+        nodes[sl.node].drivers.push_back({instance, port, sl.net_bit, sl.node_bit, sl.width});
+}
+
+value simulator::net_value(int n) const
+{
+    auto& net = nets[n];
+    if (net.width_error) return unknown(net.width);
+    if (net.slices.size() == 1) return nodes[net.slices[0].node].v;
+
+    value v;
+    for (auto& sl : net.slices) {
+        auto& x = nodes[sl.node].v;
+        auto m = mask(sl.width);
+        v.bits |= ((x.bits >> sl.node_bit) & m) << sl.net_bit;
+        v.x |= ((x.x >> sl.node_bit) & m) << sl.net_bit;
+        v.z |= ((x.z >> sl.node_bit) & m) << sl.net_bit;
+    }
+    return v;
 }
 
 int simulator::net_of_wire(const scope& s, model::id wire) const
@@ -209,7 +300,7 @@ int simulator::net_of_port(const scope& s, int port) const
 value simulator::port_value(const scope& s, int port) const
 {
     int n = net_of_port(s, port);
-    return n < 0 ? floating(s.cell->ports[port].width) : net_states[n].v;
+    return n < 0 ? floating(s.cell->ports[port].width) : net_value(n);
 }
 
 void simulator::set_input(int port, value v)
@@ -243,9 +334,9 @@ void simulator::reset()
         schedule(i);
     }
 
-    for (int n = 0; n < (int)net_states.size(); n++) {
-        net_states[n].v = floating(nets[n].width);
-        update_net(n);
+    for (int n = 0; n < (int)nodes.size(); n++) {
+        nodes[n].v = floating(nodes[n].width);
+        update_node(n);
     }
 
     settle();
@@ -260,24 +351,33 @@ void simulator::schedule(int instance)
 
 void simulator::update_net(int n)
 {
-    auto& net = nets[n];
-    auto& st = net_states[n];
+    for (auto& sl : nets[n].slices)
+        update_node(sl.node);
+}
+
+void simulator::update_node(int n)
+{
+    auto& nd = nodes[n];
 
     value v;
-    if (net.width_error) {
-        v = unknown(net.width);
+    if (nd.width_error) {
+        v = unknown(nd.width);
     } else {
+        // each driver drives its bits, the others are z for it
         std::vector<value> drivers;
-        for (auto [i, p] : st.drivers)
-            drivers.push_back(instances[i].ports[p]);
-        for (int k : st.port_drivers)
-            drivers.push_back(inputs[k]);
-        v = resolve(drivers, net.width);
+        for (auto& d : nd.drivers) {
+            auto& src = d.instance < 0 ? inputs[d.port] : instances[d.instance].ports[d.port];
+            auto m = mask(d.width);
+            auto others = mask(nd.width) & ~(m << d.dst_bit);
+            drivers.push_back({((src.bits >> d.src_bit) & m) << d.dst_bit, ((src.x >> d.src_bit) & m) << d.dst_bit,
+                (((src.z >> d.src_bit) & m) << d.dst_bit) | others});
+        }
+        v = resolve(drivers, nd.width);
     }
 
-    if (v == st.v) return;
-    st.v = v;
-    for (int r : st.readers)
+    if (v == nd.v) return;
+    nd.v = v;
+    for (int r : nd.readers)
         schedule(r);
 }
 
@@ -317,7 +417,7 @@ void simulator::settle()
                 else if (nets[n].width_error)
                     s.ports[p] = unknown(s.widths[p]);
                 else
-                    s.ports[p] = net_states[n].v;
+                    s.ports[p] = net_value(n);
             }
 
             before = s.ports;

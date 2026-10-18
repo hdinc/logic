@@ -11,7 +11,8 @@ namespace logic::builtin {
 // in one place
 class primitive : public model::primitive {
 public:
-    // the parameters are resolved
+    // the parameters are resolved. null for primitives that are only wiring
+    // (see cell_interface::links).
     virtual std::unique_ptr<sim::component> create(const model::param_values& params) const = 0;
 };
 
@@ -27,5 +28,7 @@ void add_gates(model::primitive_registry& r);
 void add_sources(model::primitive_registry& r);
 // register
 void add_memory(model::primitive_registry& r);
+// splitter
+void add_wiring(model::primitive_registry& r);
 
 }

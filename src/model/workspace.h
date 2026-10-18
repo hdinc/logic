@@ -14,6 +14,8 @@ namespace logic::model {
 struct interface_view {
     const std::vector<port>* ports = nullptr;
     const model::symbol* symbol = nullptr;
+    // never null when the view is valid, empty for schematic cells
+    const std::vector<bit_link>* links = nullptr;
 
     explicit operator bool() const { return symbol != nullptr; }
 };

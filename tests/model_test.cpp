@@ -304,6 +304,12 @@ static void test_builtins()
                 CHECK(on_grid(pin.pos));
                 CHECK(std::any_of(iface.ports.begin(), iface.ports.end(), [&](auto& port) { return port.id == pin.port; }));
             }
+            // linked bits exist
+            for (auto& l : iface.links) {
+                CHECK(l.a >= 0 && l.a < (int)iface.ports.size() && l.b >= 0 && l.b < (int)iface.ports.size());
+                CHECK(l.width > 0 && l.a_bit >= 0 && l.b_bit >= 0);
+                CHECK(l.a_bit + l.width <= iface.ports[l.a].width && l.b_bit + l.width <= iface.ports[l.b].width);
+            }
             // no two pins at the same place
             for (size_t a = 0; a < iface.symbol.pins.size(); a++)
                 for (size_t b = a + 1; b < iface.symbol.pins.size(); b++)

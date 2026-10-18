@@ -122,10 +122,20 @@ void draw_port(renderer& r, const glm::mat4& vp, const model::port& p, glm::vec4
         r.text(vp, label, pos + glm::vec2{8, -3}, 10.0f, color, align::left);
 }
 
-void draw_wire(renderer& r, const glm::mat4& vp, const model::wire& w, glm::vec4 color)
+void draw_wire(renderer& r, const glm::mat4& vp, const model::wire& w, glm::vec4 color, bool bus)
 {
     r.g.setColor(color);
-    r.g.line(vp, w.a, w.b);
+    if (!bus) {
+        r.g.line(vp, w.a, w.b);
+    } else if (w.a.x == w.b.x || w.a.y == w.b.y) {
+        r.g.rect(vp, glm::min(w.a, w.b) - 1, glm::max(w.a, w.b) + 1, true);
+    } else {
+        // lines have no width, a few parallel ones
+        auto n = glm::normalize(glm::vec2(w.b - w.a));
+        n = {-n.y, n.x};
+        for (float d : {-0.8f, -0.4f, 0.0f, 0.4f, 0.8f})
+            r.g.line(vp, glm::vec2(w.a) + d * n, glm::vec2(w.b) + d * n);
+    }
     r.g.rect(vp, glm::vec2(w.a) - 0.75f, glm::vec2(w.a) + 0.75f, true);
     r.g.rect(vp, glm::vec2(w.b) - 0.75f, glm::vec2(w.b) + 0.75f, true);
 }
