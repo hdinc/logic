@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../model/workspace.h"
+#include "../sim/value.h"
 
 #include <Hd/Graphics2D.h>
 #include <Hd/Shader.h>
@@ -19,6 +20,13 @@ constexpr glm::vec4 pin{0.3f, 0.5f, 1.0f, 1.0f};
 constexpr glm::vec4 control_point{1.0f, 0.2f, 0.2f, 1.0f};
 constexpr glm::vec4 error{1.0f, 0.25f, 0.25f, 1.0f};
 constexpr glm::vec4 preview{0.6f, 0.6f, 0.6f, 1.0f};
+
+// signal values while simulating, like logisim
+constexpr glm::vec4 high{0.15f, 0.95f, 0.15f, 1.0f};
+constexpr glm::vec4 low{0.05f, 0.45f, 0.05f, 1.0f};
+constexpr glm::vec4 unknown{1.0f, 0.2f, 0.2f, 1.0f};
+constexpr glm::vec4 floating{0.3f, 0.5f, 1.0f, 1.0f};
+constexpr glm::vec4 bus{0.55f, 0.8f, 0.95f, 1.0f};
 }
 
 enum class align {
@@ -58,6 +66,13 @@ void draw_instance(renderer& r, const glm::mat4& vp, const model::workspace& ws,
 
 // connector of a port inside its cell's schematic
 void draw_port(renderer& r, const glm::mat4& vp, const model::port& p, glm::vec4 color);
+
+// color of a wire carrying the value. width 0 is a net without ports.
+glm::vec4 value_color(const sim::value& v, int width);
+
+// value of a port while simulating: inside the connector for single bits,
+// above it for buses
+void draw_port_value(renderer& r, const glm::mat4& vp, const model::port& p, const sim::value& v);
 
 void draw_wire(renderer& r, const glm::mat4& vp, const model::wire& w, glm::vec4 color);
 

@@ -25,7 +25,47 @@ std::string format_value(int64_t value, int width)
     return buf;
 }
 
-class constant : public model::primitive {
+class constant_component : public sim::component {
+public:
+    explicit constant_component(sim::value v)
+        : v(v)
+    {
+    }
+
+    void eval(std::span<sim::value> ports) override { ports[0] = v; }
+
+private:
+    sim::value v;
+};
+
+// low for `low` ticks, then high for `high` ticks
+class clock_component : public sim::component {
+public:
+    clock_component(int64_t high, int64_t low)
+        : high(high)
+        , low(low)
+    {
+    }
+
+    void eval(std::span<sim::value> ports) override { ports[0] = sim::known(level(), 1); }
+
+    bool tick() override
+    {
+        bool before = level();
+        phase = (phase + 1) % (high + low);
+        return level() != before;
+    }
+
+    void reset() override { phase = 0; }
+
+private:
+    bool level() const { return phase >= low; }
+
+    int64_t high, low;
+    int64_t phase = 0;
+};
+
+class constant : public primitive {
 public:
     std::string kind() const override { return "constant"; }
     std::string name() const override { return "Constant"; }
@@ -57,9 +97,15 @@ public:
         b.port("out", direction::output, width, {grid, 0});
         return b.finish();
     }
+
+    std::unique_ptr<sim::component> create(const model::param_values& v) const override
+    {
+        int width = (int)model::get_int(v, "width");
+        return std::make_unique<constant_component>(sim::known((uint64_t)model::get_int(v, "value"), width));
+    }
 };
 
-class clock : public model::primitive {
+class clock : public primitive {
 public:
     std::string kind() const override { return "clock"; }
     std::string name() const override { return "Clock"; }
@@ -81,6 +127,11 @@ public:
         b.line({0, 0}, {grid, 0});
         b.port("clk", direction::output, 1, {grid, 0});
         return b.finish();
+    }
+
+    std::unique_ptr<sim::component> create(const model::param_values& v) const override
+    {
+        return std::make_unique<clock_component>(model::get_int(v, "high"), model::get_int(v, "low"));
     }
 };
 

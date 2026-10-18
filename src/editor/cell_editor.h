@@ -9,7 +9,9 @@
 
 namespace logic::editor {
 
-// schematic and symbol view of one cell, switched with tab
+// schematic and symbol view of one cell, switched with tab. f5 switches to
+// simulate mode: the schematic can't be edited then, it shows the values and
+// the inputs are clicked to toggle them.
 class cell_editor {
 public:
     explicit cell_editor(context ctx);
@@ -23,7 +25,12 @@ public:
 
     void property_panel();
 
-    // ignored while a tool is busy, e.g. during a drag
+    bool simulating() const { return simulation != nullptr; }
+    // ignored while a tool is busy
+    void start_simulation();
+    void stop_simulation();
+
+    // ignored while a tool is busy (e.g. during a drag) or simulating
     bool can_undo() const;
     bool can_redo() const;
     void undo();
@@ -33,6 +40,10 @@ public:
 
 private:
     void toolbar();
+    void edit_toolbar();
+    void sim_toolbar();
+    void sim_inputs(bool hovered);
+    void sim_panel();
     void place_popup();
     void open_place_popup();
     bool busy() const { return schematic.busy() || symbol.busy(); }
@@ -45,6 +56,11 @@ private:
 
     bool focus_search = false;
     std::string search;
+
+    std::unique_ptr<sim::simulator> simulation;
+    bool running = false;
+    float ticks_per_second = 10.0f;
+    double tick_accum = 0.0;
 };
 
 }

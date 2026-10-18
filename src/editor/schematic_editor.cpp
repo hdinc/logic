@@ -422,27 +422,38 @@ void schematic_editor::draw()
     validate_selection();
 
     std::map<glm::ivec2, int, ivec2_less> endpoint_count;
+    std::map<glm::ivec2, glm::vec4, ivec2_less> junction_color;
 
     for (auto& w : sch.wires) {
         bool sel = is_selected({handle::wire_a, w.id}) && is_selected({handle::wire_b, w.id});
-        render::draw_wire(r, vp, w, sel ? render::colors::selection : render::colors::wire);
+        auto color = sel ? render::colors::selection : render::colors::wire;
+        if (sim) {
+            int n = sim->nets().net_of_wire(w.id);
+            color = n < 0 ? render::colors::floating : render::value_color(sim->net_value(n), sim->net_width(n));
+        }
+        render::draw_wire(r, vp, w, color);
         endpoint_count[w.a]++;
         endpoint_count[w.b]++;
+        junction_color[w.a] = junction_color[w.b] = sim ? color : render::colors::wire;
     }
 
     // junction dots where three or more wires meet
-    r.g.setColor(render::colors::wire);
-    for (auto& [p, n] : endpoint_count)
-        if (n >= 3) r.g.circle(vp, p, 2.0f, true);
+    for (auto& [p, n] : endpoint_count) {
+        if (n < 3) continue;
+        r.g.setColor(junction_color[p]);
+        r.g.circle(vp, p, 2.0f, true);
+    }
 
     for (auto& i : sch.instances) {
         bool sel = is_selected({handle::instance, i.id});
         render::draw_instance(r, vp, ctx.ws, i, sel ? render::colors::selection : render::colors::symbol);
     }
 
-    for (auto& p : ctx.cell.ports) {
+    for (int k = 0; k < (int)ctx.cell.ports.size(); k++) {
+        auto& p = ctx.cell.ports[k];
         bool sel = is_selected({handle::port, p.id});
         render::draw_port(r, vp, p, sel ? render::colors::selection : render::colors::symbol);
+        if (sim) render::draw_port_value(r, vp, p, sim->port_value(k));
     }
 
     // selected wire endpoints
@@ -455,7 +466,7 @@ void schematic_editor::draw()
         }
     }
 
-    active->draw(*this);
+    if (!sim) active->draw(*this);
 }
 
 void schematic_editor::property_panel()

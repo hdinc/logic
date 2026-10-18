@@ -3,6 +3,7 @@
 #include "canvas.h"
 #include "context.h"
 #include "tool.h"
+#include "../sim/simulator.h"
 
 #include <memory>
 #include <optional>
@@ -55,6 +56,10 @@ public:
     void cell_replaced();
 
     canvas view;
+
+    // while set, wires and ports show the simulated values and the tools are
+    // not drawn. the simulator must be built from this cell.
+    const sim::simulator* sim = nullptr;
 
     // used by the tools
 

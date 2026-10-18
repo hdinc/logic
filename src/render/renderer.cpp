@@ -130,4 +130,25 @@ void draw_wire(renderer& r, const glm::mat4& vp, const model::wire& w, glm::vec4
     r.g.rect(vp, glm::vec2(w.b) - 0.75f, glm::vec2(w.b) + 0.75f, true);
 }
 
+glm::vec4 value_color(const sim::value& v, int width)
+{
+    if (width == 0) return colors::floating;
+    auto m = sim::mask(width);
+    if ((v.z & m) == m) return colors::floating;
+    if ((v.x | v.z) & m) return colors::unknown;
+    if (width > 1) return colors::bus;
+    return (v.bits & 1) ? colors::high : colors::low;
+}
+
+void draw_port_value(renderer& r, const glm::mat4& vp, const model::port& p, const sim::value& v)
+{
+    auto color = value_color(v, p.width);
+    auto str = sim::to_string(v, p.width);
+    glm::vec2 pos = p.pos;
+    if (p.width == 1)
+        r.text(vp, str, pos - glm::vec2{0, 3}, 8.0f, color, align::center);
+    else
+        r.text(vp, str, pos + glm::vec2{0, 8}, 7.0f, color, align::center);
+}
+
 }

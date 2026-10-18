@@ -29,6 +29,87 @@ void width_label(builder& b, int width, glm::ivec2 pos)
     if (width > 1) b.text(pos, std::to_string(width), 6.0f);
 }
 
+using sim::value;
+
+enum class op_t {
+    and_op,
+    or_op,
+    xor_op
+};
+
+// inputs first, the output last. inputs that are completely z (usually not
+// connected) are ignored like in logisim, other x and z bits make the
+// result unknown unless it's decided by the known bits.
+class gate_component : public sim::component {
+public:
+    gate_component(op_t op, bool negate, int inputs, int width)
+        : op(op)
+        , negate(negate)
+        , inputs(inputs)
+        , width(width)
+    {
+    }
+
+    void eval(std::span<value> ports) override
+    {
+        auto m = sim::mask(width);
+        uint64_t one = 0, zero = 0, unk = 0, parity = 0;
+        bool any = false;
+
+        for (int k = 0; k < inputs; k++) {
+            auto& v = ports[k];
+            if ((v.z & m) == m) continue;
+            any = true;
+            auto u = (v.x | v.z) & m;
+            unk |= u;
+            one |= v.bits & ~u;
+            zero |= ~v.bits & ~u & m;
+            parity ^= v.bits & ~u;
+        }
+
+        value r = sim::unknown(width);
+        if (any) {
+            switch (op) {
+            case op_t::and_op: r = {~zero & ~unk & m, unk & ~zero, 0}; break;
+            case op_t::or_op: r = {one, unk & ~one, 0}; break;
+            case op_t::xor_op: r = {parity & ~unk, unk, 0}; break;
+            }
+        }
+        if (negate) r.bits = ~r.bits & ~r.x & m;
+
+        ports[inputs] = r;
+    }
+
+private:
+    op_t op;
+    bool negate;
+    int inputs;
+    int width;
+};
+
+// in, out
+class buffer_component : public sim::component {
+public:
+    buffer_component(bool negate, int width)
+        : negate(negate)
+        , width(width)
+    {
+    }
+
+    void eval(std::span<value> ports) override
+    {
+        auto m = sim::mask(width);
+        auto& in = ports[0];
+        auto x = (in.x | in.z) & m;
+        auto bits = negate ? ~in.bits & ~x & m : in.bits & ~x;
+        ports[1] = {bits, x, 0};
+    }
+
+private:
+    bool negate;
+    int width;
+};
+
 // output lead from the tip of the body at x to the pin one grid further,
 // with a bubble if negated
 void output(builder& b, int x, bool negate, int width)
@@ -43,14 +124,8 @@ void output(builder& b, int x, bool negate, int width)
     width_label(b, width, {x + 2, 2});
 }
 
-class gate : public model::primitive {
+class gate : public primitive {
 public:
-    enum op_t {
-        and_op,
-        or_op,
-        xor_op
-    };
-
     gate(std::string kind, std::string name, op_t op, bool negate, std::string description)
         : k(std::move(kind))
         , n(std::move(name))
@@ -87,7 +162,7 @@ public:
 
         builder b;
 
-        if (op == and_op) {
+        if (op == op_t::and_op) {
             b.line({back, ext}, {back, -ext});
             b.line({back, h}, {0, h});
             b.line({back, -h}, {0, -h});
@@ -97,7 +172,7 @@ public:
             b.bezier({back, h}, {back + h * 6 / 10, 0}, {back, -h});
             b.bezier({back, h}, {h * 3 / 10, h}, {h, 0});
             b.bezier({back, -h}, {h * 3 / 10, -h}, {h, 0});
-            if (op == xor_op) b.bezier({back - 6, h}, {back - 6 + h * 6 / 10, 0}, {back - 6, -h});
+            if (op == op_t::xor_op) b.bezier({back - 6, h}, {back - 6 + h * 6 / 10, 0}, {back - 6, -h});
             if (ext > h) {
                 b.line({back, h}, {back, ext});
                 b.line({back, -h}, {back, -ext});
@@ -108,7 +183,7 @@ public:
             int y = ys[i];
             int x = back;
             // leads end at the curved back of or gates
-            if (op != and_op && std::abs(y) < h) {
+            if (op != op_t::and_op && std::abs(y) < h) {
                 float t = (1.0f - float(y) / h) / 2.0f;
                 x = back + (int)std::lround(2.0f * t * (1.0f - t) * h * 6 / 10);
             }
@@ -120,13 +195,18 @@ public:
         return b.finish();
     }
 
+    std::unique_ptr<sim::component> create(const model::param_values& v) const override
+    {
+        return std::make_unique<gate_component>(op, negate, (int)model::get_int(v, "inputs"), (int)model::get_int(v, "width"));
+    }
+
 private:
     std::string k, n, d;
     op_t op;
     bool negate;
 };
 
-class buffer : public model::primitive {
+class buffer : public primitive {
 public:
     explicit buffer(bool negate)
         : negate(negate)
@@ -154,6 +234,11 @@ public:
         return b.finish();
     }
 
+    std::unique_ptr<sim::component> create(const model::param_values& v) const override
+    {
+        return std::make_unique<buffer_component>(negate, (int)model::get_int(v, "width"));
+    }
+
 private:
     bool negate;
 };
@@ -162,12 +247,12 @@ private:
 
 void add_gates(model::primitive_registry& r)
 {
-    r.add(std::make_unique<gate>("and", "AND", gate::and_op, false, "1 if all inputs are 1"));
-    r.add(std::make_unique<gate>("or", "OR", gate::or_op, false, "1 if any input is 1"));
-    r.add(std::make_unique<gate>("xor", "XOR", gate::xor_op, false, "1 if an odd number of inputs is 1"));
-    r.add(std::make_unique<gate>("nand", "NAND", gate::and_op, true, "0 if all inputs are 1"));
-    r.add(std::make_unique<gate>("nor", "NOR", gate::or_op, true, "0 if any input is 1"));
-    r.add(std::make_unique<gate>("xnor", "XNOR", gate::xor_op, true, "1 if an even number of inputs is 1"));
+    r.add(std::make_unique<gate>("and", "AND", op_t::and_op, false, "1 if all inputs are 1"));
+    r.add(std::make_unique<gate>("or", "OR", op_t::or_op, false, "1 if any input is 1"));
+    r.add(std::make_unique<gate>("xor", "XOR", op_t::xor_op, false, "1 if an odd number of inputs is 1"));
+    r.add(std::make_unique<gate>("nand", "NAND", op_t::and_op, true, "0 if all inputs are 1"));
+    r.add(std::make_unique<gate>("nor", "NOR", op_t::or_op, true, "0 if any input is 1"));
+    r.add(std::make_unique<gate>("xnor", "XNOR", op_t::xor_op, true, "1 if an even number of inputs is 1"));
     r.add(std::make_unique<buffer>(true));
     r.add(std::make_unique<buffer>(false));
 }
