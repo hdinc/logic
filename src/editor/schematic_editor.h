@@ -6,8 +6,10 @@
 #include "../netlist/netlist.h"
 #include "../sim/simulator.h"
 
+#include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace logic::editor {
@@ -42,9 +44,12 @@ public:
     // draws into the currently bound framebuffer, after view.set_size()
     void draw();
 
-    // width, or the simulated value, of the wire under the mouse. call
-    // while the canvas is hovered.
-    void wire_tooltip();
+    // the pin or port connector under the mouse (name, direction, width,
+    // description) or the width of the wire, with the simulated values.
+    // shown after the mouse stayed on it for tooltip_delay, at a fixed
+    // place. call while the canvas is hovered.
+    void hover_tooltip();
+    static constexpr double tooltip_delay = 1.0;
 
     void property_panel();
 
@@ -114,6 +119,19 @@ public:
 
 private:
     void set_tool(tool_kind k, std::unique_ptr<tool<schematic_editor>> t);
+
+    // what is under the mouse for the tooltip, empty key if nothing
+    struct hover_target {
+        std::string key;
+        std::function<void()> show;
+    };
+    hover_target hover_at(glm::vec2 p) const;
+
+    struct {
+        std::string key;
+        double since = 0.0;
+        std::optional<ImVec2> pos;
+    } hover;
 
     // connectivity for drawing buses and width errors while editing,
     // extracted again every frame

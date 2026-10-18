@@ -96,7 +96,7 @@ public:
         b.rect({right - w, -5}, {right, 5});
         b.text({right - w + (w - text_w) / 2, -2}, str, size);
         b.line({right, 0}, {grid, 0});
-        b.port("out", direction::output, width, {grid, 0});
+        b.port("out", direction::output, width, {grid, 0}, "the value");
         return b.finish();
     }
 
@@ -128,7 +128,7 @@ public:
         b.rect({-21, -5}, {-5, 5});
         b.polyline({{-19, -3}, {-15, -3}, {-15, 3}, {-11, 3}, {-11, -3}, {-7, -3}});
         b.line({-5, 0}, {grid, 0});
-        b.port("clk", direction::output, 1, {grid, 0});
+        b.port("clk", direction::output, 1, {grid, 0}, "starts at 0, toggles while the simulation runs");
         return b.finish();
     }
 

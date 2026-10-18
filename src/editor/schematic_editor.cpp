@@ -203,7 +203,7 @@ void schematic_editor::process_inputs(bool hovered)
     active->update(*this, hovered);
     if (active->done) set_tool(tool_kind::select);
 
-    if (hovered && kind == tool_kind::select) wire_tooltip();
+    if (hovered && kind == tool_kind::select) hover_tooltip();
 }
 
 std::vector<schematic_editor::handle> schematic_editor::hit_test(glm::vec2 p)
@@ -243,36 +243,120 @@ model::id schematic_editor::wire_at(glm::vec2 p) const
     return model::no_id;
 }
 
-void schematic_editor::wire_tooltip()
+namespace {
+
+// name, direction, width and description of a port, the value if there is one
+void port_tooltip(const std::string& name, const model::port& p, const sim::value* v)
 {
     using namespace ImGui;
 
-    auto w = wire_at(view.mouse_world());
-    if (w == model::no_id || busy()) return;
+    BeginTooltip();
+    PushTextWrapPos(GetFontSize() * 24);
+    TextUnformatted(name.c_str());
+    SameLine();
+    TextDisabled(p.width == 1 ? "%s, %d bit" : "%s, %d bits", model::to_string(p.dir), p.width);
+    if (!p.description.empty()) TextUnformatted(p.description.c_str());
+    if (v) {
+        auto c = render::value_color(*v, p.width);
+        auto str = sim::to_string(*v, p.width);
+        if (p.width > 1 && v->fully_known(p.width)) str += " (" + std::to_string(v->bits) + ")";
+        TextColored({c.r, c.g, c.b, c.a}, "%s", str.c_str());
+    }
+    PopTextWrapPos();
+    EndTooltip();
+}
+
+}
+
+schematic_editor::hover_target schematic_editor::hover_at(glm::vec2 m) const
+{
+    float tol = std::max(3.0f, view.pixels(6.0f));
+
+    // the cell's own port connectors
+    for (int k = 0; k < (int)ctx.cell.ports.size(); k++) {
+        auto& p = ctx.cell.ports[k];
+        bool near = glm::length(m - glm::vec2(p.pos)) <= std::max(6.0f, tol) || glm::length(m - glm::vec2(model::connection_point(p))) <= tol;
+        if (!near) continue;
+        std::optional<sim::value> v;
+        if (sim) v = sim->port_value(*sim_scope, k);
+        return {"port " + std::to_string(p.id), [p, v] { port_tooltip(p.name, p, v ? &*v : nullptr); }};
+    }
+
+    // pins of instances
+    for (int i = (int)sch.instances.size() - 1; i >= 0; i--) {
+        auto& inst = sch.instances[i];
+        auto iface = ctx.ws.interface_of(inst);
+        if (!iface) continue;
+        for (auto& pin : iface.symbol->pins) {
+            if (glm::length(m - glm::vec2(model::pin_position(inst, pin))) > tol) continue;
+            for (int k = 0; k < (int)iface.ports->size(); k++) {
+                auto& p = (*iface.ports)[k];
+                if (p.id != pin.port) continue;
+                std::optional<sim::value> v;
+                if (sim) {
+                    v = sim::floating(p.width);
+                    auto& nets = sim_scope->nets->instance_nets;
+                    int local = i < (int)nets.size() && k < (int)nets[i].size() ? nets[i][k] : -1;
+                    if (local >= 0) v = sim->net_value(sim_scope->flat_net[local]);
+                }
+                auto name = inst.name + "." + p.name;
+                return {"pin " + std::to_string(inst.id) + " " + std::to_string(p.id), [name, p, v] { port_tooltip(name, p, v ? &*v : nullptr); }};
+            }
+        }
+    }
+
+    // wires, by net so moving along connected wires keeps the tooltip
+    auto w = wire_at(m);
+    if (w == model::no_id) return {};
 
     if (sim) {
         int n = sim->net_of_wire(*sim_scope, w);
-        if (n < 0) return;
+        if (n < 0) return {};
         int width = sim->net_width(n);
         auto v = sim->net_value(n);
-        if (width > 1 && v.fully_known(width))
-            SetTooltip("%d bits: %s (%llu)", width, sim::to_string(v, width).c_str(), (unsigned long long)v.bits);
-        else if (width > 1)
-            SetTooltip("%d bits: %s", width, sim::to_string(v, width).c_str());
-        else
-            SetTooltip("%s", width == 0 ? "not connected to a port" : sim::to_string(v, width).c_str());
-        return;
+        return {"net " + std::to_string(n), [width, v] {
+                    using namespace ImGui;
+                    if (width > 1 && v.fully_known(width))
+                        SetTooltip("%d bits: %s (%llu)", width, sim::to_string(v, width).c_str(), (unsigned long long)v.bits);
+                    else if (width > 1)
+                        SetTooltip("%d bits: %s", width, sim::to_string(v, width).c_str());
+                    else
+                        SetTooltip("%s", width == 0 ? "not connected to a port" : sim::to_string(v, width).c_str());
+                }};
     }
 
     int n = nets.net_of_wire(w);
-    if (n < 0) return;
-    auto& net = nets.nets[n];
-    if (net.width_error)
-        SetTooltip("ports of different widths are connected");
-    else if (net.width == 0)
-        SetTooltip("not connected to a port");
-    else
-        SetTooltip(net.width == 1 ? "%d bit" : "%d bits", net.width);
+    if (n < 0) return {};
+    auto net = nets.nets[n];
+    return {"net " + std::to_string(n), [net] {
+                using namespace ImGui;
+                if (net.width_error)
+                    SetTooltip("ports of different widths are connected");
+                else if (net.width == 0)
+                    SetTooltip("not connected to a port");
+                else
+                    SetTooltip(net.width == 1 ? "%d bit" : "%d bits", net.width);
+            }};
+}
+
+void schematic_editor::hover_tooltip()
+{
+    using namespace ImGui;
+
+    auto t = busy() ? hover_target{} : hover_at(view.mouse_world());
+    if (t.key != hover.key) {
+        hover = {t.key, GetTime(), std::nullopt};
+        return;
+    }
+    if (t.key.empty() || GetTime() - hover.since < tooltip_delay) return;
+
+    // stays where it first appeared while the mouse is on the same thing
+    if (!hover.pos) {
+        auto m = GetMousePos();
+        hover.pos = ImVec2{m.x + 16, m.y + 16};
+    }
+    SetNextWindowPos(*hover.pos);
+    t.show();
 }
 
 std::vector<schematic_editor::handle> schematic_editor::handles_in(model::rect rc)
@@ -590,6 +674,10 @@ void schematic_editor::property_panel()
             p->width = glm::clamp(p->width, 1, 64);
             ctx.modified();
         }
+
+        TextUnformatted("Description");
+        if (input_multiline("##description", p->description, {-FLT_MIN, GetTextLineHeight() * 4})) ctx.modified();
+        SetItemTooltip("shown when hovering the pin of an instance of this cell");
         return;
     }
 

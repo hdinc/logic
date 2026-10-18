@@ -32,4 +32,17 @@ inline bool input_string(const char* label, std::string& s, ImGuiInputTextFlags 
     return false;
 }
 
+// multi line text input for std::string
+inline bool input_multiline(const char* label, std::string& s, ImVec2 size = {0, 0})
+{
+    char buf[2048];
+    s.copy(buf, sizeof(buf) - 1);
+    buf[std::min(s.size(), sizeof(buf) - 1)] = 0;
+    if (ImGui::InputTextMultiline(label, buf, sizeof(buf), size) && s != buf) {
+        s = buf;
+        return true;
+    }
+    return false;
+}
+
 }

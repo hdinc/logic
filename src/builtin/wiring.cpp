@@ -113,7 +113,7 @@ public:
         auto stroke = [](int bits) { return bits > 1 ? model::bus_stroke : 0.0f; };
         b.line({0, 0}, {grid, -grid}, stroke(width));
         if (n > 1) b.line({grid, -grid}, {grid, -n * grid}, stroke(width));
-        b.port("bus", direction::inout, width, {0, 0});
+        b.port("bus", direction::inout, width, {0, 0}, "the whole bus");
 
         for (int k = 0; k < n; k++) {
             int y = -(k + 1) * grid;
@@ -121,7 +121,7 @@ public:
             b.line({grid, y}, {2 * grid, y}, stroke(x.width()));
             // above the line, clear of a thick one
             b.text({grid + 3, y + 3}, label(x), 4.5f);
-            b.port("end" + std::to_string(k), direction::inout, x.width(), {2 * grid, y});
+            b.port("end" + std::to_string(k), direction::inout, x.width(), {2 * grid, y}, "bits " + label(x) + " of the bus");
         }
 
         auto r = b.finish();

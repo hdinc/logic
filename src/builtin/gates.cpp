@@ -120,7 +120,7 @@ void output(builder& b, int x, bool negate, int width)
     } else {
         b.line({x, 0}, {x + grid, 0});
     }
-    b.port("out", direction::output, width, {x + grid, 0});
+    b.port("out", direction::output, width, {x + grid, 0}, "result");
     width_label(b, width, {x + 2, 2});
 }
 
@@ -190,7 +190,7 @@ public:
                 x = back + (int)std::lround(2.0f * t * (1.0f - t) * h * 6 / 10);
             }
             b.line({-h - grid, y}, {x, y});
-            b.port("in" + std::to_string(i), direction::input, width, {-h - grid, y});
+            b.port("in" + std::to_string(i), direction::input, width, {-h - grid, y}, "not connected inputs are ignored");
         }
 
         output(b, h, negate, width);
@@ -231,7 +231,7 @@ public:
         builder b;
         b.polyline({{-grid, grid}, {grid, 0}, {-grid, -grid}, {-grid, grid}});
         b.line({-2 * grid, 0}, {-grid, 0});
-        b.port("in", direction::input, width, {-2 * grid, 0});
+        b.port("in", direction::input, width, {-2 * grid, 0}, "input");
         output(b, grid, negate, width);
         return b.finish();
     }

@@ -102,13 +102,15 @@ json to_json(const cell& c)
 
     j["ports"] = json::array();
     for (auto& p : c.ports) {
-        j["ports"].push_back({
+        json jp{
             {"id", p.id},
             {"name", p.name},
             {"dir", to_string(p.dir)},
             {"width", p.width},
             {"pos", vec(p.pos)},
-        });
+        };
+        if (!p.description.empty()) jp["description"] = p.description;
+        j["ports"].push_back(std::move(jp));
     }
 
     auto& sym = j["symbol"];
@@ -167,6 +169,7 @@ cell cell_from_json(const json& j)
         r.dir = direction_from_string(p.at("dir"));
         r.width = p.value("width", 1);
         r.pos = vec(p.at("pos"));
+        r.description = p.value("description", "");
         c.ports.push_back(std::move(r));
     }
 

@@ -20,11 +20,12 @@ void builder::rect(glm::ivec2 min, glm::ivec2 max)
     polyline({min, {max.x, min.y}, max, {min.x, max.y}, min});
 }
 
-void builder::port(std::string name, model::direction dir, int width, glm::ivec2 pin)
+void builder::port(std::string name, model::direction dir, int width, glm::ivec2 pin, std::string description)
 {
     model::port p;
     p.id = next_id++;
     p.name = std::move(name);
+    p.description = std::move(description);
     p.dir = dir;
     p.width = width;
     r.ports.push_back(p);

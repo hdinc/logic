@@ -139,6 +139,7 @@ static void test_save_load(const std::filesystem::path& dir)
     auto& a = ws.create_cell(lib, "and2");
     auto& p = a.add_port(model::direction::output, {50, 0});
     p.width = 8;
+    p.description = "the result\nsecond line";
     a.symbol.shapes.push_back({a.new_id(), model::line{{0, 0}, {10, 0}}, model::bus_stroke});
     a.symbol.shapes.push_back({a.new_id(), model::bezier{{0, 0}, {10, 0}, {5, 5}}});
     a.symbol.shapes.push_back({a.new_id(), model::arc{{0, 10}, {0, -10}, {10, 0}}});

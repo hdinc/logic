@@ -191,7 +191,7 @@ void sim_view::canvas_inputs(bool hovered, schematic_editor& e)
     auto& sc = current();
     auto m = e.view.mouse_world();
 
-    e.wire_tooltip();
+    e.hover_tooltip();
 
     if (IsKeyPressed(ImGuiKey_Space)) sim.tick();
     if (IsKeyPressed(ImGuiKey_Backspace) && !path.empty()) path.pop_back();

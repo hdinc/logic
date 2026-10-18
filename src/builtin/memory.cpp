@@ -64,16 +64,16 @@ public:
 
         b.line({-3 * grid, grid}, {-2 * grid, grid});
         b.text({-18, 7}, "D", 6.0f);
-        b.port("d", direction::input, width, {-3 * grid, grid});
+        b.port("d", direction::input, width, {-3 * grid, grid}, "data, stored on the rising edge of clk");
 
         // clock input marked with a triangle
         b.line({-3 * grid, -grid}, {-2 * grid, -grid});
         b.polyline({{-2 * grid, -grid + 4}, {-14, -grid}, {-2 * grid, -grid - 4}});
-        b.port("clk", direction::input, 1, {-3 * grid, -grid});
+        b.port("clk", direction::input, 1, {-3 * grid, -grid}, "clock, d is stored when it goes from 0 to 1");
 
         b.line({2 * grid, grid}, {3 * grid, grid});
         b.text({12, 7}, "Q", 6.0f);
-        b.port("q", direction::output, width, {3 * grid, grid});
+        b.port("q", direction::output, width, {3 * grid, grid}, "the stored value, 0 after reset");
 
         if (width > 1) b.text({-6, -26}, std::to_string(width), 6.0f);
         return b.finish();

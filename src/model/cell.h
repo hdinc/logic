@@ -14,6 +14,8 @@ struct port {
     std::string name;
     direction dir = direction::input;
     int width = 1;
+    // shown when hovering the pin of an instance
+    std::string description;
 
     // position of the port's connector inside the schematic. unused for cells
     // that are not implemented by a schematic.
