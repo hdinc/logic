@@ -428,7 +428,7 @@ void schematic_editor::draw()
         bool sel = is_selected({handle::wire_a, w.id}) && is_selected({handle::wire_b, w.id});
         auto color = sel ? render::colors::selection : render::colors::wire;
         if (sim) {
-            int n = sim->nets().net_of_wire(w.id);
+            int n = sim->net_of_wire(*sim_scope, w.id);
             color = n < 0 ? render::colors::floating : render::value_color(sim->net_value(n), sim->net_width(n));
         }
         render::draw_wire(r, vp, w, color);
@@ -453,7 +453,7 @@ void schematic_editor::draw()
         auto& p = ctx.cell.ports[k];
         bool sel = is_selected({handle::port, p.id});
         render::draw_port(r, vp, p, sel ? render::colors::selection : render::colors::symbol);
-        if (sim) render::draw_port_value(r, vp, p, sim->port_value(k));
+        if (sim) render::draw_port_value(r, vp, p, sim->port_value(*sim_scope, k));
     }
 
     // selected wire endpoints

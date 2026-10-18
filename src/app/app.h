@@ -30,7 +30,10 @@ private:
     void library_panel();
     void editor_panel();
     void properties_panel();
+    void hierarchy_panel();
     void messages_panel();
+    void update_simulations();
+    void open_instance_tabs();
     void exit_dialog();
 
     void open_editor(model::cell& c);
@@ -57,6 +60,18 @@ private:
     std::vector<std::unique_ptr<editor::cell_editor>> editors;
     model::id active_cell = model::no_id;
     model::id select_tab = model::no_id;
+
+    // instances of running simulations opened in their own tab
+    struct instance_tab {
+        int id;
+        std::unique_ptr<editor::sim_view> view;
+    };
+    std::vector<instance_tab> instance_tabs;
+    int next_instance_tab = 1;
+    int select_instance_tab = 0;
+    // the sim view in the active tab: an instance tab or a simulating editor
+    editor::sim_view* active_view = nullptr;
+    editor::sim_view* active_instance_tab = nullptr;
 
     model::id renaming = model::no_id;
     std::string rename_buf;

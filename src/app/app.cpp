@@ -86,9 +86,13 @@ void app::draw_gui()
     if (IsKeyPressed(ImGuiKey_F1)) show_demo = !show_demo;
     if (show_demo) ShowDemoWindow(&show_demo);
 
+    update_simulations();
+
     library_panel();
     editor_panel();
+    open_instance_tabs();
     properties_panel();
+    hierarchy_panel();
     messages_panel();
     exit_dialog();
 }
@@ -107,7 +111,10 @@ void app::default_layout(unsigned int dockspace)
     ImGuiID right = DockBuilderSplitNode(center, ImGuiDir_Right, 0.22f, nullptr, &center);
     ImGuiID bottom = DockBuilderSplitNode(center, ImGuiDir_Down, 0.15f, nullptr, &center);
 
+    ImGuiID left_bottom = DockBuilderSplitNode(left, ImGuiDir_Down, 0.4f, nullptr, &left);
+
     DockBuilderDockWindow("Libraries", left);
+    DockBuilderDockWindow("Hierarchy", left_bottom);
     DockBuilderDockWindow("Properties", right);
     DockBuilderDockWindow("Messages", bottom);
     DockBuilderDockWindow("Editor", center);
@@ -167,6 +174,8 @@ void app::menu_bar()
         BulletText("F5: start / stop simulating the schematic");
         BulletText("Click an input port: toggle it, wider inputs are set in the properties");
         BulletText("Space: one clock tick");
+        BulletText("Double click an instance: look inside, Backspace: back to the parent");
+        BulletText("Right click an instance: open it in a new tab");
         if (Button("Close")) CloseCurrentPopup();
         EndPopup();
     }
@@ -294,14 +303,17 @@ void app::editor_panel()
 
     Begin("Editor", nullptr, ImGuiWindowFlags_NoCollapse);
 
-    if (editors.empty()) {
+    if (editors.empty() && instance_tabs.empty()) {
         TextDisabled("Open a cell from the library panel, or create one with 'New cell'.");
     }
 
     active_cell = model::no_id;
+    active_view = nullptr;
+    active_instance_tab = nullptr;
     model::id close = model::no_id;
+    int close_instance = 0;
 
-    if (!editors.empty() && BeginTabBar("editors", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs)) {
+    if ((!editors.empty() || !instance_tabs.empty()) && BeginTabBar("editors", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs)) {
         for (auto& e : editors) {
             auto id = e->cell().id;
             // the ### part keeps the tab when the cell is renamed
@@ -317,14 +329,38 @@ void app::editor_panel()
             if (BeginTabItem(label.c_str(), &open, flags)) {
                 active_cell = id;
                 e->gui(editor_tex, editor_fb);
+                active_view = e->simulation_view();
                 EndTabItem();
             }
             if (!open) close = id;
+        }
+
+        for (auto& t : instance_tabs) {
+            // the top cell may be gone already, the tab closes next frame
+            if (t.view->session().stopped) continue;
+            auto label = t.view->title() + "###instance" + std::to_string(t.id);
+
+            ImGuiTabItemFlags flags = 0;
+            if (select_instance_tab == t.id) {
+                flags |= ImGuiTabItemFlags_SetSelected;
+                select_instance_tab = 0;
+            }
+
+            bool open = true;
+            if (BeginTabItem(label.c_str(), &open, flags)) {
+                // f5 in an instance tab stops its simulation
+                if (IsKeyPressed(ImGuiKey_F5)) t.view->session().stopped = true;
+                t.view->gui(editor_tex, editor_fb);
+                active_view = active_instance_tab = t.view.get();
+                EndTabItem();
+            }
+            if (!open) close_instance = t.id;
         }
         EndTabBar();
     }
 
     if (close != model::no_id) close_editor(close);
+    if (close_instance) std::erase_if(instance_tabs, [&](auto& t) { return t.id == close_instance; });
 
     End();
 }
@@ -332,8 +368,67 @@ void app::editor_panel()
 void app::properties_panel()
 {
     ImGui::Begin("Properties");
-    if (auto e = find_editor(active_cell)) e->property_panel();
+    if (active_instance_tab)
+        active_instance_tab->property_panel();
+    else if (auto e = find_editor(active_cell))
+        e->property_panel();
     ImGui::End();
+}
+
+void app::hierarchy_panel()
+{
+    using namespace ImGui;
+
+    // layouts saved before this panel existed: dock it with the libraries
+    auto lib = FindWindowByName("Libraries");
+    if (lib && lib->DockId && !FindWindowSettingsByID(ImHashStr("Hierarchy"))) SetNextWindowDockID(lib->DockId);
+
+    Begin("Hierarchy");
+    if (active_view)
+        active_view->hierarchy_panel();
+    else
+        TextWrapped("Instances of the simulated cell show up here. F5 starts a simulation.");
+    End();
+}
+
+void app::update_simulations()
+{
+    // stopped from an instance tab, the editor might not be visible
+    for (auto& e : editors)
+        if (e->simulation() && e->simulation()->stopped) e->stop_simulation();
+    std::erase_if(instance_tabs, [](auto& t) { return t.view->session().stopped; });
+
+    float dt = ImGui::GetIO().DeltaTime;
+    for (auto& e : editors) {
+        if (auto& s = e->simulation()) s->update(dt);
+    }
+
+    // cells of a running simulation can't be edited elsewhere
+    for (auto& e : editors) {
+        std::string by;
+        for (auto& other : editors) {
+            auto& s = other->simulation();
+            if (other != e && s && s->uses(e->cell().id)) by = other->cell().name;
+        }
+        e->set_locked_by(by);
+    }
+}
+
+void app::open_instance_tabs()
+{
+    std::vector<editor::sim_view*> views;
+    for (auto& e : editors)
+        if (auto v = e->simulation_view()) views.push_back(v);
+    for (auto& t : instance_tabs)
+        views.push_back(t.view.get());
+
+    for (auto v : views) {
+        if (!v->open_in_new_tab) continue;
+        auto view = std::make_unique<editor::sim_view>(ws, renderer, v->session_ptr(), *v->open_in_new_tab);
+        v->open_in_new_tab.reset();
+        select_instance_tab = next_instance_tab;
+        instance_tabs.push_back({next_instance_tab++, std::move(view)});
+    }
 }
 
 void app::messages_panel()

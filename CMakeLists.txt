@@ -48,6 +48,8 @@ add_executable(logic
     src/editor/symbol_editor.cpp
     src/editor/cell_editor.cpp
     src/editor/param_editor.cpp
+    src/editor/sim_session.cpp
+    src/editor/sim_view.cpp
 )
 
 include(Hd/cmake/resource.cmake)
