@@ -9,7 +9,8 @@ namespace logic::builtin {
 // collects the ports, pins and shapes of a primitive's interface
 class builder {
 public:
-    void line(glm::ivec2 a, glm::ivec2 b) { add({model::no_id, model::line{a, b}}); }
+    // width 0 is the normal stroke, see model::bus_stroke for buses
+    void line(glm::ivec2 a, glm::ivec2 b, float width = 0.0f) { add({model::no_id, model::line{a, b}, width}); }
     // quadratic curve from a to b with control point c
     void bezier(glm::ivec2 a, glm::ivec2 c, glm::ivec2 b) { add({model::no_id, model::bezier{a, b, c}}); }
     void circle(glm::ivec2 center, float radius) { add({model::no_id, model::circle{center, radius}}); }

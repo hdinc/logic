@@ -44,6 +44,7 @@ json shape_to_json(const shape& s)
         j["text"] = t->str;
         j["size"] = t->size;
     }
+    if (s.width != 0.0f) j["width"] = s.width;
     return j;
 }
 
@@ -63,6 +64,7 @@ shape shape_from_json(const json& j)
     } else {
         throw std::runtime_error("invalid shape type '" + type + "'");
     }
+    if (j.contains("width")) s.width = std::max(j.at("width").get<float>(), 0.0f);
     return s;
 }
 

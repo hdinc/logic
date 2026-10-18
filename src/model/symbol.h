@@ -35,9 +35,14 @@ struct text {
     bool operator==(const text&) const = default;
 };
 
+// stroke width of buses in schematics, for shapes that draw a bus
+constexpr float bus_stroke = 2.5f;
+
 struct shape {
     model::id id = no_id;
     std::variant<line, bezier, circle, text> geom;
+    // stroke width of lines, beziers and circles, 0 for the normal width
+    float width = 0.0f;
     bool operator==(const shape&) const = default;
 };
 

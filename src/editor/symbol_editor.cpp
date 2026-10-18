@@ -404,6 +404,10 @@ void symbol_editor::property_panel()
                 PopID();
             }
         }
+        if (!std::holds_alternative<model::text>(s->geom)) {
+            if (DragFloat("Width", &s->width, 0.05f, 0.0f, 10.0f, s->width == 0.0f ? "normal" : "%.2f", ImGuiSliderFlags_AlwaysClamp)) ctx.modified();
+            SetItemTooltip("stroke width, 0 is the normal width. %.1f is as thick as a bus.", model::bus_stroke);
+        }
         return;
     }
 

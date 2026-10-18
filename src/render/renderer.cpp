@@ -151,16 +151,22 @@ void draw_pin(renderer& r, glm::vec2 pos)
 void draw_shape(renderer& r, const model::shape& s, glm::ivec2 pos, model::transform xf, glm::vec4 color)
 {
     auto tp = [&](glm::vec2 p) { return glm::vec2(pos) + xf.apply(p); };
+    float w = s.width > 0.0f ? s.width : stroke;
 
     if (auto l = std::get_if<model::line>(&s.geom)) {
-        r.line(tp(l->a), tp(l->b), color);
+        r.line(tp(l->a), tp(l->b), color, w);
     } else if (auto b = std::get_if<model::bezier>(&s.geom)) {
-        r.g.bezier(tp(b->a), tp(b->c), tp(b->b), stroke, color);
+        r.g.bezier(tp(b->a), tp(b->c), tp(b->b), w, color);
     } else if (auto c = std::get_if<model::circle>(&s.geom)) {
-        r.ring(tp(c->center), c->radius, color);
+        r.ring(tp(c->center), c->radius, color, w);
     } else if (auto t = std::get_if<model::text>(&s.geom)) {
-        // text is not rotated, only its anchor moves with the transform
-        r.text(t->str, tp(t->pos), t->size, color);
+        // text is not rotated or mirrored. the box it covers moves with the
+        // transform and the text is drawn in it, so a mirrored symbol keeps
+        // its labels on the same side of its lines.
+        glm::vec2 lo = t->pos;
+        glm::vec2 hi = lo + glm::vec2{r.g.textWidth(t->str, t->size), r.g.font().capHeight() * t->size};
+        auto a = tp(lo), b = tp(hi);
+        r.text(t->str, glm::min(a, b), t->size, color);
     }
 }
 

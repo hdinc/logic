@@ -57,7 +57,7 @@ enum class align {
 // line widths in world units, the grid is model::grid
 constexpr float stroke = 1.0f;
 constexpr float wire_width = 1.0f;
-constexpr float bus_width = 2.5f;
+constexpr float bus_width = model::bus_stroke;
 
 // owns the gl resources shared by all editors. needs a current gl context.
 //

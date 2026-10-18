@@ -109,15 +109,18 @@ public:
 
         // bus on the left, a spine going down, the ends to the right
         builder b;
-        b.line({0, 0}, {grid, -grid});
-        if (n > 1) b.line({grid, -grid}, {grid, -n * grid});
+        // bus lines as thick as bus wires
+        auto stroke = [](int bits) { return bits > 1 ? model::bus_stroke : 0.0f; };
+        b.line({0, 0}, {grid, -grid}, stroke(width));
+        if (n > 1) b.line({grid, -grid}, {grid, -n * grid}, stroke(width));
         b.port("bus", direction::inout, width, {0, 0});
 
         for (int k = 0; k < n; k++) {
             int y = -(k + 1) * grid;
             auto& x = (*ranges)[k];
-            b.line({grid, y}, {2 * grid, y});
-            b.text({grid + 2, y + 1}, label(x), 4.5f);
+            b.line({grid, y}, {2 * grid, y}, stroke(x.width()));
+            // above the line, clear of a thick one
+            b.text({grid + 3, y + 3}, label(x), 4.5f);
             b.port("end" + std::to_string(k), direction::inout, x.width(), {2 * grid, y});
         }
 
