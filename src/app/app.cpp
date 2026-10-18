@@ -278,7 +278,7 @@ void app::menu_bar()
         BulletText("Shift+click while placing: keep placing");
         BulletText("Ctrl+Z: undo, Ctrl+Y / Ctrl+Shift+Z: redo, Ctrl+S: save all");
         SeparatorText("Schematic");
-        BulletText("W: wires (click points, Esc ends the wire, Esc again leaves the tool)");
+        BulletText("W: wires (click points, Esc ends the wire and goes back to select)");
         BulletText("I / O: input / output port, Space: place a cell, R: rotate");
         SeparatorText("Symbol");
         BulletText("P: pin, L: line, B: bezier, A: arc, C: circle, T: text");

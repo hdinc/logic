@@ -102,10 +102,9 @@ public:
         if (!hovered) return;
 
         if (IsKeyPressed(ImGuiKey_Escape)) {
-            if (step > 0)
-                step = 0;
-            else
-                done = true;
+            // drops a partly drawn shape, not busy any more so the tool can end
+            step = 0;
+            done = true;
         } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
             step++;
             if (step == model::point_count(draft)) {

@@ -22,8 +22,8 @@ struct ivec2_less {
     bool operator()(glm::ivec2 a, glm::ivec2 b) const { return a.x != b.x ? a.x < b.x : a.y < b.y; }
 };
 
-// draws connected wire segments, each click adds a point. esc ends the wire,
-// a second esc leaves the tool.
+// draws connected wire segments, each click adds a point. esc ends the wire
+// and the tool.
 class wire_tool : public tool<schematic_editor> {
 public:
     void update(schematic_editor& e, bool hovered) override
@@ -34,10 +34,9 @@ public:
         auto ms = model::snap(e.view.mouse_world(), model::grid);
 
         if (IsKeyPressed(ImGuiKey_Escape)) {
-            if (started)
-                started = false;
-            else
-                done = true;
+            // the segments drawn so far are already in the schematic
+            started = false;
+            done = true;
         } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
             if (!started) {
                 start = ms;

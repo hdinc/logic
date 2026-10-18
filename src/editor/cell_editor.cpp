@@ -158,7 +158,7 @@ void cell_editor::edit_toolbar()
         using k = schematic_editor::tool_kind;
         auto t = schematic.current_tool();
         if (tool_button("Select", "Select and move (Esc)", t == k::select)) schematic.set_tool(k::select);
-        if (tool_button("Wire", "Draw wires, Esc ends a wire (W)", t == k::wire)) schematic.set_tool(k::wire);
+        if (tool_button("Wire", "Draw wires, Esc ends the wire and the tool (W)", t == k::wire)) schematic.set_tool(k::wire);
         if (tool_button("Input", "Place an input port (I)", t == k::input_port)) schematic.set_tool(k::input_port);
         if (tool_button("Output", "Place an output port (O)", t == k::output_port)) schematic.set_tool(k::output_port);
         if (tool_button("Cell...", "Place an instance of a cell (Space)", t == k::place_instance)) open_place_popup();
