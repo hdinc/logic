@@ -1,4 +1,5 @@
 #include "app.h"
+#include "../builtin/builtin.h"
 #include "../io/storage.h"
 
 #include <Hd/Resource.h>
@@ -23,9 +24,7 @@ app::app(Hd::Window& w, std::filesystem::path r)
 
     if (!ws.find_library("work")) ws.add_library("work");
 
-    // TODO: builtin gates are defined in code once the simulator exists
-    auto& builtin = ws.add_library("builtin");
-    builtin.read_only = true;
+    ws.add_builtin_library(builtin::registry());
 
     // stable order in the library panel
     std::stable_sort(ws.libraries.begin(), ws.libraries.end(), [](auto& a, auto& b) { return a->read_only < b->read_only; });

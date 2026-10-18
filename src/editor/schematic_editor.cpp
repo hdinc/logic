@@ -1,4 +1,5 @@
 #include "schematic_editor.h"
+#include "param_editor.h"
 
 #include <algorithm>
 #include <map>
@@ -215,7 +216,7 @@ std::vector<schematic_editor::handle> schematic_editor::hit_test(glm::vec2 p)
 
     // last drawn is on top
     for (auto it = sch.instances.rbegin(); it != sch.instances.rend(); ++it) {
-        if (model::instance_bounds(*it, ctx.ws.find_cell(it->cell)).contains(p)) return {{handle::instance, it->id}};
+        if (model::instance_bounds(*it, ctx.ws.interface_of(*it).symbol).contains(p)) return {{handle::instance, it->id}};
     }
 
     // all endpoints at a junction move together
@@ -261,7 +262,7 @@ std::optional<model::rect> schematic_editor::selection_bounds() const
             if (auto p = ctx.cell.find_port(h.id)) add(model::make_rect(glm::vec2(p->pos) - 5.0f, glm::vec2(p->pos) + 5.0f));
             break;
         case handle::instance:
-            if (auto i = sch.find_instance(h.id)) add(model::instance_bounds(*i, ctx.ws.find_cell(i->cell)));
+            if (auto i = sch.find_instance(h.id)) add(model::instance_bounds(*i, ctx.ws.interface_of(*i).symbol));
             break;
         case handle::wire_a:
             if (auto w = sch.find_wire(h.id)) add({w->a, w->a});
@@ -350,8 +351,8 @@ void schematic_editor::normalize()
 {
     std::vector<glm::ivec2> points;
     for (auto& i : sch.instances) {
-        if (auto c = ctx.ws.find_cell(i.cell))
-            for (auto& p : c->symbol.pins)
+        if (auto iface = ctx.ws.interface_of(i))
+            for (auto& p : iface.symbol->pins)
                 points.push_back(model::pin_position(i, p));
     }
     for (auto& p : ctx.cell.ports)
@@ -473,10 +474,12 @@ void schematic_editor::property_panel()
 
         SeparatorText("Instance");
         if (input_string("Name", i->name)) ctx.modified();
-        if (c)
+        if (c) {
             Text("Cell: %s / %s", l->name.c_str(), c->name.c_str());
-        else
+            if (auto prim = ctx.ws.primitive_of(*c); prim && !prim->description().empty()) TextDisabled("%s", prim->description().c_str());
+        } else {
             TextColored({1, 0.3f, 0.3f, 1}, "Cell is missing");
+        }
 
         int rot = i->xf.rotation;
         if (Combo("Rotation", &rot, "0\0"
@@ -490,6 +493,15 @@ void schematic_editor::property_panel()
         if (Checkbox("Mirror", &i->xf.mirror)) {
             ctx.modified();
             normalize();
+        }
+
+        if (auto defs = ctx.ws.params_of(*i); !defs.empty()) {
+            SeparatorText("Parameters");
+            if (edit_params(defs, i->params)) {
+                ctx.modified();
+                // pins may have moved or appeared
+                normalize();
+            }
         }
         return;
     }

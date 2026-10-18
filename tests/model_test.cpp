@@ -1,6 +1,7 @@
 // tests for the model and io layers. no test framework, a failing check
 // prints the location and the test exits with 1.
 
+#include "../src/builtin/builtin.h"
 #include "../src/io/json.h"
 #include "../src/io/storage.h"
 #include "../src/model/history.h"
@@ -116,7 +117,7 @@ static void test_cycles()
     auto& b = ws.create_cell(lib, "b");
 
     // b contains a
-    b.get_schematic()->instances.push_back({b.new_id(), a.id, "", {0, 0}, {}});
+    b.get_schematic()->instances.push_back({b.new_id(), a.id, "", {0, 0}, {}, {}});
 
     CHECK(ws.would_create_cycle(a.id, a.id));
     CHECK(ws.would_create_cycle(a.id, b.id));
@@ -146,7 +147,7 @@ static void test_save_load(const std::filesystem::path& dir)
 
     auto& top = ws.create_cell(lib, "top");
     top.get_schematic()->wires.push_back({top.new_id(), {0, 0}, {10, 0}});
-    model::instance inst{top.new_id(), a.id, "U1", {30, 40}, {1, true}};
+    model::instance inst{top.new_id(), a.id, "U1", {30, 40}, {1, true}, {{"inputs", int64_t(3)}, {"on", true}, {"edge", std::string("falling")}}};
     top.get_schematic()->instances.push_back(inst);
 
     io::save_library(lib, dir);
@@ -169,6 +170,7 @@ static void test_save_load(const std::filesystem::path& dir)
     auto t = l->find_cell("top");
     CHECK(t->get_schematic()->instances[0].cell == a.id);
     CHECK(t->get_schematic()->instances[0].xf.mirror);
+    CHECK(t->get_schematic()->instances[0].params == inst.params);
 
     // renaming a cell removes the old file on save
     a.name = "and";
@@ -245,6 +247,93 @@ static void test_history()
     CHECK(d.ports.size() == 3);
 }
 
+static void test_params()
+{
+    std::vector<model::param_def> defs = {
+        model::int_param("width", "Width", 1, 1, 64),
+        model::bool_param("flag", "Flag", false),
+        model::choice_param("edge", "Edge", {"rising", "falling"}, "rising"),
+    };
+
+    // defaults, clamping, wrong types and unknown names
+    auto r = model::resolve_params(defs, {{"width", int64_t(100)}, {"flag", int64_t(1)}, {"edge", std::string("both")}, {"x", true}});
+    CHECK(model::get_int(r, "width") == 64);
+    CHECK(model::get_bool(r, "flag") == false);
+    CHECK(model::get_string(r, "edge") == "rising");
+    CHECK(r.size() == 3);
+
+    // only values that differ from the default are stored
+    model::param_values v;
+    model::set_param(v, defs[0], int64_t(8));
+    model::set_param(v, defs[2], std::string("rising"));
+    CHECK(v.size() == 1 && model::get_int(v, "width") == 8);
+    model::set_param(v, defs[0], int64_t(1));
+    CHECK(v.empty());
+
+    CHECK(model::params_key({{"a", std::string("1")}}) != model::params_key({{"a", int64_t(1)}}));
+}
+
+static bool on_grid(glm::ivec2 p) { return p.x % model::grid == 0 && p.y % model::grid == 0; }
+
+static void test_builtins()
+{
+    model::workspace ws;
+    auto& lib = ws.add_builtin_library(builtin::registry());
+    CHECK(lib.read_only);
+
+    auto and_id = model::builtin_cell_id("and");
+    CHECK(and_id == model::builtin_cell_id("and"));
+    CHECK(and_id != model::builtin_cell_id("or"));
+    auto and_cell = ws.find_cell(and_id);
+    CHECK(and_cell && and_cell->name == "AND");
+
+    // every primitive builds valid interfaces for its defaults and extremes
+    for (auto& p : builtin::registry().all()) {
+        auto c = ws.find_cell(model::builtin_cell_id(p->kind()));
+        CHECK(c && ws.primitive_of(*c) == p.get());
+
+        for (int extreme = 0; extreme < 3; extreme++) {
+            model::param_values v;
+            for (auto& d : p->params())
+                if (d.type == model::param_def::integer) v[d.name] = extreme == 0 ? d.def : (extreme == 1 ? model::param_value(d.min) : model::param_value(d.max));
+            auto iface = p->build(model::resolve_params(p->params(), v));
+
+            CHECK(!iface.ports.empty());
+            CHECK(iface.symbol.pins.size() == iface.ports.size());
+            for (auto& pin : iface.symbol.pins) {
+                CHECK(on_grid(pin.pos));
+                CHECK(std::any_of(iface.ports.begin(), iface.ports.end(), [&](auto& port) { return port.id == pin.port; }));
+            }
+            // no two pins at the same place
+            for (size_t a = 0; a < iface.symbol.pins.size(); a++)
+                for (size_t b = a + 1; b < iface.symbol.pins.size(); b++)
+                    CHECK(iface.symbol.pins[a].pos != iface.symbol.pins[b].pos);
+        }
+    }
+
+    // instances get the interface of their parameters, cached
+    model::instance i;
+    i.cell = and_id;
+    i.params["inputs"] = int64_t(5);
+    i.params["width"] = int64_t(8);
+    auto iface = ws.interface_of(i);
+    CHECK(iface && iface.ports->size() == 6);
+    CHECK(std::all_of(iface.ports->begin(), iface.ports->end(), [](auto& p) { return p.width == 8; }));
+    CHECK(ws.interface_of(i).symbol == iface.symbol);
+
+    i.params.clear();
+    CHECK(ws.interface_of(i).ports->size() == 3);
+
+    // user cells use their own symbol, missing cells have none
+    auto& work = ws.add_library("work");
+    auto& user = ws.create_cell(work, "user");
+    i.cell = user.id;
+    CHECK(ws.interface_of(i).symbol == &user.symbol);
+    CHECK(ws.params_of(i).empty());
+    i.cell = 12345;
+    CHECK(!ws.interface_of(i));
+}
+
 int main(int argc, char** argv)
 {
     auto dir = std::filesystem::path(argc > 1 ? argv[1] : ".") / "model_test_workspace";
@@ -255,6 +344,8 @@ int main(int argc, char** argv)
     test_generate_symbol();
     test_cycles();
     test_history();
+    test_params();
+    test_builtins();
     test_save_load(dir);
 
     if (failures) {

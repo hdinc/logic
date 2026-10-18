@@ -128,6 +128,53 @@ bool workspace::valid_cell_name(const library& lib, const std::string& name, std
     return true;
 }
 
+library& workspace::add_builtin_library(const primitive_registry& r, const std::string& name)
+{
+    primitives = &r;
+
+    auto& lib = add_library(name);
+    lib.read_only = true;
+    for (auto& p : r.all()) {
+        auto c = std::make_unique<cell>();
+        c->id = builtin_cell_id(p->kind());
+        c->name = p->name();
+        c->impl = builtin_impl{p->kind()};
+        auto iface = p->build(resolve_params(p->params(), {}));
+        c->ports = std::move(iface.ports);
+        c->symbol = std::move(iface.symbol);
+        lib.cells.push_back(std::move(c));
+    }
+    return lib;
+}
+
+const primitive* workspace::primitive_of(const cell& c) const
+{
+    auto b = std::get_if<builtin_impl>(&c.impl);
+    return b && primitives ? primitives->find(b->kind) : nullptr;
+}
+
+interface_view workspace::interface_of(const instance& i) const
+{
+    auto c = find_cell(i.cell);
+    if (!c) return {};
+
+    auto p = primitive_of(*c);
+    if (!p) return {&c->ports, &c->symbol};
+
+    auto values = resolve_params(p->params(), i.params);
+    auto key = p->kind() + '\n' + params_key(values);
+    auto it = interface_cache.find(key);
+    if (it == interface_cache.end()) it = interface_cache.emplace(key, p->build(values)).first;
+    return {&it->second.ports, &it->second.symbol};
+}
+
+std::vector<param_def> workspace::params_of(const instance& i) const
+{
+    auto c = find_cell(i.cell);
+    auto p = c ? primitive_of(*c) : nullptr;
+    return p ? p->params() : std::vector<param_def>{};
+}
+
 id workspace::random_id()
 {
     static std::mt19937_64 rng{std::random_device{}()};

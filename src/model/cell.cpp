@@ -149,9 +149,9 @@ glm::ivec2 pin_position(const instance& i, const pin& p)
     return i.pos + i.xf.apply(p.pos);
 }
 
-rect instance_bounds(const instance& i, const cell* c)
+rect instance_bounds(const instance& i, const symbol* s)
 {
-    rect r = c ? c->symbol.bounds() : rect{{-grid, -grid}, {grid, grid}};
+    rect r = s ? s->bounds() : rect{{-grid, -grid}, {grid, grid}};
     auto a = glm::vec2(i.pos) + i.xf.apply(r.min);
     auto b = glm::vec2(i.pos) + i.xf.apply(r.max);
     return make_rect(a, b);

@@ -73,7 +73,7 @@ const char* to_string(direction d);
 // world position of a symbol pin of the instance
 glm::ivec2 pin_position(const instance& i, const pin& p);
 
-// bounding box of the placed instance. c may be null if the cell is missing
-rect instance_bounds(const instance& i, const cell* c);
+// bounding box of the placed instance. s is null if the cell is missing
+rect instance_bounds(const instance& i, const symbol* s);
 
 }

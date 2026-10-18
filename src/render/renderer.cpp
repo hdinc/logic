@@ -78,9 +78,9 @@ void draw_symbol(renderer& r, const glm::mat4& vp, const model::symbol& s, glm::
 
 void draw_instance(renderer& r, const glm::mat4& vp, const model::workspace& ws, const model::instance& i, glm::vec4 color)
 {
-    auto c = ws.find_cell(i.cell);
+    auto iface = ws.interface_of(i);
 
-    if (!c) {
+    if (!iface) {
         auto b = model::instance_bounds(i, nullptr);
         r.g.setColor(colors::error);
         r.g.rect(vp, b.min, b.max);
@@ -88,10 +88,10 @@ void draw_instance(renderer& r, const glm::mat4& vp, const model::workspace& ws,
         return;
     }
 
-    draw_symbol(r, vp, c->symbol, i.pos, i.xf, color);
+    draw_symbol(r, vp, *iface.symbol, i.pos, i.xf, color);
 
     if (!i.name.empty()) {
-        auto b = model::instance_bounds(i, c);
+        auto b = model::instance_bounds(i, iface.symbol);
         r.text(vp, i.name, {b.min.x, b.max.y + 3}, 6.0f, colors::preview);
     }
 }

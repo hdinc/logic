@@ -1,5 +1,6 @@
 #pragma once
 
+#include "param.h"
 #include "types.h"
 
 #include <string>
@@ -21,6 +22,8 @@ struct instance {
     std::string name;
     glm::ivec2 pos{0, 0};
     transform xf;
+    // configuration of primitives, only values that differ from the defaults
+    param_values params;
     bool operator==(const instance&) const = default;
 };
 

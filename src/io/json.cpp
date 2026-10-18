@@ -126,6 +126,11 @@ json to_json(const cell& c)
                 {"rotation", i.xf.rotation},
                 {"mirror", i.xf.mirror},
             });
+            if (!i.params.empty()) {
+                auto& params = impl["instances"].back()["params"];
+                for (auto& [name, v] : i.params)
+                    std::visit([&](auto& x) { params[name] = x; }, v);
+            }
         }
     } else if (auto b = std::get_if<builtin_impl>(&c.impl)) {
         impl["type"] = "builtin";
@@ -176,6 +181,17 @@ cell cell_from_json(const json& j)
             r.pos = vec(i.at("pos"));
             r.xf.rotation = i.value("rotation", 0);
             r.xf.mirror = i.value("mirror", false);
+            if (auto it = i.find("params"); it != i.end()) {
+                for (auto& [name, v] : it->items()) {
+                    if (v.is_boolean())
+                        r.params[name] = v.get<bool>();
+                    else if (v.is_number_integer())
+                        r.params[name] = v.get<int64_t>();
+                    else if (v.is_string())
+                        r.params[name] = v.get<std::string>();
+                    // anything else is dropped, the default is used then
+                }
+            }
             s.instances.push_back(std::move(r));
         }
         c.impl = std::move(s);

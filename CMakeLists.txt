@@ -12,7 +12,7 @@ find_package(nlohmann_json REQUIRED)
 
 set(LOGIC_WARNINGS -Wall -Wextra -Wpedantic -Wsuggest-override -Wno-sign-compare)
 
-# data model and file io, no gui or opengl dependencies
+# data model, file io and builtin primitives, no gui or opengl dependencies
 add_library(logic_core STATIC
     src/model/types.cpp
     src/model/symbol.cpp
@@ -21,8 +21,14 @@ add_library(logic_core STATIC
     src/model/library.cpp
     src/model/workspace.cpp
     src/model/history.cpp
+    src/model/param.cpp
+    src/model/primitive.cpp
     src/io/json.cpp
     src/io/storage.cpp
+    src/builtin/builtin.cpp
+    src/builtin/builder.cpp
+    src/builtin/gates.cpp
+    src/builtin/sources.cpp
 )
 target_include_directories(logic_core PUBLIC src)
 target_link_libraries(logic_core PUBLIC glm::glm nlohmann_json::nlohmann_json)
@@ -36,6 +42,7 @@ add_executable(logic
     src/editor/schematic_editor.cpp
     src/editor/symbol_editor.cpp
     src/editor/cell_editor.cpp
+    src/editor/param_editor.cpp
 )
 
 include(Hd/cmake/resource.cmake)
