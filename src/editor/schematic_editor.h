@@ -3,6 +3,7 @@
 #include "canvas.h"
 #include "context.h"
 
+#include <optional>
 #include <vector>
 
 namespace logic::editor {
@@ -63,6 +64,9 @@ private:
     std::vector<handle> hit_test(glm::vec2 p);
     std::vector<handle> handles_in(model::rect r);
 
+    // box around everything selected, dragging inside it moves the selection
+    std::optional<model::rect> selection_bounds() const;
+
     bool is_selected(handle h) const;
     void select(const std::vector<handle>& hs, bool add);
 
@@ -87,6 +91,8 @@ private:
     glm::vec2 drag_start{0, 0};
     glm::ivec2 drag_applied{0, 0};
     bool drag_moved = false;
+    // drag started on empty space inside the selection bounds
+    bool drag_from_bounds = false;
 
     glm::vec2 box_start{0, 0};
 

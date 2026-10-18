@@ -74,15 +74,18 @@ void schematic_editor::process_inputs(bool hovered)
             rotate_selection();
         } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
             auto hs = hit_test(m);
-            if (hs.empty()) {
+            auto bounds = selection_bounds();
+            bool in_bounds = hs.empty() && !shift && bounds && bounds->contains(m);
+            if (hs.empty() && !in_bounds) {
                 if (!shift) selection.clear();
                 box_start = m;
                 mode = mode_t::box_select;
             } else {
-                if (!is_selected(hs[0])) select(hs, shift);
+                if (!hs.empty() && !is_selected(hs[0])) select(hs, shift);
                 drag_start = m;
                 drag_applied = {0, 0};
                 drag_moved = false;
+                drag_from_bounds = in_bounds;
                 mode = mode_t::moving;
             }
         }
@@ -97,6 +100,8 @@ void schematic_editor::process_inputs(bool hovered)
         }
         if (!IsMouseDown(ImGuiMouseButton_Left)) {
             if (drag_moved) normalize();
+            // a plain click on empty space still clears the selection
+            else if (drag_from_bounds) selection.clear();
             mode = mode_t::idle;
         }
     } break;
@@ -201,6 +206,38 @@ std::vector<schematic_editor::handle> schematic_editor::handles_in(model::rect r
     for (auto& w : sch.wires) {
         if (rc.contains(w.a)) r.push_back({handle::wire_a, w.id});
         if (rc.contains(w.b)) r.push_back({handle::wire_b, w.id});
+    }
+    return r;
+}
+
+std::optional<model::rect> schematic_editor::selection_bounds() const
+{
+    std::optional<model::rect> r;
+    auto add = [&](model::rect b) {
+        if (r) r->expand(b);
+        else r = b;
+    };
+
+    for (auto& h : selection) {
+        switch (h.kind) {
+        case handle::port:
+            if (auto p = ctx.cell.find_port(h.id)) add(model::make_rect(glm::vec2(p->pos) - 5.0f, glm::vec2(p->pos) + 5.0f));
+            break;
+        case handle::instance:
+            if (auto i = sch.find_instance(h.id)) add(model::instance_bounds(*i, ctx.ws.find_cell(i->cell)));
+            break;
+        case handle::wire_a:
+            if (auto w = sch.find_wire(h.id)) add({w->a, w->a});
+            break;
+        case handle::wire_b:
+            if (auto w = sch.find_wire(h.id)) add({w->b, w->b});
+            break;
+        }
+    }
+
+    if (r) {
+        r->min -= float(model::grid) / 2;
+        r->max += float(model::grid) / 2;
     }
     return r;
 }
@@ -394,6 +431,11 @@ void schematic_editor::draw()
         r.g.rect(vp, box_start, view.mouse_world());
         break;
     default:
+        if (selection.size() > 1)
+            if (auto b = selection_bounds()) {
+                r.g.setColor(render::colors::guide);
+                r.g.rect(vp, b->min, b->max);
+            }
         break;
     }
 }

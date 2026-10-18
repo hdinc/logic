@@ -99,17 +99,21 @@ void symbol_editor::process_inputs(bool hovered)
             selection.clear();
         } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
             auto hs = hit_test(m);
-            if (hs.empty()) {
+            auto bounds = selection_bounds();
+            bool in_bounds = hs.empty() && !shift && bounds && bounds->contains(m);
+            if (hs.empty() && !in_bounds) {
                 if (!shift) selection.clear();
                 box_start = m;
                 mode = mode_t::box_select;
             } else {
-                if (!is_selected(hs[0])) select(hs, shift);
+                if (!hs.empty() && !is_selected(hs[0])) select(hs, shift);
                 // pins live on the schematic grid, shapes on single units
                 bool has_pin = std::any_of(selection.begin(), selection.end(), [](auto& h) { return h.kind == handle::pin; });
                 drag_step = has_pin ? model::grid : 1;
                 drag_start = m;
                 drag_applied = {0, 0};
+                drag_moved = false;
+                drag_from_bounds = in_bounds;
                 mode = mode_t::moving;
             }
         }
@@ -120,8 +124,13 @@ void symbol_editor::process_inputs(bool hovered)
         if (d != glm::ivec2{0, 0}) {
             move_selection(d);
             drag_applied += d;
+            drag_moved = true;
         }
-        if (!IsMouseDown(ImGuiMouseButton_Left)) mode = mode_t::idle;
+        if (!IsMouseDown(ImGuiMouseButton_Left)) {
+            // a plain click on empty space still clears the selection
+            if (!drag_moved && drag_from_bounds) selection.clear();
+            mode = mode_t::idle;
+        }
     } break;
 
     case mode_t::box_select: {
@@ -202,6 +211,29 @@ std::vector<symbol_editor::handle> symbol_editor::handles_in(model::rect rc)
     for (auto& s : sym.shapes)
         for (int i = 0; i < model::point_count(s); i++)
             if (rc.contains(model::get_point(s, i))) r.push_back({handle::point, s.id, i});
+    return r;
+}
+
+std::optional<model::rect> symbol_editor::selection_bounds() const
+{
+    std::optional<model::rect> r;
+    auto add = [&](glm::vec2 p) {
+        if (r) r->expand(p);
+        else r = model::rect{p, p};
+    };
+
+    for (auto& h : selection) {
+        if (h.kind == handle::pin) {
+            if (auto p = sym.find_pin(h.id)) add(p->pos);
+        } else if (auto s = sym.find_shape(h.id)) {
+            add(model::get_point(*s, h.index));
+        }
+    }
+
+    if (r) {
+        r->min -= 2.5f;
+        r->max += 2.5f;
+    }
     return r;
 }
 
@@ -321,6 +353,11 @@ void symbol_editor::draw()
         r.g.rect(vp, box_start, view.mouse_world());
         break;
     default:
+        if (selection.size() > 1)
+            if (auto b = selection_bounds()) {
+                r.g.setColor(render::colors::guide);
+                r.g.rect(vp, b->min, b->max);
+            }
         break;
     }
 }
