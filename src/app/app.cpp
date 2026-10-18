@@ -38,11 +38,9 @@ void app::run()
     std::memcpy(font_data, f.first, f.second);
     ImGui::GetIO().Fonts->AddFontFromMemoryTTF(font_data, f.second, 20);
 
-    ImGui::StyleColorsDark();
-    auto& s = ImGui::GetStyle();
-    s.FrameRounding = 4.0f;
-    s.GrabRounding = 4.0f;
-    s.WindowRounding = 6.0f;
+    apply_theme();
+    // read with the rest of imgui.ini on the first frame
+    add_settings_handler();
 
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
@@ -66,6 +64,96 @@ void app::run()
 
         window.SwapBuffers();
     }
+}
+
+void app::add_settings_handler()
+{
+    ImGuiSettingsHandler h;
+    h.TypeName = "Logic";
+    h.TypeHash = ImHashStr("Logic");
+    h.UserData = this;
+    h.ReadOpenFn = [](ImGuiContext*, ImGuiSettingsHandler*, const char* name) -> void* {
+        return std::strcmp(name, "Settings") == 0 ? (void*)1 : nullptr;
+    };
+    h.ReadLineFn = [](ImGuiContext*, ImGuiSettingsHandler* h, void*, const char* line) {
+        auto a = (app*)h->UserData;
+        char str[32];
+        int i;
+        if (std::sscanf(line, "Theme=%31s", str) == 1)
+            a->light_theme = std::strcmp(str, "light") == 0;
+        else if (std::sscanf(line, "Grid=%d", &i) == 1)
+            a->renderer.show_grid = i != 0;
+        else if (std::sscanf(line, "GridStyle=%31s", str) == 1)
+            a->renderer.grid = std::strcmp(str, "lines") == 0 ? render::grid_style::lines : render::grid_style::dots;
+    };
+    h.ApplyAllFn = [](ImGuiContext*, ImGuiSettingsHandler* h) {
+        auto a = (app*)h->UserData;
+        a->apply_theme();
+        a->saved_settings = {a->light_theme, a->renderer.show_grid, a->renderer.grid};
+    };
+    h.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* h, ImGuiTextBuffer* buf) {
+        auto a = (app*)h->UserData;
+        buf->appendf("[Logic][Settings]\nTheme=%s\nGrid=%d\nGridStyle=%s\n\n", a->light_theme ? "light" : "dark", a->renderer.show_grid ? 1 : 0,
+            a->renderer.grid == render::grid_style::lines ? "lines" : "dots");
+    };
+    ImGui::AddSettingsHandler(&h);
+    saved_settings = {light_theme, renderer.show_grid, renderer.grid};
+}
+
+void app::apply_theme()
+{
+    render::set_theme(light_theme ? render::light_theme() : render::dark_theme());
+
+    auto& s = ImGui::GetStyle();
+    if (light_theme)
+        ImGui::StyleColorsLight(&s);
+    else
+        ImGui::StyleColorsDark(&s);
+    s.FrameRounding = 4.0f;
+    s.GrabRounding = 4.0f;
+    s.WindowRounding = 6.0f;
+    s.PopupRounding = 4.0f;
+    s.TabRounding = 4.0f;
+}
+
+void app::settings_window()
+{
+    using namespace ImGui;
+
+    // also changed from the view menu and with G in the editors
+    std::tuple current{light_theme, renderer.show_grid, renderer.grid};
+    if (current != saved_settings) {
+        saved_settings = current;
+        MarkIniSettingsDirty();
+    }
+
+    if (!show_settings) return;
+
+    SetNextWindowSize({380, 0}, ImGuiCond_FirstUseEver);
+    SetNextWindowPos(GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, {0.5f, 0.5f});
+    if (Begin("Settings", &show_settings, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
+        SeparatorText("Appearance");
+        int theme = light_theme ? 1 : 0;
+        if (Combo("Theme", &theme, "Dark\0Light\0")) {
+            light_theme = theme == 1;
+            apply_theme();
+        }
+
+        SeparatorText("Canvas");
+        Checkbox("Show grid", &renderer.show_grid);
+        SetItemTooltip("G in an editor");
+
+        BeginDisabled(!renderer.show_grid);
+        int style = (int)renderer.grid;
+        TextUnformatted("Grid style");
+        SameLine();
+        RadioButton("Dots", &style, (int)render::grid_style::dots);
+        SameLine();
+        RadioButton("Lines", &style, (int)render::grid_style::lines);
+        renderer.grid = (render::grid_style)style;
+        EndDisabled();
+    }
+    End();
 }
 
 void app::draw_gui()
@@ -94,6 +182,7 @@ void app::draw_gui()
     properties_panel();
     hierarchy_panel();
     messages_panel();
+    settings_window();
     exit_dialog();
 }
 
@@ -145,6 +234,29 @@ void app::menu_bar()
             auto e = find_editor(active_cell);
             if (MenuItem("Undo", "Ctrl+Z", false, e && e->can_undo())) e->undo();
             if (MenuItem("Redo", "Ctrl+Y", false, e && e->can_redo())) e->redo();
+            EndMenu();
+        }
+
+        if (BeginMenu("View")) {
+            if (MenuItem("Settings...")) show_settings = true;
+            Separator();
+            MenuItem("Grid", "G", &renderer.show_grid);
+            if (BeginMenu("Grid style", renderer.show_grid)) {
+                if (MenuItem("Dots", nullptr, renderer.grid == render::grid_style::dots)) renderer.grid = render::grid_style::dots;
+                if (MenuItem("Lines", nullptr, renderer.grid == render::grid_style::lines)) renderer.grid = render::grid_style::lines;
+                EndMenu();
+            }
+            if (BeginMenu("Theme")) {
+                if (MenuItem("Dark", nullptr, !light_theme)) {
+                    light_theme = false;
+                    apply_theme();
+                }
+                if (MenuItem("Light", nullptr, light_theme)) {
+                    light_theme = true;
+                    apply_theme();
+                }
+                EndMenu();
+            }
             EndMenu();
         }
 

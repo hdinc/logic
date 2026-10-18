@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace logic::app {
@@ -35,6 +36,11 @@ private:
     void update_simulations();
     void open_instance_tabs();
     void exit_dialog();
+    void settings_window();
+
+    // theme and canvas options, kept in imgui.ini
+    void add_settings_handler();
+    void apply_theme();
 
     void open_editor(model::cell& c);
     void close_editor(model::id cell);
@@ -83,6 +89,11 @@ private:
     bool exit_requested = false;
     bool should_exit = false;
     bool show_demo = false;
+    bool show_settings = false;
+
+    bool light_theme = false;
+    // settings at the last check, a change marks imgui.ini for saving
+    std::tuple<bool, bool, render::grid_style> saved_settings;
 
     std::vector<std::string> messages;
 };

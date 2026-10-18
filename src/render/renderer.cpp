@@ -3,162 +3,254 @@
 #include <Hd/Resource.h>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <cmath>
+
 namespace logic::render {
 
+namespace {
+
+constexpr glm::vec4 rgb(int hex, float a = 1.0f)
+{
+    return {((hex >> 16) & 255) / 255.0f, ((hex >> 8) & 255) / 255.0f, (hex & 255) / 255.0f, a};
+}
+
+const theme* current = &dark_theme();
+
+}
+
+const theme& dark_theme()
+{
+    static const theme t{
+        .background = rgb(0x15171a),
+        .grid = rgb(0x6a7080, 0.8f),
+        .symbol = rgb(0xe4e7eb),
+        .wire = rgb(0xa2a9b3),
+        .label = rgb(0x8a919c),
+        .selection = rgb(0xffc533),
+        .guide = rgb(0x6f8a33),
+        .pin = rgb(0x5a9bff),
+        .control_point = rgb(0xff4d4d),
+        .error = rgb(0xff4d4d),
+        .width_error = rgb(0xff8c1a),
+        .preview = rgb(0x8a919c),
+        .high = rgb(0x3ee65a),
+        .low = rgb(0x1d7a2f),
+        .unknown = rgb(0xff4d4d),
+        .floating = rgb(0x5a8cff),
+        .bus = rgb(0x8cc8f2),
+    };
+    return t;
+}
+
+const theme& light_theme()
+{
+    static const theme t{
+        .background = rgb(0xfafaf8),
+        .grid = rgb(0x9aa0ab, 0.8f),
+        .symbol = rgb(0x1e2126),
+        .wire = rgb(0x4d545e),
+        .label = rgb(0x737a85),
+        .selection = rgb(0xf08c00),
+        .guide = rgb(0x8ca640),
+        .pin = rgb(0x1a66e6),
+        .control_point = rgb(0xd91a1a),
+        .error = rgb(0xd91a1a),
+        .width_error = rgb(0xf07800),
+        .preview = rgb(0x9097a3),
+        .high = rgb(0x12b333),
+        .low = rgb(0x0d6120),
+        .unknown = rgb(0xe01b1b),
+        .floating = rgb(0x2966f0),
+        .bus = rgb(0x1f7acc),
+    };
+    return t;
+}
+
+const theme& colors()
+{
+    return *current;
+}
+
+void set_theme(const theme& t)
+{
+    current = &t;
+}
+
 renderer::renderer()
-    : grid_dot_shader(Hd::Resource::getExeRes("res/shaders/grid_dot_vert.glsl").first, Hd::Resource::getExeRes("res/shaders/grid_dot_frag.glsl").first)
+    : g((const unsigned char*)Hd::Resource::getExeRes("res/fonts/Roboto.ttf").first)
+    , grid_shader(Hd::Resource::getExeRes("res/shaders/grid_vert.glsl").first, Hd::Resource::getExeRes("res/shaders/grid_frag.glsl").first)
 {
 }
 
-void renderer::grid(const glm::mat4& vp, float zoom)
+void renderer::begin(const glm::mat4& vp)
 {
-    float c = glm::smoothstep(1.0f / 1000, 1.0f / 300, zoom) * 0.3f;
-    glm::vec4 color = {c, c, c, 1.0f};
+    auto& bg = colors().background;
+    glClearColor(bg.r, bg.g, bg.b, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
 
-    grid_dot_shader.Bind();
-    glUniformMatrix4fv(0, 1, false, glm::value_ptr(vp));
+    g.begin(vp);
+    if (show_grid) draw_grid(vp);
+}
+
+void renderer::end()
+{
+    g.end();
+}
+
+void renderer::draw_grid(const glm::mat4& vp)
+{
+    // zoomed out the circuit gets small and thin, the grid would cover it.
+    // below 16 pixels per grid step the model grid fades out (gone at 5)
+    // and every 5th step stays, the whole grid fades out from 14 to 2.
+    float step_px = model::grid / pixel();
+    float visible = glm::smoothstep(2.0f, 14.0f, step_px);
+    if (visible <= 0.0f) return;
+    float fine = glm::clamp((step_px - 5.0f) / (16.0f - 5.0f), 0.0f, 1.0f);
+    float spacing = model::grid;
+    auto color = colors().grid;
+    color.a *= visible;
+
+    glEnable(GL_BLEND);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+    grid_shader.Bind();
+    auto inv = glm::inverse(vp);
+    glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(inv));
     glUniform4fv(1, 1, &color.x);
+    glUniform1f(2, pixel());
+    glUniform1f(3, spacing);
+    glUniform1f(4, fine);
+    glUniform1i(5, grid == grid_style::lines ? 1 : 0);
 
     grid_vao.Bind();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBindVertexArray(0);
 }
 
-void renderer::text(const glm::mat4& vp, const std::string& str, glm::vec2 pos, float size, glm::vec4 color, align a)
+void renderer::text(const std::string& str, glm::vec2 pos, float size, glm::vec4 color, align a)
 {
-    if (str.empty()) return;
-
-    g.setColor(color);
-    g.setText(str);
-
-    if (a != align::left) {
-        auto box = g.getTextBox();
-        float w = (box.second.x - box.first.x) * size;
-        pos.x -= (a == align::center) ? w / 2.0f : w;
-    }
-
-    g.text(vp, pos, size);
+    auto ha = a == align::left ? Hd::Renderer2D::Align::left : a == align::center ? Hd::Renderer2D::Align::center : Hd::Renderer2D::Align::right;
+    g.text(str, pos, size, color, ha);
 }
 
-void draw_shape(renderer& r, const glm::mat4& vp, const model::shape& s, glm::ivec2 pos, model::transform xf, glm::vec4 color)
+void renderer::text_middle(const std::string& str, glm::vec2 pos, float size, glm::vec4 color, align a)
 {
-    auto& g = r.g;
-    g.setColor(color);
+    text(str, {pos.x, pos.y - g.font().capHeight() * size / 2}, size, color, a);
+}
 
+namespace {
+
+// marks a pin that isn't connected
+void draw_pin(renderer& r, glm::vec2 pos)
+{
+    r.ring(pos, 1.6f, colors().pin, 0.6f);
+}
+
+}
+
+void draw_shape(renderer& r, const model::shape& s, glm::ivec2 pos, model::transform xf, glm::vec4 color)
+{
     auto tp = [&](glm::vec2 p) { return glm::vec2(pos) + xf.apply(p); };
 
     if (auto l = std::get_if<model::line>(&s.geom)) {
-        g.line(vp, tp(l->a), tp(l->b));
+        r.line(tp(l->a), tp(l->b), color);
     } else if (auto b = std::get_if<model::bezier>(&s.geom)) {
-        constexpr int n = 16;
-        glm::vec2 a = b->a, c = b->c, e = b->b;
-        glm::vec2 prev = a;
-        for (int k = 1; k <= n; k++) {
-            float t = float(k) / n;
-            glm::vec2 p = (1 - t) * (1 - t) * a + 2 * (1 - t) * t * c + t * t * e;
-            g.line(vp, tp(prev), tp(p));
-            prev = p;
-        }
+        r.g.bezier(tp(b->a), tp(b->c), tp(b->b), stroke, color);
     } else if (auto c = std::get_if<model::circle>(&s.geom)) {
-        g.circle(vp, tp(c->center), c->radius);
+        r.ring(tp(c->center), c->radius, color);
     } else if (auto t = std::get_if<model::text>(&s.geom)) {
         // text is not rotated, only its anchor moves with the transform
-        r.text(vp, t->str, tp(t->pos), t->size, color);
+        r.text(t->str, tp(t->pos), t->size, color);
     }
 }
 
-void draw_symbol(renderer& r, const glm::mat4& vp, const model::symbol& s, glm::ivec2 pos, model::transform xf, glm::vec4 color)
+void draw_symbol(renderer& r, const model::symbol& s, glm::ivec2 pos, model::transform xf, glm::vec4 color, const std::vector<bool>* pin_connected)
 {
     for (auto& sh : s.shapes)
-        draw_shape(r, vp, sh, pos, xf, color);
+        draw_shape(r, sh, pos, xf, color);
 
-    r.g.setColor(colors::pin);
-    for (auto& p : s.pins)
-        r.g.circle(vp, glm::vec2(pos) + xf.apply(glm::vec2(p.pos)), 1.5f, true);
+    for (size_t k = 0; k < s.pins.size(); k++) {
+        if (pin_connected && (*pin_connected)[k]) continue;
+        draw_pin(r, glm::vec2(pos) + xf.apply(glm::vec2(s.pins[k].pos)));
+    }
 }
 
-void draw_instance(renderer& r, const glm::mat4& vp, const model::workspace& ws, const model::instance& i, glm::vec4 color)
+void draw_instance(renderer& r, const model::workspace& ws, const model::instance& i, glm::vec4 color, const std::vector<int>* pin_nets)
 {
     auto iface = ws.interface_of(i);
 
     if (!iface) {
         auto b = model::instance_bounds(i, nullptr);
-        r.g.setColor(colors::error);
-        r.g.rect(vp, b.min, b.max);
-        r.text(vp, "?", glm::vec2(i.pos) - glm::vec2{0, 3}, 10.0f, colors::error, align::center);
+        r.rect_outline(b.min, b.max, colors().error, stroke, 2.0f);
+        r.text("?", glm::vec2(i.pos) - glm::vec2{0, 3}, 10.0f, colors().error, align::center);
         return;
     }
 
-    draw_symbol(r, vp, *iface.symbol, i.pos, i.xf, color);
+    std::vector<bool> connected;
+    if (pin_nets) {
+        for (auto& pin : iface.symbol->pins) {
+            bool c = false;
+            for (size_t k = 0; k < iface.ports->size() && k < pin_nets->size(); k++)
+                if ((*iface.ports)[k].id == pin.port) c = (*pin_nets)[k] >= 0;
+            connected.push_back(c);
+        }
+    }
+    draw_symbol(r, *iface.symbol, i.pos, i.xf, color, pin_nets ? &connected : nullptr);
 
     if (!i.name.empty()) {
         auto b = model::instance_bounds(i, iface.symbol);
-        r.text(vp, i.name, {b.min.x, b.max.y + 3}, 6.0f, colors::preview);
+        r.text(i.name, {b.min.x, b.max.y + 2}, 6.0f, colors().label);
     }
 }
 
-void draw_port(renderer& r, const glm::mat4& vp, const model::port& p, glm::vec4 color)
+void draw_port(renderer& r, const model::port& p, glm::vec4 color, bool connected)
 {
-    auto& g = r.g;
     glm::vec2 pos = p.pos;
     glm::vec2 cp = model::connection_point(p);
 
-    g.setColor(color);
     if (p.dir == model::direction::input) {
-        g.rect(vp, pos - glm::vec2{5, 5}, pos + glm::vec2{5, 5});
-        g.line(vp, pos + glm::vec2{5, 0}, cp);
+        r.rect_outline(pos - glm::vec2{5, 5}, pos + glm::vec2{5, 5}, color, stroke, 1.5f);
+        r.line(pos + glm::vec2{5, 0}, cp, color);
     } else {
-        g.circle(vp, pos, 5.0f);
-        g.line(vp, pos - glm::vec2{5, 0}, cp);
+        r.ring(pos, 5.0f, color);
+        r.line(pos - glm::vec2{5, 0}, cp, color);
     }
 
-    if (p.dir == model::direction::inout) {
-        g.rect(vp, pos - glm::vec2{5, 5}, pos + glm::vec2{5, 5});
-    }
+    if (p.dir == model::direction::inout) r.rect_outline(pos - glm::vec2{5, 5}, pos + glm::vec2{5, 5}, color, stroke, 1.5f);
+    if (!connected) draw_pin(r, cp);
 
     std::string label = p.width > 1 ? p.name + "[" + std::to_string(p.width) + "]" : p.name;
     if (p.dir == model::direction::input)
-        r.text(vp, label, pos + glm::vec2{-8, -3}, 10.0f, color, align::right);
+        r.text_middle(label, pos + glm::vec2{-8, 0}, 10.0f, color, align::right);
     else
-        r.text(vp, label, pos + glm::vec2{8, -3}, 10.0f, color, align::left);
+        r.text_middle(label, pos + glm::vec2{8, 0}, 10.0f, color, align::left);
 }
 
-void draw_wire(renderer& r, const glm::mat4& vp, const model::wire& w, glm::vec4 color, bool bus)
+void draw_wire(renderer& r, const model::wire& w, glm::vec4 color, bool bus)
 {
-    r.g.setColor(color);
-    if (!bus) {
-        r.g.line(vp, w.a, w.b);
-    } else if (w.a.x == w.b.x || w.a.y == w.b.y) {
-        r.g.rect(vp, glm::min(w.a, w.b) - 1, glm::max(w.a, w.b) + 1, true);
-    } else {
-        // lines have no width, a few parallel ones
-        auto n = glm::normalize(glm::vec2(w.b - w.a));
-        n = {-n.y, n.x};
-        for (float d : {-0.8f, -0.4f, 0.0f, 0.4f, 0.8f})
-            r.g.line(vp, glm::vec2(w.a) + d * n, glm::vec2(w.b) + d * n);
-    }
-    r.g.rect(vp, glm::vec2(w.a) - 0.75f, glm::vec2(w.a) + 0.75f, true);
-    r.g.rect(vp, glm::vec2(w.b) - 0.75f, glm::vec2(w.b) + 0.75f, true);
+    r.line(w.a, w.b, color, bus ? bus_width : wire_width);
 }
 
 glm::vec4 value_color(const sim::value& v, int width)
 {
-    if (width == 0) return colors::floating;
+    auto& c = colors();
+    if (width == 0) return c.floating;
     auto m = sim::mask(width);
-    if ((v.z & m) == m) return colors::floating;
-    if ((v.x | v.z) & m) return colors::unknown;
-    if (width > 1) return colors::bus;
-    return (v.bits & 1) ? colors::high : colors::low;
+    if ((v.z & m) == m) return c.floating;
+    if ((v.x | v.z) & m) return c.unknown;
+    if (width > 1) return c.bus;
+    return (v.bits & 1) ? c.high : c.low;
 }
 
-void draw_port_value(renderer& r, const glm::mat4& vp, const model::port& p, const sim::value& v)
+void draw_port_value(renderer& r, const model::port& p, const sim::value& v)
 {
     auto color = value_color(v, p.width);
     auto str = sim::to_string(v, p.width);
     glm::vec2 pos = p.pos;
     if (p.width == 1)
-        r.text(vp, str, pos - glm::vec2{0, 3}, 8.0f, color, align::center);
+        r.text_middle(str, pos, 7.0f, color, align::center);
     else
-        r.text(vp, str, pos + glm::vec2{0, 8}, 7.0f, color, align::center);
+        r.text(str, pos + glm::vec2{0, 8}, 7.0f, color, align::center);
 }
 
 }

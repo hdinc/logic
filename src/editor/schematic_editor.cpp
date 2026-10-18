@@ -55,13 +55,12 @@ public:
     void draw(schematic_editor& e) override
     {
         auto& r = e.ctx.r;
-        auto& vp = e.view.vp();
-        auto ms = model::snap(e.view.mouse_world(), model::grid);
+        auto ms = glm::vec2(model::snap(e.view.mouse_world(), model::grid));
+        auto& c = render::colors();
 
-        r.g.setColor(render::colors::guide);
-        r.g.line(vp, {ms.x - 1000, ms.y}, {ms.x + 1000, ms.y});
-        r.g.line(vp, {ms.x, ms.y - 1000}, {ms.x, ms.y + 1000});
-        if (started) render::draw_wire(r, vp, {model::no_id, start, ms}, render::colors::preview);
+        r.line(ms - glm::vec2{1000, 0}, ms + glm::vec2{1000, 0}, c.guide, r.pixel());
+        r.line(ms - glm::vec2{0, 1000}, ms + glm::vec2{0, 1000}, c.guide, r.pixel());
+        if (started) render::draw_wire(r, {model::no_id, start, glm::ivec2(ms)}, c.preview);
     }
 
 private:
@@ -95,7 +94,7 @@ public:
 
     void draw(schematic_editor& e) override
     {
-        render::draw_port(e.ctx.r, e.view.vp(), preview, render::colors::preview);
+        render::draw_port(e.ctx.r, preview, render::colors().preview);
     }
 
 private:
@@ -132,7 +131,7 @@ public:
 
     void draw(schematic_editor& e) override
     {
-        render::draw_instance(e.ctx.r, e.view.vp(), e.ctx.ws, preview, render::colors::preview);
+        render::draw_instance(e.ctx.r, e.ctx.ws, preview, render::colors().preview);
     }
 
 private:
@@ -189,7 +188,7 @@ void schematic_editor::process_inputs(bool hovered)
 
     // shortcuts with ctrl belong to the app (undo, save)
     if (hovered && !busy() && !GetIO().KeyCtrl) {
-        if (IsKeyPressed(ImGuiKey_G)) view.show_grid = !view.show_grid;
+        if (IsKeyPressed(ImGuiKey_G)) ctx.r.show_grid = !ctx.r.show_grid;
 
         if (IsKeyPressed(ImGuiKey_W))
             set_tool(tool_kind::wire);
@@ -453,12 +452,8 @@ std::string schematic_editor::unique_instance_name() const
 void schematic_editor::draw()
 {
     auto& r = ctx.r;
-    auto& vp = view.vp();
-
-    glClearColor(0, 0, 0, 1);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    if (view.show_grid) r.grid(vp, view.get_zoom());
+    auto& c = render::colors();
+    r.begin(view.vp());
 
     // elements removed elsewhere (e.g. a port deleted from the properties)
     validate_selection();
@@ -471,54 +466,58 @@ void schematic_editor::draw()
 
     for (auto& w : sch.wires) {
         bool sel = is_selected({handle::wire_a, w.id}) && is_selected({handle::wire_b, w.id});
-        auto color = sel ? render::colors::selection : render::colors::wire;
+        auto color = sel ? c.selection : c.wire;
         bool bus = false;
         if (sim) {
             int n = sim->net_of_wire(*sim_scope, w.id);
-            color = n < 0 ? render::colors::floating : render::value_color(sim->net_value(n), sim->net_width(n));
+            color = n < 0 ? c.floating : render::value_color(sim->net_value(n), sim->net_width(n));
             bus = n >= 0 && sim->net_width(n) > 1;
         } else if (int n = nets.net_of_wire(w.id); n >= 0) {
             auto& net = nets.nets[n];
-            if (net.width_error && !sel) color = render::colors::width_error;
+            if (net.width_error && !sel) color = c.width_error;
             bus = net.width > 1;
         }
-        render::draw_wire(r, vp, w, color, bus);
+        render::draw_wire(r, w, color, bus);
         endpoint_count[w.a]++;
         endpoint_count[w.b]++;
-        junction_color[w.a] = junction_color[w.b] = sim ? color : render::colors::wire;
+        junction_color[w.a] = junction_color[w.b] = sim ? color : c.wire;
         if (bus) bus_junction.insert({w.a, w.b});
     }
 
     // junction dots where three or more wires meet
     for (auto& [p, n] : endpoint_count) {
         if (n < 3) continue;
-        r.g.setColor(junction_color[p]);
-        r.g.circle(vp, p, bus_junction.count(p) ? 3.0f : 2.0f, true);
+        r.circle(p, bus_junction.count(p) ? 3.0f : 2.0f, junction_color[p]);
     }
 
-    for (auto& i : sch.instances) {
+    // pins without a wire or another pin get a circle
+    auto& instance_nets = sim ? sim_scope->nets->instance_nets : nets.instance_nets;
+    for (size_t k = 0; k < sch.instances.size(); k++) {
+        auto& i = sch.instances[k];
         bool sel = is_selected({handle::instance, i.id});
-        render::draw_instance(r, vp, ctx.ws, i, sel ? render::colors::selection : render::colors::symbol);
+        render::draw_instance(r, ctx.ws, i, sel ? c.selection : c.symbol, k < instance_nets.size() ? &instance_nets[k] : nullptr);
     }
 
     for (int k = 0; k < (int)ctx.cell.ports.size(); k++) {
         auto& p = ctx.cell.ports[k];
         bool sel = is_selected({handle::port, p.id});
-        render::draw_port(r, vp, p, sel ? render::colors::selection : render::colors::symbol);
-        if (sim) render::draw_port_value(r, vp, p, sim->port_value(*sim_scope, k));
+        auto& port_nets = sim ? sim_scope->nets->port_nets : nets.port_nets;
+        bool connected = k < (int)port_nets.size() && port_nets[k] >= 0;
+        render::draw_port(r, p, sel ? c.selection : c.symbol, connected);
+        if (sim) render::draw_port_value(r, p, sim->port_value(*sim_scope, k));
     }
 
     // selected wire endpoints
-    r.g.setColor(render::colors::selection);
     for (auto& h : selection) {
         if (h.kind != handle::wire_a && h.kind != handle::wire_b) continue;
         if (auto w = sch.find_wire(h.id)) {
             glm::vec2 p = h.kind == handle::wire_a ? w->a : w->b;
-            r.g.rect(vp, p - 2.0f, p + 2.0f);
+            r.rect_outline(p - 2.0f, p + 2.0f, c.selection, 0.6f, 0.5f);
         }
     }
 
     if (!sim) active->draw(*this);
+    r.end();
 }
 
 void schematic_editor::property_panel()

@@ -25,8 +25,6 @@ public:
     // converts a distance in pixels to world units, for hit test tolerances
     float pixels(float px) const;
 
-    bool show_grid = true;
-
 private:
     void recalc();
 

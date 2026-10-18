@@ -102,12 +102,13 @@ public:
     void draw(Editor& e) override
     {
         auto& r = e.ctx.r;
-        r.g.setColor(render::colors::guide);
+        auto c = render::colors().selection;
 
         if (state == state_t::box_select) {
-            r.g.rect(e.view.vp(), box_start, e.view.mouse_world());
+            r.rect(box_start, e.view.mouse_world(), {c.r, c.g, c.b, 0.12f});
+            r.rect_outline(box_start, e.view.mouse_world(), c, r.pixel());
         } else if (e.selection.size() > 1) {
-            if (auto b = e.selection_bounds()) r.g.rect(e.view.vp(), b->min, b->max);
+            if (auto b = e.selection_bounds()) r.rect_outline(b->min, b->max, {c.r, c.g, c.b, 0.6f}, r.pixel(), 2.0f);
         }
     }
 

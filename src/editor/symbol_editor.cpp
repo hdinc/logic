@@ -71,7 +71,7 @@ public:
         }
     }
 
-    void draw(symbol_editor& e) override { e.draw_pin(preview, render::colors::preview); }
+    void draw(symbol_editor& e) override { e.draw_pin(preview, render::colors().preview); }
 
 private:
     model::pin preview;
@@ -116,11 +116,9 @@ public:
     void draw(symbol_editor& e) override
     {
         auto& r = e.ctx.r;
-        auto& vp = e.view.vp();
-        render::draw_shape(r, vp, draft, {0, 0}, {}, render::colors::preview);
-        r.g.setColor(render::colors::control_point);
+        render::draw_shape(r, draft, {0, 0}, {}, render::colors().preview);
         for (int i = 0; i < model::point_count(draft); i++)
-            r.g.circle(vp, model::get_point(draft, i), 1.0f, true);
+            r.circle(model::get_point(draft, i), 1.0f, render::colors().control_point);
     }
 
     // a partly drawn shape is not part of the symbol yet
@@ -168,7 +166,7 @@ void symbol_editor::process_inputs(bool hovered)
 
     // shortcuts with ctrl belong to the app (undo, save)
     if (hovered && !busy() && !GetIO().KeyCtrl) {
-        if (IsKeyPressed(ImGuiKey_G)) view.show_grid = !view.show_grid;
+        if (IsKeyPressed(ImGuiKey_G)) ctx.r.show_grid = !ctx.r.show_grid;
 
         if (IsKeyPressed(ImGuiKey_P))
             set_tool(tool_kind::pin);
@@ -316,48 +314,43 @@ void symbol_editor::validate_selection()
 void symbol_editor::draw()
 {
     auto& r = ctx.r;
-    auto& vp = view.vp();
-
-    glClearColor(0, 0, 0, 1);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    if (view.show_grid) r.grid(vp, view.get_zoom());
+    auto& c = render::colors();
+    r.begin(view.vp());
 
     // symbols might be replaced from the properties panel
     validate_selection();
 
     // origin of the symbol, the instance position in schematics
-    r.g.setColor(render::colors::preview);
-    r.g.line(vp, {-5, 0}, {5, 0});
-    r.g.line(vp, {0, -5}, {0, 5});
-    r.g.circle(vp, {0, 0}, 2.5f);
+    float hair = r.pixel();
+    r.line({-5, 0}, {5, 0}, c.preview, hair);
+    r.line({0, -5}, {0, 5}, c.preview, hair);
+    r.ring({0, 0}, 2.5f, c.preview, hair);
 
     for (auto& s : sym.shapes) {
-        auto color = is_shape_selected(s.id) ? render::colors::selection : render::colors::symbol;
-        render::draw_shape(r, vp, s, {0, 0}, {}, color);
+        auto color = is_shape_selected(s.id) ? c.selection : c.symbol;
+        render::draw_shape(r, s, {0, 0}, {}, color);
 
         for (int i = 0; i < model::point_count(s); i++) {
             bool sel = is_selected({handle::point, s.id, i});
-            r.g.setColor(sel ? render::colors::selection : render::colors::control_point);
-            r.g.circle(vp, model::get_point(s, i), sel ? 1.5f : 1.0f, true);
+            r.circle(model::get_point(s, i), sel ? 1.5f : 1.0f, sel ? c.selection : c.control_point);
         }
     }
 
     for (auto& p : sym.pins)
-        draw_pin(p, is_selected({handle::pin, p.id}) ? render::colors::selection : render::colors::pin);
+        draw_pin(p, is_selected({handle::pin, p.id}) ? c.selection : c.pin);
 
     active->draw(*this);
+    r.end();
 }
 
 void symbol_editor::draw_pin(const model::pin& p, glm::vec4 color)
 {
     auto& r = ctx.r;
-    auto& vp = view.vp();
+    auto& c = render::colors();
     auto port = ctx.cell.find_port(p.port);
     glm::vec2 pos = p.pos;
-    r.g.setColor(port ? color : render::colors::error);
-    r.g.rect(vp, pos - 2.5f, pos + 2.5f);
-    r.text(vp, port ? port->name : "?", pos + glm::vec2{0, 4}, 6.0f, port ? render::colors::pin : render::colors::error, render::align::center);
+    r.rect_outline(pos - 2.5f, pos + 2.5f, port ? color : c.error, 0.8f, 0.8f);
+    r.text(port ? port->name : "?", pos + glm::vec2{0, 4}, 6.0f, port ? c.pin : c.error, render::align::center);
 }
 
 void symbol_editor::property_panel()
