@@ -169,6 +169,9 @@ void app::draw_gui()
     // text inputs have their own undo
     if (auto e = find_editor(active_cell); e && !GetIO().WantTextInput) {
         if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z)) e->undo();
+        if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_C)) e->copy();
+        if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_X)) e->cut();
+        if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_V)) e->paste();
         if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y) || IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z)) e->redo();
     }
     if (IsKeyPressed(ImGuiKey_F1)) show_demo = !show_demo;
@@ -234,6 +237,10 @@ void app::menu_bar()
             auto e = find_editor(active_cell);
             if (MenuItem("Undo", "Ctrl+Z", false, e && e->can_undo())) e->undo();
             if (MenuItem("Redo", "Ctrl+Y", false, e && e->can_redo())) e->redo();
+            Separator();
+            if (MenuItem("Cut", "Ctrl+X", false, e && e->can_copy() && !e->locked())) e->cut();
+            if (MenuItem("Copy", "Ctrl+C", false, e && e->can_copy())) e->copy();
+            if (MenuItem("Paste", "Ctrl+V", false, e && e->can_paste())) e->paste();
             EndMenu();
         }
 
@@ -277,6 +284,7 @@ void app::menu_bar()
         BulletText("Delete: delete selection, Esc: cancel tool / clear selection");
         BulletText("Shift+click while placing: keep placing");
         BulletText("Ctrl+Z: undo, Ctrl+Y / Ctrl+Shift+Z: redo, Ctrl+S: save all");
+        BulletText("Ctrl+C / Ctrl+X / Ctrl+V: copy, cut, paste (click to place the copy)");
         SeparatorText("Schematic");
         BulletText("W: wires (click points, Esc ends the wire and goes back to select)");
         BulletText("I / O: input / output port, Space: place a cell, R: rotate");

@@ -47,6 +47,14 @@ public:
     void undo();
     void redo();
 
+    // the selection of the shown view (schematic or symbol) through the
+    // system clipboard. pasting starts placing the copy at the mouse.
+    bool can_copy() const;
+    bool can_paste() const;
+    void copy();
+    void cut();
+    void paste();
+
     bool show_symbol = false;
 
 private:

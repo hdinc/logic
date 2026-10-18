@@ -21,6 +21,7 @@ namespace logic::editor {
 //   w                draw wires, click to add points, esc to end the wire
 //   i / o            place an input / output port
 //   space            place an instance (popup opened by the cell editor)
+//   ctrl+c/x/v       copy, cut, paste (handled by the app)
 //   r                rotate selected instances or the one being placed
 //   delete           delete selection
 //   esc              cancel the tool / clear selection
@@ -33,6 +34,7 @@ public:
         input_port,
         output_port,
         place_instance,
+        paste,
     };
 
     explicit schematic_editor(context ctx);
@@ -58,6 +60,16 @@ public:
     void set_tool(tool_kind k);
     // starts placing instances of the cell
     void begin_place(model::id cell);
+
+    // the selected ports, instances and wires (with both ends selected) in a
+    // cell of their own, moved so the middle of the selection is at the
+    // origin. empty if nothing is selected.
+    std::optional<model::cell> copy_selection() const;
+    // the copied elements follow the mouse, a click places them (shift keeps
+    // placing). instances that would contain this cell are left out.
+    void begin_paste(model::cell part);
+    // adds the copied elements moved by offset with new ids and selects them
+    void insert(const model::cell& part, glm::ivec2 offset);
 
     // the current tool is in the middle of an operation, e.g. a drag
     bool busy() const { return active->busy(); }

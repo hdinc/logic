@@ -193,6 +193,33 @@ static void test_save_load(const std::filesystem::path& dir)
     std::filesystem::remove_all(dir);
 }
 
+static void test_clipboard()
+{
+    model::cell part;
+    part.impl = model::schematic{};
+    part.add_port(model::direction::input, {-20, 0}).description = "a";
+    model::instance i;
+    i.id = 5;
+    i.cell = model::builtin_cell_id("and");
+    i.name = "U1";
+    i.params["inputs"] = int64_t(3);
+    part.get_schematic()->instances.push_back(i);
+    part.get_schematic()->wires.push_back({6, {0, 0}, {10, 0}});
+
+    auto text = io::to_clipboard(part, "schematic");
+    auto back = io::from_clipboard(text, "schematic");
+    CHECK(back.has_value());
+    if (back) {
+        CHECK(back->ports == part.ports);
+        CHECK(*back->get_schematic() == *part.get_schematic());
+    }
+
+    // wrong kind or not ours
+    CHECK(!io::from_clipboard(text, "symbol"));
+    CHECK(!io::from_clipboard("hello", "schematic"));
+    CHECK(!io::from_clipboard("{\"logic_clipboard\": \"schematic\"}", "schematic"));
+}
+
 static void test_history()
 {
     model::cell c;
@@ -370,6 +397,7 @@ int main(int argc, char** argv)
     test_history();
     test_params();
     test_arc();
+    test_clipboard();
     test_builtins();
     test_save_load(dir);
 

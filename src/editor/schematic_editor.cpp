@@ -2,6 +2,7 @@
 #include "param_editor.h"
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <set>
 
@@ -137,6 +138,51 @@ private:
     model::instance preview;
 };
 
+// copied elements following the mouse until a click places them
+class paste_tool : public tool<schematic_editor> {
+public:
+    explicit paste_tool(model::cell part)
+        : part(std::move(part))
+    {
+    }
+
+    void update(schematic_editor& e, bool hovered) override
+    {
+        using namespace ImGui;
+
+        offset = model::snap(e.view.mouse_world(), model::grid);
+        if (!hovered) return;
+
+        if (IsKeyPressed(ImGuiKey_Escape)) {
+            done = true;
+        } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
+            e.insert(part, offset);
+            done = !GetIO().KeyShift;
+        }
+    }
+
+    void draw(schematic_editor& e) override
+    {
+        auto& r = e.ctx.r;
+        auto c = render::colors().preview;
+        auto sch = part.get_schematic();
+        for (auto& w : sch->wires)
+            render::draw_wire(r, {model::no_id, w.a + offset, w.b + offset}, c);
+        for (auto i : sch->instances) {
+            i.pos += offset;
+            render::draw_instance(r, e.ctx.ws, i, c);
+        }
+        for (auto p : part.ports) {
+            p.pos += offset;
+            render::draw_port(r, p, c, true);
+        }
+    }
+
+private:
+    model::cell part;
+    glm::ivec2 offset{0, 0};
+};
+
 }
 
 schematic_editor::schematic_editor(context c)
@@ -163,8 +209,9 @@ void schematic_editor::set_tool(tool_kind k)
         break;
     case tool_kind::input_port: set_tool(k, std::make_unique<port_tool>(model::direction::input)); break;
     case tool_kind::output_port: set_tool(k, std::make_unique<port_tool>(model::direction::output)); break;
-    // needs a cell, see begin_place()
-    case tool_kind::place_instance: break;
+    // need a cell or something copied, see begin_place() and begin_paste()
+    case tool_kind::place_instance:
+    case tool_kind::paste: break;
     }
 }
 
@@ -172,6 +219,87 @@ void schematic_editor::begin_place(model::id cell)
 {
     if (ctx.ws.would_create_cycle(ctx.cell.id, cell)) return;
     set_tool(tool_kind::place_instance, std::make_unique<instance_tool>(cell));
+}
+
+std::optional<model::cell> schematic_editor::copy_selection() const
+{
+    auto bounds = selection_bounds();
+    if (!bounds) return std::nullopt;
+    auto origin = model::snap((bounds->min + bounds->max) / 2.0f, model::grid);
+
+    model::cell part;
+    part.name = ctx.cell.name;
+    part.impl = model::schematic{};
+    auto& s = *part.get_schematic();
+
+    for (auto& p : ctx.cell.ports) {
+        if (!is_selected({handle::port, p.id})) continue;
+        part.ports.push_back(p);
+        part.ports.back().pos -= origin;
+    }
+    for (auto& i : sch.instances) {
+        if (!is_selected({handle::instance, i.id})) continue;
+        s.instances.push_back(i);
+        s.instances.back().pos -= origin;
+    }
+    for (auto& w : sch.wires) {
+        if (!is_selected({handle::wire_a, w.id}) || !is_selected({handle::wire_b, w.id})) continue;
+        s.wires.push_back({w.id, w.a - origin, w.b - origin});
+    }
+
+    if (part.ports.empty() && s.instances.empty() && s.wires.empty()) return std::nullopt;
+    return part;
+}
+
+void schematic_editor::begin_paste(model::cell part)
+{
+    if (!part.get_schematic()) return;
+    auto& s = *part.get_schematic();
+    std::erase_if(s.instances, [&](auto& i) { return ctx.ws.would_create_cycle(ctx.cell.id, i.cell); });
+    selection.clear();
+    set_tool(tool_kind::paste, std::make_unique<paste_tool>(std::move(part)));
+}
+
+void schematic_editor::insert(const model::cell& part, glm::ivec2 offset)
+{
+    selection.clear();
+
+    for (auto p : part.ports) {
+        p.id = ctx.cell.new_id();
+        p.pos += offset;
+        if (std::any_of(ctx.cell.ports.begin(), ctx.cell.ports.end(), [&](auto& q) { return q.name == p.name; })) {
+            // "in3" becomes the next free "in<n>"
+            auto base = p.name;
+            while (!base.empty() && std::isdigit((unsigned char)base.back()))
+                base.pop_back();
+            p.name = ctx.cell.unique_port_name(base);
+        }
+        ctx.cell.ports.push_back(p);
+        selection.push_back({handle::port, p.id});
+    }
+
+    auto s = part.get_schematic();
+    for (auto i : s->instances) {
+        if (ctx.ws.would_create_cycle(ctx.cell.id, i.cell)) continue;
+        i.id = ctx.cell.new_id();
+        i.pos += offset;
+        if (i.name.empty() || std::any_of(sch.instances.begin(), sch.instances.end(), [&](auto& j) { return j.name == i.name; }))
+            i.name = unique_instance_name();
+        sch.instances.push_back(i);
+        selection.push_back({handle::instance, i.id});
+    }
+
+    for (auto w : s->wires) {
+        w.id = ctx.cell.new_id();
+        w.a += offset;
+        w.b += offset;
+        sch.wires.push_back(w);
+        selection.push_back({handle::wire_a, w.id});
+        selection.push_back({handle::wire_b, w.id});
+    }
+
+    ctx.modified();
+    normalize();
 }
 
 void schematic_editor::cell_replaced()

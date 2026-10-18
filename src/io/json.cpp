@@ -77,6 +77,25 @@ shape shape_from_json(const json& j)
 
 }
 
+std::string to_clipboard(const cell& part, const std::string& what)
+{
+    // the id only has to be valid
+    cell c = part;
+    c.id = 1;
+    return json{{"logic_clipboard", what}, {"cell", to_json(c)}}.dump();
+}
+
+std::optional<cell> from_clipboard(const std::string& text, const std::string& what)
+{
+    try {
+        auto j = json::parse(text);
+        if (!j.is_object() || j.value("logic_clipboard", "") != what) return std::nullopt;
+        return cell_from_json(j.at("cell"));
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
 std::string id_to_string(model::id i)
 {
     char buf[17];

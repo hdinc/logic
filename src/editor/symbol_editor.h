@@ -18,6 +18,7 @@ namespace logic::editor {
 //   l / b / c        draw a line / bezier (two ends, then control) / circle
 //   a                draw an arc (two ends, then a point on it)
 //   t                place a text
+//   ctrl+c/x/v       copy, cut, paste shapes (handled by the app)
 //   delete           delete selection
 //   esc              cancel the tool / clear selection
 //   g                toggle grid
@@ -31,6 +32,7 @@ public:
         arc,
         circle,
         text,
+        paste,
     };
 
     explicit symbol_editor(context ctx);
@@ -50,6 +52,16 @@ public:
 
     // the current tool is in the middle of an operation, e.g. a drag
     bool busy() const { return active->busy(); }
+
+    // shapes with a selected point in a cell of their own, moved so the
+    // middle of the selection is at the origin. pins belong to their port
+    // and are not copied. empty if no shape is selected.
+    std::optional<model::cell> copy_selection() const;
+    // the copied shapes follow the mouse, a click places them (shift keeps
+    // placing)
+    void begin_paste(model::cell part);
+    // adds the shapes moved by offset with new ids and selects them
+    void insert(const model::symbol& part, glm::ivec2 offset);
 
     // after the cell was changed from outside, e.g. by undo
     void cell_replaced() { validate_selection(); }

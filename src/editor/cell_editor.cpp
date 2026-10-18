@@ -1,4 +1,5 @@
 #include "cell_editor.h"
+#include "../io/json.h"
 
 #include <imgui_internal.h>
 
@@ -231,6 +232,44 @@ void cell_editor::undo()
 void cell_editor::redo()
 {
     if (can_redo() && hist.redo(ctx.cell)) after_undo();
+}
+
+bool cell_editor::can_copy() const
+{
+    return !busy() && !session && (show_symbol ? symbol.copy_selection() : schematic.copy_selection()).has_value();
+}
+
+bool cell_editor::can_paste() const
+{
+    return !busy() && !session && !locked() && ImGui::GetClipboardText() != nullptr;
+}
+
+void cell_editor::copy()
+{
+    if (!can_copy()) return;
+    auto part = show_symbol ? symbol.copy_selection() : schematic.copy_selection();
+    ImGui::SetClipboardText(io::to_clipboard(*part, show_symbol ? "symbol" : "schematic").c_str());
+}
+
+void cell_editor::cut()
+{
+    if (!can_copy() || locked()) return;
+    copy();
+    if (show_symbol)
+        symbol.delete_selection();
+    else
+        schematic.delete_selection();
+}
+
+void cell_editor::paste()
+{
+    if (!can_paste()) return;
+    auto part = io::from_clipboard(ImGui::GetClipboardText(), show_symbol ? "symbol" : "schematic");
+    if (!part) return;
+    if (show_symbol)
+        symbol.begin_paste(std::move(*part));
+    else
+        schematic.begin_paste(std::move(*part));
 }
 
 void cell_editor::after_undo()

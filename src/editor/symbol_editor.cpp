@@ -48,6 +48,50 @@ float distance_to_shape(glm::vec2 p, const model::shape& s)
 
 glm::ivec2 round(glm::vec2 p) { return glm::ivec2(glm::round(p)); }
 
+// moves all points, a circle keeps its radius
+void translate(model::shape& s, glm::ivec2 d)
+{
+    int n = std::holds_alternative<model::circle>(s.geom) ? 1 : model::point_count(s);
+    for (int i = 0; i < n; i++)
+        model::set_point(s, i, model::get_point(s, i) + d);
+}
+
+// copied shapes following the mouse until a click places them
+class paste_tool : public tool<symbol_editor> {
+public:
+    explicit paste_tool(model::symbol part)
+        : part(std::move(part))
+    {
+    }
+
+    void update(symbol_editor& e, bool hovered) override
+    {
+        using namespace ImGui;
+
+        offset = model::snap(e.view.mouse_world(), e.drag_step());
+        if (!hovered) return;
+
+        if (IsKeyPressed(ImGuiKey_Escape)) {
+            done = true;
+        } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
+            e.insert(part, offset);
+            done = !GetIO().KeyShift;
+        }
+    }
+
+    void draw(symbol_editor& e) override
+    {
+        for (auto s : part.shapes) {
+            translate(s, offset);
+            render::draw_shape(e.ctx.r, s, {0, 0}, {}, render::colors().preview);
+        }
+    }
+
+private:
+    model::symbol part;
+    glm::ivec2 offset{0, 0};
+};
+
 // places a pin linked to the first port without a pin, shift keeps placing
 class pin_tool : public tool<symbol_editor> {
 public:
@@ -157,11 +201,51 @@ void symbol_editor::set_tool(tool_kind k)
     case tool_kind::arc: t = std::make_unique<shape_tool>(model::shape{model::no_id, model::arc{}}); break;
     case tool_kind::circle: t = std::make_unique<shape_tool>(model::shape{model::no_id, model::circle{{0, 0}, 0.0f}}); break;
     case tool_kind::text: t = std::make_unique<shape_tool>(model::shape{model::no_id, model::text{}}); break;
+    // needs something copied, see begin_paste()
+    case tool_kind::paste: return;
     }
 
     if (k != tool_kind::select) selection.clear();
     kind = k;
     active = std::move(t);
+}
+
+std::optional<model::cell> symbol_editor::copy_selection() const
+{
+    auto bounds = selection_bounds();
+    if (!bounds) return std::nullopt;
+    auto origin = model::snap((bounds->min + bounds->max) / 2.0f, model::grid);
+
+    model::cell part;
+    part.name = ctx.cell.name;
+    for (auto s : sym.shapes) {
+        if (!is_shape_selected(s.id)) continue;
+        translate(s, -origin);
+        part.symbol.shapes.push_back(std::move(s));
+    }
+    if (part.symbol.shapes.empty()) return std::nullopt;
+    return part;
+}
+
+void symbol_editor::begin_paste(model::cell part)
+{
+    if (busy() || part.symbol.shapes.empty()) return;
+    selection.clear();
+    kind = tool_kind::paste;
+    active = std::make_unique<paste_tool>(std::move(part.symbol));
+}
+
+void symbol_editor::insert(const model::symbol& part, glm::ivec2 offset)
+{
+    selection.clear();
+    for (auto s : part.shapes) {
+        s.id = ctx.cell.new_id();
+        translate(s, offset);
+        for (int i = 0; i < model::point_count(s); i++)
+            selection.push_back({handle::point, s.id, i});
+        sym.shapes.push_back(std::move(s));
+    }
+    ctx.modified();
 }
 
 void symbol_editor::process_inputs(bool hovered)
