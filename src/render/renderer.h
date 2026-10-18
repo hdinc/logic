@@ -103,8 +103,8 @@ private:
 
 void draw_shape(renderer& r, const model::shape& s, glm::ivec2 pos, model::transform xf, glm::vec4 color);
 
-// shapes of a symbol placed at pos. pins get a small circle unless
-// pin_connected says they are connected (null: none is).
+// shapes of a symbol placed at pos. pins get a dot unless pin_connected
+// says they are connected (null: none is).
 void draw_symbol(renderer& r, const model::symbol& s, glm::ivec2 pos, model::transform xf, glm::vec4 color,
     const std::vector<bool>* pin_connected = nullptr);
 
@@ -115,7 +115,7 @@ void draw_instance(renderer& r, const model::workspace& ws, const model::instanc
     const std::vector<int>* pin_nets = nullptr);
 
 // connector of a port inside its cell's schematic. the connection point
-// gets a small circle like an instance pin if nothing is connected to it.
+// gets a dot like an instance pin if nothing is connected to it.
 void draw_port(renderer& r, const model::port& p, glm::vec4 color, bool connected = false);
 
 // color of a wire carrying the value. width 0 is a net without ports.

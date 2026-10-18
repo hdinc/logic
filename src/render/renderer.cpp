@@ -141,9 +141,9 @@ void renderer::text_middle(const std::string& str, glm::vec2 pos, float size, gl
 namespace {
 
 // marks a pin that isn't connected
-void draw_pin(renderer& r, glm::vec2 pos)
+void draw_pin(renderer& r, glm::vec2 pos, glm::vec4 color)
 {
-    r.ring(pos, 1.6f, colors().pin, 0.6f);
+    r.circle(pos, 2.0f, color);
 }
 
 }
@@ -157,6 +157,10 @@ void draw_shape(renderer& r, const model::shape& s, glm::ivec2 pos, model::trans
         r.line(tp(l->a), tp(l->b), color, w);
     } else if (auto b = std::get_if<model::bezier>(&s.geom)) {
         r.g.bezier(tp(b->a), tp(b->c), tp(b->b), w, color);
+    } else if (auto a = std::get_if<model::arc>(&s.geom)) {
+        auto pts = model::arc_points(*a);
+        for (size_t k = 1; k < pts.size(); k++)
+            r.line(tp(pts[k - 1]), tp(pts[k]), color, w);
     } else if (auto c = std::get_if<model::circle>(&s.geom)) {
         r.ring(tp(c->center), c->radius, color, w);
     } else if (auto t = std::get_if<model::text>(&s.geom)) {
@@ -177,7 +181,7 @@ void draw_symbol(renderer& r, const model::symbol& s, glm::ivec2 pos, model::tra
 
     for (size_t k = 0; k < s.pins.size(); k++) {
         if (pin_connected && (*pin_connected)[k]) continue;
-        draw_pin(r, glm::vec2(pos) + xf.apply(glm::vec2(s.pins[k].pos)));
+        draw_pin(r, glm::vec2(pos) + xf.apply(glm::vec2(s.pins[k].pos)), color);
     }
 }
 
@@ -223,7 +227,7 @@ void draw_port(renderer& r, const model::port& p, glm::vec4 color, bool connecte
     }
 
     if (p.dir == model::direction::inout) r.rect_outline(pos - glm::vec2{5, 5}, pos + glm::vec2{5, 5}, color, stroke, 1.5f);
-    if (!connected) draw_pin(r, cp);
+    if (!connected) draw_pin(r, cp, color);
 
     std::string label = p.width > 1 ? p.name + "[" + std::to_string(p.width) + "]" : p.name;
     if (p.dir == model::direction::input)

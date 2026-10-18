@@ -141,6 +141,7 @@ static void test_save_load(const std::filesystem::path& dir)
     p.width = 8;
     a.symbol.shapes.push_back({a.new_id(), model::line{{0, 0}, {10, 0}}, model::bus_stroke});
     a.symbol.shapes.push_back({a.new_id(), model::bezier{{0, 0}, {10, 0}, {5, 5}}});
+    a.symbol.shapes.push_back({a.new_id(), model::arc{{0, 10}, {0, -10}, {10, 0}}});
     a.symbol.shapes.push_back({a.new_id(), model::circle{{0, 0}, 2.5f}});
     a.symbol.shapes.push_back({a.new_id(), model::text{{0, 0}, "&", 12.0f}});
     a.symbol.pins.push_back({a.new_id(), p.id, {20, 0}});
@@ -273,6 +274,22 @@ static void test_params()
     CHECK(model::params_key({{"a", std::string("1")}}) != model::params_key({{"a", int64_t(1)}}));
 }
 
+static void test_arc()
+{
+    // half circle on the right of the origin, both ways round
+    for (auto through : {glm::ivec2{10, 0}, glm::ivec2{-10, 0}}) {
+        auto pts = model::arc_points({{0, 10}, {0, -10}, through});
+        CHECK(pts.size() > 4);
+        CHECK(pts.front() == glm::vec2(0, 10) && pts.back() == glm::vec2(0, -10));
+        for (auto p : pts) {
+            CHECK(std::abs(glm::length(p) - 10.0f) < 1e-3f);
+            CHECK(p.x * through.x >= -1e-3f);
+        }
+    }
+    // on one line: just the ends
+    CHECK(model::arc_points({{0, 0}, {10, 0}, {5, 0}}).size() == 2);
+}
+
 static bool on_grid(glm::ivec2 p) { return p.x % model::grid == 0 && p.y % model::grid == 0; }
 
 static void test_builtins()
@@ -351,6 +368,7 @@ int main(int argc, char** argv)
     test_cycles();
     test_history();
     test_params();
+    test_arc();
     test_builtins();
     test_save_load(dir);
 

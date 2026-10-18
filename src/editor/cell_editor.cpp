@@ -151,6 +151,7 @@ void cell_editor::edit_toolbar()
         if (tool_button("Pin", "Place a pin linked to a port (P)", t == k::pin)) symbol.set_tool(k::pin);
         if (tool_button("Line", "Draw a line (L)", t == k::line)) symbol.set_tool(k::line);
         if (tool_button("Bezier", "Draw a curve: both ends, then the control point (B)", t == k::bezier)) symbol.set_tool(k::bezier);
+        if (tool_button("Arc", "Draw an arc: both ends, then a point on it (A)", t == k::arc)) symbol.set_tool(k::arc);
         if (tool_button("Circle", "Draw a circle: center, then radius (C)", t == k::circle)) symbol.set_tool(k::circle);
         if (tool_button("Text", "Place a text (T)", t == k::text)) symbol.set_tool(k::text);
     } else {

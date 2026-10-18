@@ -29,6 +29,12 @@ float distance_to_shape(glm::vec2 p, const model::shape& s)
             prev = q;
         }
         return d;
+    } else if (auto a = std::get_if<model::arc>(&s.geom)) {
+        float d = 1e30f;
+        auto pts = model::arc_points(*a);
+        for (size_t k = 1; k < pts.size(); k++)
+            d = std::min(d, distance_to_segment(p, pts[k - 1], pts[k]));
+        return d;
     } else if (auto c = std::get_if<model::circle>(&s.geom)) {
         return std::abs(glm::length(p - glm::vec2(c->center)) - c->radius);
     } else if (auto t = std::get_if<model::text>(&s.geom)) {
@@ -149,6 +155,7 @@ void symbol_editor::set_tool(tool_kind k)
     case tool_kind::pin: t = std::make_unique<pin_tool>(); break;
     case tool_kind::line: t = std::make_unique<shape_tool>(model::shape{model::no_id, model::line{}}); break;
     case tool_kind::bezier: t = std::make_unique<shape_tool>(model::shape{model::no_id, model::bezier{}}); break;
+    case tool_kind::arc: t = std::make_unique<shape_tool>(model::shape{model::no_id, model::arc{}}); break;
     case tool_kind::circle: t = std::make_unique<shape_tool>(model::shape{model::no_id, model::circle{{0, 0}, 0.0f}}); break;
     case tool_kind::text: t = std::make_unique<shape_tool>(model::shape{model::no_id, model::text{}}); break;
     }
@@ -174,6 +181,8 @@ void symbol_editor::process_inputs(bool hovered)
             set_tool(tool_kind::line);
         else if (IsKeyPressed(ImGuiKey_B))
             set_tool(tool_kind::bezier);
+        else if (IsKeyPressed(ImGuiKey_A))
+            set_tool(tool_kind::arc);
         else if (IsKeyPressed(ImGuiKey_C))
             set_tool(tool_kind::circle);
         else if (IsKeyPressed(ImGuiKey_T))
@@ -393,11 +402,12 @@ void symbol_editor::property_panel()
                 ctx.modified();
             }
         } else {
-            SeparatorText(std::holds_alternative<model::line>(s->geom) ? "Line" : "Bezier");
+            bool is_arc = std::holds_alternative<model::arc>(s->geom);
+            SeparatorText(std::holds_alternative<model::line>(s->geom) ? "Line" : (is_arc ? "Arc" : "Bezier"));
             for (int i = 0; i < model::point_count(*s); i++) {
                 auto p = model::get_point(*s, i);
                 PushID(i);
-                if (InputInt2(i == 2 ? "Control" : (i == 0 ? "Start" : "End"), &p.x)) {
+                if (InputInt2(i == 2 ? (is_arc ? "Through" : "Control") : (i == 0 ? "Start" : "End"), &p.x)) {
                     model::set_point(*s, i, p);
                     ctx.modified();
                 }

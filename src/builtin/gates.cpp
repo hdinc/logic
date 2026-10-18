@@ -155,7 +155,8 @@ public:
         auto ys = input_ys(inputs);
         int max_y = std::abs(ys.front());
 
-        // the body keeps its size, more inputs extend the back
+        // the body keeps its size, more inputs extend the back. the input
+        // pins stay one grid behind -h.
         int h = std::clamp(max_y + grid, 2 * grid, 3 * grid);
         int back = -h;
         int ext = std::max(h, max_y);
@@ -163,11 +164,12 @@ public:
         builder b;
 
         if (op == op_t::and_op) {
+            // a short straight part and a half circle
+            back = -h * 3 / 4;
             b.line({back, ext}, {back, -ext});
             b.line({back, h}, {0, h});
             b.line({back, -h}, {0, -h});
-            b.bezier({0, h}, {h, h}, {h, 0});
-            b.bezier({h, 0}, {h, -h}, {0, -h});
+            b.arc({0, h}, {h, 0}, {0, -h});
         } else {
             b.bezier({back, h}, {back + h * 6 / 10, 0}, {back, -h});
             b.bezier({back, h}, {h * 3 / 10, h}, {h, 0});
@@ -187,8 +189,8 @@ public:
                 float t = (1.0f - float(y) / h) / 2.0f;
                 x = back + (int)std::lround(2.0f * t * (1.0f - t) * h * 6 / 10);
             }
-            b.line({back - grid, y}, {x, y});
-            b.port("in" + std::to_string(i), direction::input, width, {back - grid, y});
+            b.line({-h - grid, y}, {x, y});
+            b.port("in" + std::to_string(i), direction::input, width, {-h - grid, y});
         }
 
         output(b, h, negate, width);

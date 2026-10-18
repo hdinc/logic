@@ -22,6 +22,14 @@ struct bezier {
     bool operator==(const bezier&) const = default;
 };
 
+// circular arc from a to b through c
+struct arc {
+    glm::ivec2 a;
+    glm::ivec2 b;
+    glm::ivec2 c;
+    bool operator==(const arc&) const = default;
+};
+
 struct circle {
     glm::ivec2 center;
     float radius;
@@ -40,7 +48,7 @@ constexpr float bus_stroke = 2.5f;
 
 struct shape {
     model::id id = no_id;
-    std::variant<line, bezier, circle, text> geom;
+    std::variant<line, bezier, arc, circle, text> geom;
     // stroke width of lines, beziers and circles, 0 for the normal width
     float width = 0.0f;
     bool operator==(const shape&) const = default;
@@ -51,6 +59,9 @@ struct shape {
 int point_count(const shape& s);
 glm::ivec2 get_point(const shape& s, int i);
 void set_point(shape& s, int i, glm::ivec2 p);
+
+// points along the arc from a to b, a straight line if the points are on one
+std::vector<glm::vec2> arc_points(const arc& a);
 
 // connection point of the symbol, linked to one of the cell's ports
 struct pin {

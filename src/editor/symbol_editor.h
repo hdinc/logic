@@ -16,6 +16,7 @@ namespace logic::editor {
 //   shift            add to selection, keep drawing after a click
 //   p                place a pin, linked to the first port without a pin
 //   l / b / c        draw a line / bezier (two ends, then control) / circle
+//   a                draw an arc (two ends, then a point on it)
 //   t                place a text
 //   delete           delete selection
 //   esc              cancel the tool / clear selection
@@ -27,6 +28,7 @@ public:
         pin,
         line,
         bezier,
+        arc,
         circle,
         text,
     };

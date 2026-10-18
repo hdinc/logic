@@ -281,7 +281,7 @@ void app::menu_bar()
         BulletText("W: wires (click points, Esc ends the wire, Esc again leaves the tool)");
         BulletText("I / O: input / output port, Space: place a cell, R: rotate");
         SeparatorText("Symbol");
-        BulletText("P: pin, L: line, B: bezier, C: circle, T: text");
+        BulletText("P: pin, L: line, B: bezier, A: arc, C: circle, T: text");
         SeparatorText("Simulate");
         BulletText("F5: start / stop simulating the schematic");
         BulletText("Click an input port: toggle it, wider inputs are set in the properties");

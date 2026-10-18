@@ -34,6 +34,11 @@ json shape_to_json(const shape& s)
         j["a"] = vec(b->a);
         j["b"] = vec(b->b);
         j["c"] = vec(b->c);
+    } else if (auto a = std::get_if<arc>(&s.geom)) {
+        j["type"] = "arc";
+        j["a"] = vec(a->a);
+        j["b"] = vec(a->b);
+        j["c"] = vec(a->c);
     } else if (auto c = std::get_if<circle>(&s.geom)) {
         j["type"] = "circle";
         j["center"] = vec(c->center);
@@ -57,6 +62,8 @@ shape shape_from_json(const json& j)
         s.geom = line{vec(j.at("a")), vec(j.at("b"))};
     } else if (type == "bezier") {
         s.geom = bezier{vec(j.at("a")), vec(j.at("b")), vec(j.at("c"))};
+    } else if (type == "arc") {
+        s.geom = arc{vec(j.at("a")), vec(j.at("b")), vec(j.at("c"))};
     } else if (type == "circle") {
         s.geom = circle{vec(j.at("center")), j.at("radius").get<float>()};
     } else if (type == "text") {
