@@ -32,10 +32,15 @@ std::string format_time(time t);
 // what a component sees while it is evaluated
 class context {
 public:
-    explicit context(time now, bool woken, time wake)
+    // horizon(owner, now) finds the next event after now, see horizon()
+    using horizon_fn = time (*)(const void* owner, time now);
+
+    explicit context(time now, bool woken, time wake, horizon_fn h = nullptr, const void* owner = nullptr)
         : m_now(now)
         , m_woken(woken)
         , m_wake(wake)
+        , m_horizon(h)
+        , m_owner(owner)
     {
     }
 
@@ -52,10 +57,19 @@ public:
     // the pending request, never if there is none
     time wake() const { return m_wake; }
 
+    // the earliest time after now at which something else in the
+    // simulation is due, or the time the simulation is run to if that's
+    // earlier (which may be now itself), never if nothing is. until then the
+    // inputs can only change through this component's own outputs. for
+    // models that run ahead, e.g. an external simulator.
+    time horizon() const { return m_horizon ? m_horizon(m_owner, m_now) : never; }
+
 private:
     time m_now;
     bool m_woken;
     time m_wake;
+    horizon_fn m_horizon;
+    const void* m_owner;
 };
 
 // a named part of a component's state, shown by debugging views

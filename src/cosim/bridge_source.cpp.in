@@ -1,0 +1,11 @@
+// the sources of the vpi bridge, compiled with the simulator's tools when
+// first needed. configured by cmake from src/cosim.
+
+namespace logic::cosim {
+
+extern const char* const bridge_source;
+extern const char* const bridge_protocol;
+const char* const bridge_source = R"LOGICVPI(@LOGIC_VPI_C@)LOGICVPI";
+const char* const bridge_protocol = R"LOGICVPI(@COSIM_PROTOCOL_H@)LOGICVPI";
+
+}

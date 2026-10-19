@@ -7,6 +7,7 @@ module counter #(
     input  logic             en,
     output logic [WIDTH-1:0] q
 );
+    initial q = '0;
     always_ff @(posedge clk)
         if (rst) q <= '0;
         else if (en) q <= q + 1'b1;

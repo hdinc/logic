@@ -17,6 +17,11 @@ set(LOGIC_WARNINGS -Wall -Wextra -Wpedantic -Wsuggest-override -Wno-sign-compare
 file(READ sdk/include/logic_model.h LOGIC_MODEL_H)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS sdk/include/logic_model.h)
 configure_file(src/hdl/sdk_header.cpp.in ${CMAKE_BINARY_DIR}/generated/sdk_header.cpp @ONLY)
+# the vpi bridge's sources, compiled by the hdl simulators' tools at run time
+file(READ src/cosim/logic_vpi.c LOGIC_VPI_C)
+file(READ src/cosim/cosim_protocol.h COSIM_PROTOCOL_H)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/cosim/logic_vpi.c src/cosim/cosim_protocol.h)
+configure_file(src/cosim/bridge_source.cpp.in ${CMAKE_BINARY_DIR}/generated/bridge_source.cpp @ONLY)
 
 # data model, file io, builtin primitives, netlist and simulator. no gui or
 # opengl dependencies
@@ -45,12 +50,20 @@ add_library(logic_core STATIC
     src/plugin/dynlib.cpp
     src/plugin/registry.cpp
     src/hdl/process.cpp
+    src/hdl/job.cpp
     src/hdl/verilator.cpp
+    src/hdl/icarus.cpp
     src/hdl/manager.cpp
+    src/cosim/socket.cpp
+    src/cosim/component.cpp
     ${CMAKE_BINARY_DIR}/generated/sdk_header.cpp
+    ${CMAKE_BINARY_DIR}/generated/bridge_source.cpp
 )
 target_include_directories(logic_core PUBLIC src sdk/include)
 target_link_libraries(logic_core PUBLIC glm::glm nlohmann_json::nlohmann_json Threads::Threads ${CMAKE_DL_LIBS})
+if(WIN32)
+    target_link_libraries(logic_core PUBLIC ws2_32)
+endif()
 target_compile_options(logic_core PRIVATE ${LOGIC_WARNINGS})
 
 add_executable(logic

@@ -103,11 +103,15 @@ public:
     time now() const { return cur.now; }
     // time of the next pending wake, never if there is none
     time next_event() const;
+    // the earliest pending wake after t, or the time run_until is going to
+    // if that's earlier
+    time event_after(time t) const;
     // processes all events up to and including t, then the time is t.
     // returns false if it stopped early because max_events points in time
     // were processed, the time is then the last of them.
     bool run_until(time t, int max_events = std::numeric_limits<int>::max());
-    // advances to the next event and processes it. false if there is none.
+    // processes what's due now, then advances to the next event and
+    // processes it. false if there is none.
     bool step();
     // back to time 0 and the initial state, input values are kept
     void reset();
@@ -220,6 +224,8 @@ private:
     void update_node(int node);
     // runs the scheduled instances until nothing changes, at the current time
     void settle();
+    // run_until without setting the target
+    bool run(time t, int max_events);
 
     const model::workspace& ws;
     const component_factory& factory;
@@ -247,6 +253,8 @@ private:
     std::vector<bool> queued;
     // min heap of wakes
     std::vector<event> events;
+    // where run_until is going, never outside of it
+    time target = never;
 
     // reused by update_node
     std::vector<value> scratch;

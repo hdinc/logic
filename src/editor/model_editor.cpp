@@ -206,17 +206,13 @@ void model_editor::hdl_build(const model::hdl_impl& h)
     if (!ctx.hdl) return;
     SeparatorText("Build");
 
-    if (h.backend != model::hdl_backend::verilator) {
-        TextDisabled("%s isn't supported yet, choose Verilator", model::to_string(h.backend));
+    bool ok;
+    auto tool = ctx.hdl->tool_status(h.backend, ok);
+    if (!ok) {
+        TextColored({1, 0.4f, 0.4f, 1}, "%s", tool.c_str());
         return;
     }
-    auto& tools = ctx.hdl->verilator();
-    if (!tools.ok()) {
-        TextColored({1, 0.4f, 0.4f, 1}, "%s", tools.error.c_str());
-        return;
-    }
-    TextDisabled("%s", tools.version.c_str());
-    SetItemTooltip("%s", tools.cxx_version.c_str());
+    TextDisabled("%s", tool.c_str());
 
     auto st = ctx.hdl->status(ctx.cell.id);
     bool running = st.state == hdl::build_status::queued || st.state == hdl::build_status::building;
@@ -225,7 +221,7 @@ void model_editor::hdl_build(const model::hdl_impl& h)
         if (auto params = ctx.cell.external_params()) ctx.hdl->build(ctx.cell, model::resolve_params(*params, {}));
     }
     EndDisabled();
-    SetItemTooltip("Build the model with the default parameters. Simulating builds what's missing too.");
+    SetItemTooltip("Build (Verilator) or compile (Icarus) the model with the default parameters. Simulating builds what's missing too.");
     SameLine();
 
     switch (st.state) {

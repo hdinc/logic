@@ -6,10 +6,12 @@
 #include <windows.h>
 #else
 #include <cerrno>
+#include <csignal>
 #include <cstring>
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
+extern char** environ;
 #endif
 
 namespace logic::hdl {
@@ -18,18 +20,18 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// splits the output into lines for the callback
+// splits output into lines for the callback
 class line_splitter {
 public:
-    line_splitter(std::string& out, const std::function<void(const std::string&)>& f)
-        : out(out)
+    line_splitter(std::string* all, const std::function<void(const std::string&)>& f)
+        : all(all)
         , f(f)
     {
     }
 
     void add(const char* data, size_t n)
     {
-        out.append(data, n);
+        if (all) all->append(data, n);
         if (!f) return;
         for (size_t k = 0; k < n; k++) {
             if (data[k] == '\n') {
@@ -48,7 +50,7 @@ public:
     }
 
 private:
-    std::string& out;
+    std::string* all;
     const std::function<void(const std::string&)>& f;
     std::string line;
 };
@@ -57,6 +59,7 @@ private:
 
 fs::path find_program(const std::string& name)
 {
+    if (fs::path(name).has_parent_path()) return fs::exists(name) ? fs::path(name) : fs::path{};
     auto path = std::getenv("PATH");
     if (!path) return {};
 #ifdef _WIN32
@@ -88,6 +91,12 @@ fs::path find_program(const std::string& name)
     return {};
 }
 
+child_process::~child_process()
+{
+    kill();
+    wait();
+}
+
 #ifdef _WIN32
 
 namespace {
@@ -117,23 +126,42 @@ std::wstring widen(const std::string& s)
     return fs::path(s).wstring();
 }
 
+// the current environment with the extra variables, as CreateProcessW wants it
+std::wstring environment_block(const environment& env)
+{
+    std::vector<std::wstring> vars;
+    auto block = GetEnvironmentStringsW();
+    for (auto p = block; *p; p += wcslen(p) + 1)
+        vars.push_back(p);
+    FreeEnvironmentStringsW(block);
+    for (auto& [k, v] : env) {
+        auto key = widen(k) + L"=";
+        std::erase_if(vars, [&](auto& x) { return _wcsnicmp(x.c_str(), key.c_str(), key.size()) == 0; });
+        vars.push_back(key + widen(v));
+    }
+    std::wstring r;
+    for (auto& v : vars)
+        r += v + L'\0';
+    return r + L'\0';
 }
 
-process_result run_process(const std::vector<std::string>& args, const fs::path& dir, const std::function<void(const std::string&)>& on_line)
+}
+
+bool child_process::start(const std::vector<std::string>& args, const fs::path& dir, const environment& env, std::string& error)
 {
-    process_result r;
     if (args.empty()) {
-        r.error = "nothing to run";
-        return r;
+        error = "nothing to run";
+        return false;
     }
 
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE read_end, write_end;
     if (!CreatePipe(&read_end, &write_end, &sa, 0)) {
-        r.error = "can't create a pipe";
-        return r;
+        error = "can't create a pipe";
+        return false;
     }
     SetHandleInformation(read_end, HANDLE_FLAG_INHERIT, 0);
+    HANDLE nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
 
     std::wstring cmd;
     for (auto& a : args)
@@ -144,82 +172,130 @@ process_result run_process(const std::vector<std::string>& args, const fs::path&
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdOutput = write_end;
     si.hStdError = write_end;
-    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdInput = nul;
     PROCESS_INFORMATION pi{};
     auto wdir = dir.empty() ? std::wstring() : dir.wstring();
-    BOOL started = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, wdir.empty() ? nullptr : wdir.c_str(), &si, &pi);
+    auto block = environment_block(env);
+    BOOL started = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, block.data(),
+        wdir.empty() ? nullptr : wdir.c_str(), &si, &pi);
     CloseHandle(write_end);
+    if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
     if (!started) {
         CloseHandle(read_end);
-        r.error = "can't start " + args[0] + " (error " + std::to_string(GetLastError()) + ")";
-        return r;
+        error = "can't start " + args[0] + " (error " + std::to_string(GetLastError()) + ")";
+        return false;
     }
+    CloseHandle(pi.hThread);
+    process = pi.hProcess;
+    output = read_end;
+    waited = false;
+    return true;
+}
 
-    line_splitter lines(r.output, on_line);
+void child_process::read_output(const std::function<void(const std::string&)>& on_line, std::string* all)
+{
+    if (!output) return;
+    line_splitter lines(all, on_line);
     char buf[4096];
     DWORD n;
-    while (ReadFile(read_end, buf, sizeof(buf), &n, nullptr) && n > 0)
+    while (ReadFile((HANDLE)output, buf, sizeof(buf), &n, nullptr) && n > 0)
         lines.add(buf, n);
     lines.finish();
-    CloseHandle(read_end);
+}
 
-    WaitForSingleObject(pi.hProcess, INFINITE);
+bool child_process::running()
+{
+    return process && !waited && WaitForSingleObject((HANDLE)process, 0) == WAIT_TIMEOUT;
+}
+
+int child_process::wait()
+{
+    if (!process || waited) return exit_code;
+    WaitForSingleObject((HANDLE)process, INFINITE);
     DWORD code = 0;
-    GetExitCodeProcess(pi.hProcess, &code);
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
-    r.exit_code = (int)code;
-    return r;
+    GetExitCodeProcess((HANDLE)process, &code);
+    CloseHandle((HANDLE)process);
+    if (output) CloseHandle((HANDLE)output);
+    process = output = nullptr;
+    waited = true;
+    exit_code = (int)code;
+    return exit_code;
+}
+
+void child_process::kill()
+{
+    if (process && !waited) TerminateProcess((HANDLE)process, 1);
 }
 
 #else
 
-process_result run_process(const std::vector<std::string>& args, const fs::path& dir, const std::function<void(const std::string&)>& on_line)
+bool child_process::start(const std::vector<std::string>& args, const fs::path& dir, const environment& env, std::string& error)
 {
-    process_result r;
     if (args.empty()) {
-        r.error = "nothing to run";
-        return r;
+        error = "nothing to run";
+        return false;
+    }
+    auto exe = find_program(args[0]);
+    if (exe.empty()) {
+        error = "can't start " + args[0] + ": not found";
+        return false;
     }
 
-    int fds[2];
-    if (pipe(fds) != 0) {
-        r.error = "can't create a pipe";
-        return r;
+    // everything the child needs is prepared before fork
+    std::vector<std::string> env_strings;
+    for (char** e = environ; *e; e++) {
+        std::string s = *e;
+        auto key = s.substr(0, s.find('='));
+        bool replaced = false;
+        for (auto& [k, v] : env)
+            replaced = replaced || k == key;
+        if (!replaced) env_strings.push_back(s);
     }
-
-    // a pipe to report a failed exec
-    int err_fds[2];
-    if (pipe(err_fds) != 0) {
-        close(fds[0]);
-        close(fds[1]);
-        r.error = "can't create a pipe";
-        return r;
-    }
-    fcntl(err_fds[1], F_SETFD, FD_CLOEXEC);
+    for (auto& [k, v] : env)
+        env_strings.push_back(k + "=" + v);
+    std::vector<char*> envp;
+    for (auto& s : env_strings)
+        envp.push_back(s.data());
+    envp.push_back(nullptr);
 
     std::vector<char*> argv;
     for (auto& a : args)
         argv.push_back(const_cast<char*>(a.c_str()));
     argv.push_back(nullptr);
+    std::string exe_str = exe.string(), dir_str = dir.string();
 
-    pid_t pid = fork();
-    if (pid < 0) {
-        r.error = "can't start " + args[0];
-        return r;
+    int fds[2], err_fds[2];
+    if (pipe(fds) != 0) {
+        error = "can't create a pipe";
+        return false;
     }
-    if (pid == 0) {
-        dup2(fds[1], 1);
-        dup2(fds[1], 2);
+    if (pipe(err_fds) != 0) {
         close(fds[0]);
         close(fds[1]);
+        error = "can't create a pipe";
+        return false;
+    }
+    fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+    fcntl(err_fds[1], F_SETFD, FD_CLOEXEC);
+
+    pid_t p = fork();
+    if (p < 0) {
+        error = "can't start " + args[0];
+        return false;
+    }
+    if (p == 0) {
+        int devnull = open("/dev/null", O_RDONLY);
+        if (devnull >= 0) dup2(devnull, 0);
+        dup2(fds[1], 1);
+        dup2(fds[1], 2);
+        close(fds[1]);
         close(err_fds[0]);
-        if (!dir.empty() && chdir(dir.c_str()) != 0) {
+        if (!dir_str.empty() && chdir(dir_str.c_str()) != 0) {
             int e = errno;
             (void)!write(err_fds[1], &e, sizeof(e));
             _exit(127);
         }
-        execvp(argv[0], argv.data());
+        execve(exe_str.c_str(), argv.data(), envp.data());
         int e = errno;
         (void)!write(err_fds[1], &e, sizeof(e));
         _exit(127);
@@ -227,11 +303,34 @@ process_result run_process(const std::vector<std::string>& args, const fs::path&
 
     close(fds[1]);
     close(err_fds[1]);
+    int exec_errno = 0;
+    ssize_t n;
+    while ((n = read(err_fds[0], &exec_errno, sizeof(exec_errno))) < 0 && errno == EINTR) {
+    }
+    close(err_fds[0]);
+    if (n == sizeof(exec_errno)) {
+        close(fds[0]);
+        int status;
+        while (waitpid(p, &status, 0) < 0 && errno == EINTR) {
+        }
+        error = "can't start " + args[0] + ": " + std::strerror(exec_errno);
+        return false;
+    }
 
-    line_splitter lines(r.output, on_line);
+    pid = p;
+    output = fds[0];
+    waited = false;
+    reaped = false;
+    return true;
+}
+
+void child_process::read_output(const std::function<void(const std::string&)>& on_line, std::string* all)
+{
+    if (output < 0) return;
+    line_splitter lines(all, on_line);
     char buf[4096];
     ssize_t n;
-    while ((n = read(fds[0], buf, sizeof(buf))) != 0) {
+    while ((n = read(output, buf, sizeof(buf))) != 0) {
         if (n < 0) {
             if (errno == EINTR) continue;
             break;
@@ -239,23 +338,51 @@ process_result run_process(const std::vector<std::string>& args, const fs::path&
         lines.add(buf, (size_t)n);
     }
     lines.finish();
-    close(fds[0]);
+}
 
-    int exec_errno = 0;
-    bool exec_failed = read(err_fds[0], &exec_errno, sizeof(exec_errno)) == sizeof(exec_errno);
-    close(err_fds[0]);
-
+bool child_process::running()
+{
+    if (pid < 0 || reaped) return false;
     int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+    if (waitpid(pid, &status, WNOHANG) != pid) return true;
+    reaped = true;
+    exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    return false;
+}
+
+int child_process::wait()
+{
+    if (pid < 0 || waited) return exit_code;
+    if (!reaped) {
+        int status = 0;
+        while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+        }
+        exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        reaped = true;
     }
-    if (exec_failed) {
-        r.error = "can't start " + args[0] + ": " + std::strerror(exec_errno);
-        return r;
-    }
-    r.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-    return r;
+    if (output >= 0) close(output);
+    output = -1;
+    pid = -1;
+    waited = true;
+    return exit_code;
+}
+
+void child_process::kill()
+{
+    if (pid > 0 && !reaped) ::kill(pid, SIGKILL);
 }
 
 #endif
+
+process_result run_process(const std::vector<std::string>& args, const fs::path& dir, const std::function<void(const std::string&)>& on_line,
+    const environment& env)
+{
+    process_result r;
+    child_process c;
+    if (!c.start(args, dir, env, r.error)) return r;
+    c.read_output(on_line, &r.output);
+    r.exit_code = c.wait();
+    return r;
+}
 
 }

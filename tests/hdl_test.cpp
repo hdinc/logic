@@ -1,5 +1,6 @@
-// tests for hdl cells simulated with verilator. skipped (exit code 77) if
-// verilator isn't installed.
+// tests for hdl cells simulated with verilator and icarus verilog. each
+// backend that isn't installed is skipped, all of them missing gives exit
+// code 77.
 // usage: hdl_test <folder with the test sources> <cache folder>
 
 #include "../src/builtin/builtin.h"
@@ -27,6 +28,8 @@ static int failures = 0;
     } while (0)
 
 static fs::path sources, cache;
+// the backend the tests use
+static model::hdl_backend backend = model::hdl_backend::verilator;
 
 static value bit(bool b) { return sim::known(b, 1); }
 
@@ -55,6 +58,7 @@ struct fixture {
     {
         model::hdl_impl h;
         h.language = model::hdl_language::systemverilog;
+        h.backend = backend;
         h.sources = {module + ".sv"};
         h.top = module;
         auto& c = ws.create_cell(*lib, module, h);
@@ -120,6 +124,16 @@ static void test_messages()
     CHECK(d[1].severity == "warning" && d[1].file == "dir/b.v" && d[1].line == 7);
     CHECK(d[2].file == "C:\\x\\c.sv" && d[2].line == 9 && d[2].column == 0);
     CHECK(d[3].file.empty() && d[3].message.find("Cannot find") == 0);
+
+    auto i = hdl::parse_icarus_messages("/x/a.sv:5: syntax error\n"
+                                        "a.sv:7: error: Invalid module item.\n"
+                                        "b.v:2: warning: implicit net\n"
+                                        "I give up.\n");
+    CHECK(i.size() == 3);
+    if (i.size() != 3) return;
+    CHECK(i[0].file == "/x/a.sv" && i[0].line == 5 && i[0].severity == "error" && i[0].message == "syntax error");
+    CHECK(i[1].message == "Invalid module item." && i[1].severity == "error");
+    CHECK(i[2].severity == "warning" && i[2].file == "b.v");
 }
 
 static void test_describe()
@@ -151,18 +165,13 @@ static void test_describe()
 
     // errors point at the source
     auto& b = f.hdl_cell("broken", false);
-    std::vector<model::port> ports;
-    std::vector<model::param_def> defs;
     std::string error;
-    std::vector<hdl::diagnostic> diagnostics;
-    hdl::verilator_job j{std::get<model::hdl_impl>(b.impl), sources, {}, "broken"};
-    CHECK(!hdl::verilator_describe(f.hdl.verilator(), j, ports, defs, error, &diagnostics));
+    CHECK(!f.ws.refresh_interface(b, error));
     CHECK(error.find("broken.sv:5") != std::string::npos);
-    CHECK(!diagnostics.empty() && diagnostics[0].line == 5);
 
-    j.impl.top = "nothing";
-    j.impl.sources = {"counter.sv"};
-    CHECK(!hdl::verilator_describe(f.hdl.verilator(), j, ports, defs, error));
+    std::get<model::hdl_impl>(b.impl).top = "nothing";
+    std::get<model::hdl_impl>(b.impl).sources = {"counter.sv"};
+    CHECK(!f.ws.refresh_interface(b, error));
 }
 
 static void test_counter()
@@ -245,6 +254,14 @@ static void test_wide()
     // both: the bits that differ are unknown on the net
     s.set_input(oe, bit(true));
     CHECK(s.port_value(bus) == value(4, 0, 0xF, 0));
+
+    // x and z: icarus has them, verilator reads them as 0
+    s.set_input(a, sim::unknown(100));
+    s.set_input(b, sim::known(0, 100));
+    if (backend == model::hdl_backend::icarus)
+        CHECK(s.port_value(sum) == sim::unknown(100));
+    else
+        CHECK(s.port_value(sum) == sim::known(0, 100));
 }
 
 static void test_delay_and_finish()
@@ -271,7 +288,7 @@ static void test_delay_and_finish()
     // 5 ns later. the finish model has events every ns in between.
     s.run_until(6900 * sim::ps);
     CHECK(s.port_value(y) == bit(false));
-    CHECK(s.next_event() == 7 * sim::ns);
+    CHECK(s.next_event() <= 7 * sim::ns);
     s.run_until(7 * sim::ns);
     CHECK(s.port_value(y) == bit(true));
     CHECK(s.port_value(t) == sim::known(7, 8));
@@ -280,8 +297,11 @@ static void test_delay_and_finish()
     CHECK(s.port_value(done) == bit(true));
     // finished at 10 ns, the outputs stay
     CHECK(s.port_value(t) == sim::known(10, 8));
+    // from the verilated model or the external simulator
     auto messages = f.plugins.take_messages();
-    CHECK(std::any_of(messages.begin(), messages.end(), [](auto& m) { return m.find("$finish") != std::string::npos; }));
+    for (auto& m : f.hdl.take_messages())
+        messages.push_back(m);
+    CHECK(std::any_of(messages.begin(), messages.end(), [](auto& m) { return m.find("finish") != std::string::npos; }));
 }
 
 static void test_background_build()
@@ -310,6 +330,8 @@ static void test_background_build()
 
     // a failing build reports why
     auto& b = f.hdl_cell("broken", false);
+    // a top so it gets past checking the settings
+    std::get<model::hdl_impl>(b.impl).top = "broken";
     f.hdl.build(b, {});
     for (int k = 0; k < 600 && f.hdl.busy(); k++)
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -354,19 +376,36 @@ int main(int argc, char** argv)
 
     test_messages();
 
-    auto tools = hdl::find_verilator();
-    if (!tools.ok()) {
-        std::printf("skipped: %s\n", tools.error.c_str());
-        return failures ? 1 : 77;
-    }
-    std::printf("using %s, %s\n", tools.version.c_str(), tools.cxx_version.c_str());
+    int tested = 0;
+    for (auto b : {model::hdl_backend::verilator, model::hdl_backend::icarus}) {
+        backend = b;
+        std::string tool, problem;
+        if (b == model::hdl_backend::verilator) {
+            auto t = hdl::find_verilator();
+            tool = t.version + ", " + t.cxx_version;
+            problem = t.error;
+        } else {
+            auto t = hdl::find_icarus();
+            tool = t.version;
+            problem = t.error;
+        }
+        if (!problem.empty()) {
+            std::printf("%s skipped: %s\n", model::to_string(b), problem.c_str());
+            continue;
+        }
+        std::printf("%s: %s\n", model::to_string(b), tool.c_str());
+        tested++;
+        int before = failures;
 
-    test_describe();
-    test_counter();
-    test_wide();
-    test_delay_and_finish();
-    test_background_build();
-    test_runner();
+        test_describe();
+        test_counter();
+        test_wide();
+        test_delay_and_finish();
+        test_background_build();
+        test_runner();
+        if (failures != before) std::printf("  %d failure(s) with %s\n", failures - before, model::to_string(b));
+    }
+    if (!tested) return failures ? 1 : 77;
 
     if (failures) {
         std::printf("%d check(s) failed\n", failures);

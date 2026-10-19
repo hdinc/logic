@@ -406,7 +406,27 @@ time simulator::next_event() const
     return t;
 }
 
+time simulator::event_after(time t) const
+{
+    // the time run_until goes to counts too: nothing runs ahead of it, so
+    // inputs set after it are in time. it may be t itself.
+    time r = target != never && target >= t ? target : never;
+    for (auto& e : events)
+        if (e.t > t && instances[e.instance].wake == e.t) r = std::min(r, e.t);
+    return r;
+}
+
 bool simulator::run_until(time t, int max_events)
+{
+    target = t;
+    struct clear_target {
+        time& t;
+        ~clear_target() { t = never; }
+    } clear{target};
+    return run(t, max_events);
+}
+
+bool simulator::run(time t, int max_events)
 {
     settle();
     if (cur.oscillating) return false;
@@ -458,7 +478,15 @@ bool simulator::step()
 {
     time t = next_event();
     if (t == never) return false;
-    run_until(t);
+    // what's due now first (e.g. an external simulator running ahead), then
+    // the next point in time
+    if (t <= cur.now) {
+        run(cur.now, std::numeric_limits<int>::max());
+        t = next_event();
+        if (t == never) return true;
+    }
+    // without a target: what runs ahead may go to the next event
+    run(t, std::numeric_limits<int>::max());
     return true;
 }
 
@@ -578,7 +606,7 @@ void simulator::settle()
                     s.ports[p] = net_value(n);
             }
 
-            context ctx(cur.now, s.woken, s.wake);
+            context ctx(cur.now, s.woken, s.wake, [](const void* self, time now) { return ((const simulator*)self)->event_after(now); }, this);
             s.woken = false;
             s.c->eval(s.ports, ctx);
             if (ctx.wake() != s.wake) set_wake(i, ctx.wake());
