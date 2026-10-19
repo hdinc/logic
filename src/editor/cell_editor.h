@@ -31,7 +31,8 @@ public:
     void property_panel();
 
     bool simulating() const { return session != nullptr; }
-    // ignored while a tool is busy
+    // ignored while a tool is busy. hdl models that aren't built are built
+    // first, the simulation starts when they are done.
     void start_simulation();
     void stop_simulation();
 
@@ -88,6 +89,11 @@ private:
 
     std::shared_ptr<sim_session> session;
     std::unique_ptr<sim_view> view;
+
+    // waiting for these hdl cells to be built before simulating
+    std::vector<model::id> building;
+    // why the last start failed
+    std::string start_error;
 
     std::string locked_by;
 };

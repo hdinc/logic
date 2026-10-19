@@ -13,6 +13,11 @@ find_package(Threads REQUIRED)
 
 set(LOGIC_WARNINGS -Wall -Wextra -Wpedantic -Wsuggest-override -Wno-sign-compare)
 
+# the sdk header as a string, generated wrappers include it
+file(READ sdk/include/logic_model.h LOGIC_MODEL_H)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS sdk/include/logic_model.h)
+configure_file(src/hdl/sdk_header.cpp.in ${CMAKE_BINARY_DIR}/generated/sdk_header.cpp @ONLY)
+
 # data model, file io, builtin primitives, netlist and simulator. no gui or
 # opengl dependencies
 add_library(logic_core STATIC
@@ -39,6 +44,10 @@ add_library(logic_core STATIC
     src/sim/runner.cpp
     src/plugin/dynlib.cpp
     src/plugin/registry.cpp
+    src/hdl/process.cpp
+    src/hdl/verilator.cpp
+    src/hdl/manager.cpp
+    ${CMAKE_BINARY_DIR}/generated/sdk_header.cpp
 )
 target_include_directories(logic_core PUBLIC src sdk/include)
 target_link_libraries(logic_core PUBLIC glm::glm nlohmann_json::nlohmann_json Threads::Threads ${CMAKE_DL_LIBS})
@@ -97,3 +106,10 @@ target_link_libraries(plugin_test logic_core)
 target_compile_options(plugin_test PRIVATE ${LOGIC_WARNINGS})
 add_dependencies(plugin_test logic_examples test_bad_plugin)
 add_test(NAME plugin_test COMMAND plugin_test $<TARGET_FILE:logic_examples> $<TARGET_FILE:test_bad_plugin>)
+
+# needs verilator, skipped without it. builds are cached between runs.
+add_executable(hdl_test tests/hdl_test.cpp)
+target_link_libraries(hdl_test logic_core)
+target_compile_options(hdl_test PRIVATE ${LOGIC_WARNINGS})
+add_test(NAME hdl_test COMMAND hdl_test ${CMAKE_SOURCE_DIR}/tests/hdl ${CMAKE_BINARY_DIR}/hdl_test_cache)
+set_tests_properties(hdl_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)

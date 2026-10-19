@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../hdl/manager.h"
 #include "../model/workspace.h"
 #include "../plugin/registry.h"
 #include "../render/renderer.h"
@@ -19,6 +20,8 @@ struct context {
     const sim::component_factory* factory = nullptr;
     // c model plugins, null if there are none
     const plugin::registry* plugins = nullptr;
+    // hdl cells, null if they aren't supported
+    hdl::manager* hdl = nullptr;
 
     // call after every change to the cell so the library gets saved
     void modified() { lib.dirty = true; }

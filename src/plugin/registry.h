@@ -86,6 +86,12 @@ public:
     // sim::component_factory, creates c models
     std::unique_ptr<sim::component> create(const model::cell& c, const model::param_values& params, std::string& error) const override;
 
+    // a simulation model of the plugin for an instance of the cell. its
+    // ports must be the cell's for the default parameters. dir is the
+    // folder relative file parameters start at.
+    std::unique_ptr<sim::component> create_from(const std::shared_ptr<loaded_plugin>& p, const logic_model_desc& d, const model::cell& c,
+        const model::param_values& params, const std::filesystem::path& dir, std::string& error) const;
+
     // messages logged by models since the last call
     std::vector<std::string> take_messages() { return log->take(); }
 

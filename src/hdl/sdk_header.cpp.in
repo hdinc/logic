@@ -1,0 +1,9 @@
+// the c model abi header, written next to generated wrappers. configured by
+// cmake from sdk/include/logic_model.h.
+
+namespace logic::hdl {
+
+extern const char* const sdk_header;
+const char* const sdk_header = R"LOGICSDK(@LOGIC_MODEL_H@)LOGICSDK";
+
+}

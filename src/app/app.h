@@ -3,6 +3,7 @@
 #include "component_bar.h"
 #include "../editor/cell_editor.h"
 #include "../model/workspace.h"
+#include "../hdl/manager.h"
 #include "../plugin/registry.h"
 #include "../render/renderer.h"
 
@@ -69,6 +70,8 @@ private:
     // c model plugins, the provider of their interfaces. outlives the
     // editors and their simulations.
     plugin::registry plugins{ws};
+    // hdl cells, builds cached in <workspace>/.cache
+    hdl::manager hdl{ws, plugins, root / ".cache"};
     sim::factory_chain factory;
     render::renderer renderer;
     component_bar components;

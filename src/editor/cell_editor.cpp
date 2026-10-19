@@ -51,9 +51,22 @@ void cell_editor::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     // stopped from a view in another tab
     if (session && session->stopped) stop_simulation();
 
+    // the builds for the simulation are done
+    if (!building.empty() && !ctx.hdl->busy()) {
+        for (auto id : building) {
+            auto st = ctx.hdl->status(id);
+            auto c = ctx.ws.find_cell(id);
+            if (st.state == hdl::build_status::failed) start_error = "building '" + (c ? c->name : "?") + "' failed: " + st.error;
+        }
+        building.clear();
+        if (start_error.empty()) start_simulation();
+    }
+
     if (IsKeyPressed(ImGuiKey_F5) && schematic) {
         if (session)
             stop_simulation();
+        else if (!building.empty())
+            building.clear();
         else
             start_simulation();
     }
@@ -123,13 +136,23 @@ void cell_editor::toolbar()
     using namespace ImGui;
 
     BeginDisabled(busy() || !schematic);
-    if (tool_button(session ? "Stop" : "Simulate", session ? "Back to editing (F5)" : "Simulate the schematic (F5)", session != nullptr)) {
+    if (!building.empty()) {
+        if (tool_button("Cancel", "Don't wait for the builds, they go on in the background (F5)", true)) building.clear();
+        TextColored({0.4f, 0.7f, 1, 1}, "building %zu HDL model(s)...", building.size());
+        SameLine();
+    } else if (tool_button(session ? "Stop" : "Simulate", session ? "Back to editing (F5)" : "Simulate the schematic (F5)", session != nullptr)) {
         if (session)
             stop_simulation();
         else
             start_simulation();
     }
     EndDisabled();
+    if (!start_error.empty() && !session) {
+        TextColored({1, 0.4f, 0.4f, 1}, "%s", start_error.c_str());
+        SameLine();
+        if (SmallButton("x")) start_error.clear();
+        SameLine();
+    }
 
     SeparatorEx(ImGuiSeparatorFlags_Vertical);
     SameLine();
@@ -200,7 +223,19 @@ void cell_editor::edit_toolbar()
 
 void cell_editor::start_simulation()
 {
-    if (session || busy() || !schematic) return;
+    if (session || busy() || !schematic || !building.empty()) return;
+    start_error.clear();
+
+    // hdl models are built first, in the background
+    if (ctx.hdl) {
+        for (auto& r : ctx.hdl->missing_builds(ctx.cell)) {
+            if (auto c = ctx.ws.find_cell(r.cell)) {
+                ctx.hdl->build(*c, r.values);
+                if (std::find(building.begin(), building.end(), r.cell) == building.end()) building.push_back(r.cell);
+            }
+        }
+        if (!building.empty()) return;
+    }
 
     hist.commit(ctx.cell);
     schematic->set_tool(schematic_editor::tool_kind::select);

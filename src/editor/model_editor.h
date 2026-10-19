@@ -20,6 +20,8 @@ public:
 private:
     void c_model_settings(model::c_model_impl& m);
     void hdl_settings(model::hdl_impl& h);
+    // build button, tool and status of the last build
+    void hdl_build(const model::hdl_impl& h);
     void ports_table();
     void params_table();
 

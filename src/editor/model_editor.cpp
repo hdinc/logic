@@ -66,7 +66,10 @@ void model_editor::gui(bool locked)
 
     auto& c = ctx.cell;
     if (auto m = std::get_if<model::c_model_impl>(&c.impl)) c_model_settings(*m);
-    if (auto h = std::get_if<model::hdl_impl>(&c.impl)) hdl_settings(*h);
+    if (auto h = std::get_if<model::hdl_impl>(&c.impl)) {
+        hdl_settings(*h);
+        hdl_build(*h);
+    }
 
     Spacing();
     if (Button("Refresh interface")) {
@@ -194,6 +197,64 @@ void model_editor::hdl_settings(model::hdl_impl& h)
 
     if (input_string("Extra arguments", h.args)) ctx.modified();
     SetItemTooltip("passed to the tool as they are");
+}
+
+void model_editor::hdl_build(const model::hdl_impl& h)
+{
+    using namespace ImGui;
+
+    if (!ctx.hdl) return;
+    SeparatorText("Build");
+
+    if (h.backend != model::hdl_backend::verilator) {
+        TextDisabled("%s isn't supported yet, choose Verilator", model::to_string(h.backend));
+        return;
+    }
+    auto& tools = ctx.hdl->verilator();
+    if (!tools.ok()) {
+        TextColored({1, 0.4f, 0.4f, 1}, "%s", tools.error.c_str());
+        return;
+    }
+    TextDisabled("%s", tools.version.c_str());
+    SetItemTooltip("%s", tools.cxx_version.c_str());
+
+    auto st = ctx.hdl->status(ctx.cell.id);
+    bool running = st.state == hdl::build_status::queued || st.state == hdl::build_status::building;
+    BeginDisabled(running);
+    if (Button("Build")) {
+        if (auto params = ctx.cell.external_params()) ctx.hdl->build(ctx.cell, model::resolve_params(*params, {}));
+    }
+    EndDisabled();
+    SetItemTooltip("Build the model with the default parameters. Simulating builds what's missing too.");
+    SameLine();
+
+    switch (st.state) {
+    case hdl::build_status::none: TextDisabled("not built in this session"); break;
+    case hdl::build_status::queued: TextColored({0.4f, 0.7f, 1, 1}, "waiting..."); break;
+    case hdl::build_status::building: TextColored({0.4f, 0.7f, 1, 1}, "building..."); break;
+    case hdl::build_status::done: TextColored({0.4f, 0.9f, 0.4f, 1}, "built"); break;
+    case hdl::build_status::failed: TextColored({1, 0.4f, 0.4f, 1}, "failed"); break;
+    }
+
+    if (!st.error.empty()) TextWrapped("%s", st.error.c_str());
+
+    // messages with a place in the sources
+    for (auto& d : st.diagnostics) {
+        auto color = d.severity == "error" ? ImVec4{1, 0.4f, 0.4f, 1} : ImVec4{1, 0.8f, 0.3f, 1};
+        auto where = d.file.empty() ? std::string() : std::filesystem::path(d.file).filename().string() + ":" + std::to_string(d.line) + ": ";
+        TextColored(color, "%s%s", where.c_str(), d.message.c_str());
+        if (!d.file.empty()) SetItemTooltip("%s:%d:%d", d.file.c_str(), d.line, d.column);
+    }
+
+    if (!st.log.empty() && TreeNode("Output")) {
+        BeginChild("log", {0, 200}, ImGuiChildFlags_Borders);
+        for (auto& line : st.log)
+            TextUnformatted(line.c_str());
+        // follow the end while building
+        if (running && GetScrollY() >= GetScrollMaxY() - 20) SetScrollHereY(1.0f);
+        EndChild();
+        TreePop();
+    }
 }
 
 void model_editor::ports_table()

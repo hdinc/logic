@@ -436,7 +436,13 @@ std::unique_ptr<sim::component> registry::create(const model::cell& c, const mod
     std::shared_ptr<loaded_plugin> p;
     auto d = model_of(c, dir, p, error);
     if (!d) return nullptr;
+    return create_from(p, *d, c, values, dir, error);
+}
 
+std::unique_ptr<sim::component> registry::create_from(const std::shared_ptr<loaded_plugin>& p, const logic_model_desc& model, const model::cell& c,
+    const model::param_values& values, const fs::path& dir, std::string& error) const
+{
+    auto d = &model;
     // the ports must be the ones of the instance: the cell's own for the
     // default parameters, otherwise they came from the plugin anyway
     std::vector<model::port> ports;
