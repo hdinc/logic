@@ -170,6 +170,10 @@ void simulator::elaborate(scope& s, const model::cell& c, const std::vector<int>
             elaborate(*child, *cell, pins, depth + 1);
             s.child_index[i] = (int)s.children.size();
             s.children.push_back(std::move(child));
+        } else if (std::holds_alternative<model::c_model_impl>(cell->impl)) {
+            m_problems.push_back(where(inst) + ": '" + cell->name + "' is a c model, they can't be simulated yet");
+        } else if (std::holds_alternative<model::hdl_impl>(cell->impl)) {
+            m_problems.push_back(where(inst) + ": '" + cell->name + "' is an hdl model, they can't be simulated yet");
         } else {
             m_problems.push_back(where(inst) + ": '" + cell->name + "' has no simulation model");
         }

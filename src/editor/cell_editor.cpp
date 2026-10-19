@@ -35,9 +35,12 @@ bool contains_ignore_case(const std::string& s, const std::string& sub)
 cell_editor::cell_editor(context c)
     : ctx(c)
     , hist(c.cell)
-    , schematic(c)
     , symbol(c)
 {
+    if (c.cell.get_schematic())
+        schematic = std::make_unique<schematic_editor>(c);
+    else
+        model_page = std::make_unique<model_editor>(c);
 }
 
 void cell_editor::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
@@ -47,7 +50,7 @@ void cell_editor::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     // stopped from a view in another tab
     if (session && session->stopped) stop_simulation();
 
-    if (IsKeyPressed(ImGuiKey_F5)) {
+    if (IsKeyPressed(ImGuiKey_F5) && schematic) {
         if (session)
             stop_simulation();
         else
@@ -58,6 +61,12 @@ void cell_editor::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
 
     if (view) {
         view->gui(tex, fb);
+        return;
+    }
+
+    if (!schematic && !show_symbol) {
+        model_page->gui(locked());
+        if (!IsAnyItemActive()) hist.commit(ctx.cell);
         return;
     }
 
@@ -76,7 +85,7 @@ void cell_editor::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     auto mouse = GetMousePos();
     glm::vec2 ndc{2.0f * (mouse.x - screen_pos.x) / size.x - 1.0f, 1.0f - 2.0f * (mouse.y - screen_pos.y) / size.y};
 
-    canvas& c = show_symbol ? symbol.view : schematic.view;
+    canvas& c = show_symbol ? symbol.view : schematic->view;
     c.set_size({size.x, size.y});
     c.set_mouse(ndc);
 
@@ -86,15 +95,15 @@ void cell_editor::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     } else if (show_symbol) {
         symbol.process_inputs(hovered);
     } else {
-        schematic.process_inputs(hovered);
-        if (hovered && !schematic.busy() && IsKeyPressed(ImGuiKey_Space)) open_place_popup();
+        schematic->process_inputs(hovered);
+        if (hovered && !schematic->busy() && IsKeyPressed(ImGuiKey_Space)) open_place_popup();
     }
 
     fb.Bind((int)size.x, (int)size.y);
     if (show_symbol)
         symbol.draw();
     else
-        schematic.draw();
+        schematic->draw();
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     // the texture is bigger than the view, only show the drawn corner
@@ -112,7 +121,7 @@ void cell_editor::toolbar()
 {
     using namespace ImGui;
 
-    BeginDisabled(busy());
+    BeginDisabled(busy() || !schematic);
     if (tool_button(session ? "Stop" : "Simulate", session ? "Back to editing (F5)" : "Simulate the schematic (F5)", session != nullptr)) {
         if (session)
             stop_simulation();
@@ -133,7 +142,7 @@ void cell_editor::edit_toolbar()
     using namespace ImGui;
 
     int view = show_symbol ? 1 : 0;
-    RadioButton("Schematic", &view, 0);
+    RadioButton(schematic ? "Schematic" : "Model", &view, 0);
     SetItemTooltip("Tab to switch");
     SameLine();
     RadioButton("Symbol", &view, 1);
@@ -145,7 +154,9 @@ void cell_editor::edit_toolbar()
     SameLine();
 
     BeginDisabled(busy() || locked());
-    if (show_symbol) {
+    if (!schematic && !show_symbol) {
+        // the model page has its own buttons
+    } else if (show_symbol) {
         using k = symbol_editor::tool_kind;
         auto t = symbol.current_tool();
         if (tool_button("Select", "Select and move (Esc)", t == k::select)) symbol.set_tool(k::select);
@@ -157,11 +168,11 @@ void cell_editor::edit_toolbar()
         if (tool_button("Text", "Place a text (T)", t == k::text)) symbol.set_tool(k::text);
     } else {
         using k = schematic_editor::tool_kind;
-        auto t = schematic.current_tool();
-        if (tool_button("Select", "Select and move (Esc)", t == k::select)) schematic.set_tool(k::select);
-        if (tool_button("Wire", "Draw wires, Esc ends the wire and the tool (W)", t == k::wire)) schematic.set_tool(k::wire);
-        if (tool_button("Input", "Place an input port (I)", t == k::input_port)) schematic.set_tool(k::input_port);
-        if (tool_button("Output", "Place an output port (O)", t == k::output_port)) schematic.set_tool(k::output_port);
+        auto t = schematic->current_tool();
+        if (tool_button("Select", "Select and move (Esc)", t == k::select)) schematic->set_tool(k::select);
+        if (tool_button("Wire", "Draw wires, Esc ends the wire and the tool (W)", t == k::wire)) schematic->set_tool(k::wire);
+        if (tool_button("Input", "Place an input port (I)", t == k::input_port)) schematic->set_tool(k::input_port);
+        if (tool_button("Output", "Place an output port (O)", t == k::output_port)) schematic->set_tool(k::output_port);
         if (tool_button("Cell...", "Place an instance of a cell (Space)", t == k::place_instance)) open_place_popup();
     }
     EndDisabled();
@@ -188,11 +199,11 @@ void cell_editor::edit_toolbar()
 
 void cell_editor::start_simulation()
 {
-    if (session || busy()) return;
+    if (session || busy() || !schematic) return;
 
     hist.commit(ctx.cell);
-    schematic.set_tool(schematic_editor::tool_kind::select);
-    schematic.selection.clear();
+    schematic->set_tool(schematic_editor::tool_kind::select);
+    schematic->selection.clear();
     show_symbol = false;
 
     session = std::make_shared<sim_session>(ctx.ws, ctx.cell);
@@ -236,18 +247,20 @@ void cell_editor::redo()
 
 bool cell_editor::can_copy() const
 {
-    return !busy() && !session && (show_symbol ? symbol.copy_selection() : schematic.copy_selection()).has_value();
+    if (!show_symbol && !schematic) return false;
+    return !busy() && !session && (show_symbol ? symbol.copy_selection() : schematic->copy_selection()).has_value();
 }
 
 bool cell_editor::can_paste() const
 {
+    if (!show_symbol && !schematic) return false;
     return !busy() && !session && !locked() && ImGui::GetClipboardText() != nullptr;
 }
 
 void cell_editor::copy()
 {
     if (!can_copy()) return;
-    auto part = show_symbol ? symbol.copy_selection() : schematic.copy_selection();
+    auto part = show_symbol ? symbol.copy_selection() : schematic->copy_selection();
     ImGui::SetClipboardText(io::to_clipboard(*part, show_symbol ? "symbol" : "schematic").c_str());
 }
 
@@ -258,7 +271,7 @@ void cell_editor::cut()
     if (show_symbol)
         symbol.delete_selection();
     else
-        schematic.delete_selection();
+        schematic->delete_selection();
 }
 
 void cell_editor::paste()
@@ -269,25 +282,25 @@ void cell_editor::paste()
     if (show_symbol)
         symbol.begin_paste(std::move(*part));
     else
-        schematic.begin_paste(std::move(*part));
+        schematic->begin_paste(std::move(*part));
 }
 
 bool cell_editor::can_place(model::id cell) const
 {
-    return !busy() && !session && !locked() && !ctx.ws.would_create_cycle(ctx.cell.id, cell);
+    return schematic && !busy() && !session && !locked() && !ctx.ws.would_create_cycle(ctx.cell.id, cell);
 }
 
 void cell_editor::place(model::id cell)
 {
     if (!can_place(cell)) return;
     show_symbol = false;
-    schematic.begin_place(cell);
+    schematic->begin_place(cell);
 }
 
 void cell_editor::after_undo()
 {
     ctx.modified();
-    schematic.cell_replaced();
+    if (schematic) schematic->cell_replaced();
     symbol.cell_replaced();
 }
 
@@ -314,7 +327,7 @@ void cell_editor::place_popup()
 
             BeginDisabled(cycle);
             if (Selectable(label.c_str())) {
-                schematic.begin_place(c->id);
+                schematic->begin_place(c->id);
                 CloseCurrentPopup();
             }
             EndDisabled();
@@ -337,8 +350,10 @@ void cell_editor::property_panel()
     ImGui::BeginDisabled(locked());
     if (show_symbol)
         symbol.property_panel();
+    else if (schematic)
+        schematic->property_panel();
     else
-        schematic.property_panel();
+        ImGui::TextDisabled("The model is set up in the editor");
     ImGui::EndDisabled();
 }
 

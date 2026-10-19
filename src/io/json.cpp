@@ -1,6 +1,8 @@
 #include "json.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <optional>
 #include <stdexcept>
 
 namespace logic::io {
@@ -52,6 +54,75 @@ json shape_to_json(const shape& s)
     if (s.width != 0.0f) j["width"] = s.width;
     return j;
 }
+
+const char* param_type_names[] = {"integer", "boolean", "choice", "text"};
+
+json param_value_json(const param_value& v)
+{
+    json j;
+    std::visit([&](auto& x) { j = x; }, v);
+    return j;
+}
+
+// null if the json type isn't one of the parameter value types
+std::optional<param_value> param_value_from_json(const json& v)
+{
+    if (v.is_boolean()) return v.get<bool>();
+    if (v.is_number_integer()) return v.get<int64_t>();
+    if (v.is_string()) return v.get<std::string>();
+    return std::nullopt;
+}
+
+json params_to_json(const std::vector<param_def>& defs)
+{
+    json a = json::array();
+    for (auto& d : defs) {
+        json j{{"name", d.name}, {"type", param_type_names[d.type]}, {"default", param_value_json(d.def)}};
+        if (!d.label.empty() && d.label != d.name) j["label"] = d.label;
+        if (d.type == param_def::integer) {
+            j["min"] = d.min;
+            j["max"] = d.max;
+        }
+        if (d.type == param_def::choice) j["choices"] = d.choices;
+        if (!d.description.empty()) j["description"] = d.description;
+        a.push_back(std::move(j));
+    }
+    return a;
+}
+
+std::vector<param_def> params_from_json(const json& a)
+{
+    std::vector<param_def> r;
+    for (auto& j : a) {
+        param_def d;
+        d.name = j.at("name");
+        d.label = j.value("label", d.name);
+        auto type = j.at("type").get<std::string>();
+        auto t = std::find(std::begin(param_type_names), std::end(param_type_names), type);
+        if (t == std::end(param_type_names)) throw std::runtime_error("invalid parameter type '" + type + "'");
+        d.type = (param_def::type_t)(t - std::begin(param_type_names));
+        auto def = param_value_from_json(j.at("default"));
+        if (!def) throw std::runtime_error("invalid default of parameter '" + d.name + "'");
+        d.def = *def;
+        d.min = j.value("min", int64_t(0));
+        d.max = j.value("max", int64_t(0));
+        if (j.contains("choices")) d.choices = j.at("choices").get<std::vector<std::string>>();
+        d.description = j.value("description", "");
+        r.push_back(std::move(d));
+    }
+    return r;
+}
+
+template <class E, size_t N>
+E enum_from_string(const std::string& s, const char* const (&names)[N], const char* what)
+{
+    for (size_t k = 0; k < N; k++)
+        if (s == names[k]) return (E)k;
+    throw std::runtime_error(std::string("invalid ") + what + " '" + s + "'");
+}
+
+const char* const language_names[] = {"verilog", "systemverilog", "vhdl"};
+const char* const backend_names[] = {"verilator", "icarus", "ghdl"};
 
 shape shape_from_json(const json& j)
 {
@@ -159,12 +230,29 @@ json to_json(const cell& c)
             if (!i.params.empty()) {
                 auto& params = impl["instances"].back()["params"];
                 for (auto& [name, v] : i.params)
-                    std::visit([&](auto& x) { params[name] = x; }, v);
+                    params[name] = param_value_json(v);
             }
         }
     } else if (auto b = std::get_if<builtin_impl>(&c.impl)) {
         impl["type"] = "builtin";
         impl["kind"] = b->kind;
+    } else if (auto m = std::get_if<c_model_impl>(&c.impl)) {
+        impl["type"] = "c_model";
+        impl["plugin"] = m->plugin;
+        impl["model"] = m->model;
+        impl["params"] = params_to_json(m->params);
+    } else if (auto h = std::get_if<hdl_impl>(&c.impl)) {
+        impl["type"] = "hdl";
+        impl["language"] = to_string(h->language);
+        impl["backend"] = to_string(h->backend);
+        impl["sources"] = h->sources;
+        impl["top"] = h->top;
+        if (!h->include_dirs.empty()) impl["include_dirs"] = h->include_dirs;
+        if (!h->defines.empty()) impl["defines"] = h->defines;
+        if (!h->args.empty()) impl["args"] = h->args;
+        impl["params"] = params_to_json(h->params);
+    } else if (auto u = std::get_if<unknown_impl>(&c.impl)) {
+        impl = json::parse(u->json);
     }
 
     return j;
@@ -213,23 +301,36 @@ cell cell_from_json(const json& j)
             r.xf.rotation = i.value("rotation", 0);
             r.xf.mirror = i.value("mirror", false);
             if (auto it = i.find("params"); it != i.end()) {
-                for (auto& [name, v] : it->items()) {
-                    if (v.is_boolean())
-                        r.params[name] = v.get<bool>();
-                    else if (v.is_number_integer())
-                        r.params[name] = v.get<int64_t>();
-                    else if (v.is_string())
-                        r.params[name] = v.get<std::string>();
-                    // anything else is dropped, the default is used then
-                }
+                // anything else than the value types is dropped, the
+                // default is used then
+                for (auto& [name, v] : it->items())
+                    if (auto x = param_value_from_json(v)) r.params[name] = *x;
             }
             s.instances.push_back(std::move(r));
         }
         c.impl = std::move(s);
     } else if (type == "builtin") {
         c.impl = builtin_impl{impl.at("kind")};
+    } else if (type == "c_model") {
+        c_model_impl m;
+        m.plugin = impl.at("plugin");
+        m.model = impl.at("model");
+        m.params = params_from_json(impl.value("params", json::array()));
+        c.impl = std::move(m);
+    } else if (type == "hdl") {
+        hdl_impl h;
+        h.language = enum_from_string<hdl_language>(impl.at("language"), language_names, "hdl language");
+        h.backend = enum_from_string<hdl_backend>(impl.at("backend"), backend_names, "hdl backend");
+        h.sources = impl.value("sources", std::vector<std::string>{});
+        h.top = impl.value("top", "");
+        h.include_dirs = impl.value("include_dirs", std::vector<std::string>{});
+        h.defines = impl.value("defines", std::vector<std::string>{});
+        h.args = impl.value("args", "");
+        h.params = params_from_json(impl.value("params", json::array()));
+        c.impl = std::move(h);
     } else {
-        throw std::runtime_error("invalid implementation type '" + type + "'");
+        // from a newer version, kept as it is
+        c.impl = unknown_impl{type, impl.dump()};
     }
 
     return c;

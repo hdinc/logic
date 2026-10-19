@@ -51,7 +51,10 @@ private:
     void close_editor(model::id cell);
     editor::cell_editor* find_editor(model::id cell);
 
-    void new_cell(model::library& lib);
+    // a schematic cell by default, opened and renamed right away
+    void new_cell(model::library& lib, model::implementation impl = model::schematic{});
+    // "New ..." items for the kinds of cells
+    void new_cell_items(model::library& lib);
     void save_all();
     bool has_unsaved() const;
 

@@ -40,14 +40,14 @@ library* workspace::library_of(id cell)
     return nullptr;
 }
 
-cell& workspace::create_cell(library& lib, const std::string& name)
+cell& workspace::create_cell(library& lib, const std::string& name, implementation impl)
 {
     auto c = std::make_unique<cell>();
     do {
         c->id = random_id();
     } while (find_cell(c->id));
     c->name = name;
-    c->impl = schematic{};
+    c->impl = std::move(impl);
     lib.cells.push_back(std::move(c));
     lib.dirty = true;
     return *lib.cells.back();
@@ -161,7 +161,10 @@ interface_view workspace::interface_of(const instance& i) const
     auto p = primitive_of(*c);
     static const std::vector<bit_link> no_links;
     static const std::vector<pull> no_pulls;
-    if (!p) return {&c->ports, &c->symbol, &no_links, &no_pulls};
+    if (!p) {
+        if (auto e = external_interface(*c, i)) return {&e->iface.ports, &e->iface.symbol, &no_links, &no_pulls};
+        return {&c->ports, &c->symbol, &no_links, &no_pulls};
+    }
 
     auto values = resolve_params(p->params(), i.params);
     auto key = p->kind() + '\n' + params_key(values);
@@ -173,8 +176,96 @@ interface_view workspace::interface_of(const instance& i) const
 std::vector<param_def> workspace::params_of(const instance& i) const
 {
     auto c = find_cell(i.cell);
-    auto p = c ? primitive_of(*c) : nullptr;
-    return p ? p->params() : std::vector<param_def>{};
+    if (!c) return {};
+    if (auto p = primitive_of(*c)) return p->params();
+    if (auto defs = c->external_params()) return *defs;
+    return {};
+}
+
+std::string workspace::check_instance(const instance& i) const
+{
+    auto c = find_cell(i.cell);
+    if (!c) return {};
+    if (auto p = primitive_of(*c)) return p->check(resolve_params(p->params(), i.params));
+    if (auto e = external_interface(*c, i)) return e->error;
+    return {};
+}
+
+void workspace::add_provider(const external_provider& p)
+{
+    providers.push_back(&p);
+}
+
+const external_provider* workspace::provider_of(const cell& c) const
+{
+    for (auto p : providers)
+        if (p->handles(c)) return p;
+    return nullptr;
+}
+
+bool workspace::refresh_interface(cell& c, std::string& error)
+{
+    auto params = c.external_params();
+    if (!params) {
+        error = "'" + c.name + "' is not a c model or hdl cell";
+        return false;
+    }
+    auto p = provider_of(c);
+    if (!p) {
+        error = "nothing can read this kind of model yet";
+        return false;
+    }
+
+    auto lib = library_of(c.id);
+    std::vector<port> ports;
+    std::vector<param_def> defs;
+    if (!p->describe(c, lib ? lib->dir : std::filesystem::path{}, ports, defs, error)) return false;
+
+    c.set_ports(ports);
+    *params = std::move(defs);
+    if (lib) lib->dirty = true;
+    return true;
+}
+
+const workspace::external_entry* workspace::external_interface(const cell& c, const instance& i) const
+{
+    auto defs = c.external_params();
+    if (!defs) return nullptr;
+
+    // the cell's own interface is the one for the defaults
+    auto values = resolve_params(*defs, i.params);
+    if (values == resolve_params(*defs, {})) return nullptr;
+
+    auto key = std::to_string(c.id) + '\n' + params_key(values);
+    auto it = external_cache.find(key);
+    if (it != external_cache.end() && it->second.cell_ports == c.ports && it->second.cell_symbol == c.symbol) return &it->second;
+
+    external_entry e;
+    e.cell_ports = c.ports;
+    e.cell_symbol = c.symbol;
+    e.iface.ports = c.ports;
+    e.iface.symbol = c.symbol;
+
+    std::vector<port> ports;
+    auto p = provider_of(c);
+    auto lib = const_cast<workspace*>(this)->library_of(c.id);
+    if (!p) {
+        e.error = "the model can't be read, the parameters don't change its ports";
+    } else if (!p->ports_for(c, lib ? lib->dir : std::filesystem::path{}, values, ports, e.error)) {
+        e.error = "the ports for these parameters are unknown: " + e.error;
+    } else {
+        // the same ports with other widths keep the symbol
+        cell tmp;
+        tmp.ports = c.ports;
+        tmp.symbol = c.symbol;
+        tmp.next_id = c.next_id;
+        tmp.name = c.name;
+        tmp.set_ports(ports);
+        e.iface.ports = std::move(tmp.ports);
+        e.iface.symbol = std::move(tmp.symbol);
+    }
+
+    return &(external_cache[key] = std::move(e));
 }
 
 id workspace::random_id()

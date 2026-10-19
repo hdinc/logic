@@ -1,5 +1,6 @@
 #pragma once
 
+#include "param.h"
 #include "schematic.h"
 #include "symbol.h"
 
@@ -32,10 +33,77 @@ struct builtin_impl {
     bool operator==(const builtin_impl&) const = default;
 };
 
-using implementation = std::variant<schematic, builtin_impl>;
+enum class hdl_language {
+    verilog,
+    systemverilog,
+    vhdl
+};
+
+enum class hdl_backend {
+    verilator,
+    icarus,
+    ghdl
+};
+
+// cell implemented by a model in a plugin (a shared library with the c
+// model abi). the ports, symbol and parameters are stored in the cell, so it
+// can be placed without the plugin.
+struct c_model_impl {
+    // plugin file name without extension, or a path relative to the library
+    // folder
+    std::string plugin;
+    // name of the model inside the plugin
+    std::string model;
+    // declared by the model, found when the interface is refreshed
+    std::vector<param_def> params;
+    bool operator==(const c_model_impl&) const = default;
+};
+
+// cell implemented in verilog, systemverilog or vhdl and simulated by an
+// external tool. ports, symbol and parameters are stored like for c models.
+struct hdl_impl {
+    hdl_language language = hdl_language::verilog;
+    hdl_backend backend = hdl_backend::verilator;
+    // relative to the library folder
+    std::vector<std::string> sources;
+    // top module or entity
+    std::string top;
+    std::vector<std::string> include_dirs;
+    // NAME or NAME=VALUE
+    std::vector<std::string> defines;
+    // extra arguments for the tool
+    std::string args;
+    // parameters (verilog) or generics (vhdl) of the top
+    std::vector<param_def> params;
+    bool operator==(const hdl_impl&) const = default;
+};
+
+// a cell from a newer version of the program, kept as it was so saving
+// doesn't lose it. it can be placed but not simulated.
+struct unknown_impl {
+    std::string type;
+    // the whole implementation as json text
+    std::string json;
+    bool operator==(const unknown_impl&) const = default;
+};
+
+using implementation = std::variant<schematic, builtin_impl, c_model_impl, hdl_impl, unknown_impl>;
+
+const char* to_string(hdl_language l);
+const char* to_string(hdl_backend b);
+// false if the backend can't simulate the language
+bool supports(hdl_backend b, hdl_language l);
+
+// how generate_symbol orders the pins of a side
+enum class pin_order {
+    // by the position of the ports in the schematic, top first
+    position,
+    // in the order of the ports, e.g. as declared in hdl
+    declaration
+};
 
 // anything that can be placed in a schematic: user circuits, builtin
-// primitives and (later) c and verilator models
+// primitives, c models and hdl models
 struct cell {
     model::id id = no_id;
     std::string name;
@@ -54,6 +122,12 @@ struct cell {
     schematic* get_schematic() { return std::get_if<schematic>(&impl); }
     const schematic* get_schematic() const { return std::get_if<schematic>(&impl); }
 
+    // implemented outside the program: a c model or hdl
+    bool is_external() const { return std::holds_alternative<c_model_impl>(impl) || std::holds_alternative<hdl_impl>(impl); }
+    // parameters of a c model or hdl cell, null for other cells
+    const std::vector<param_def>* external_params() const;
+    std::vector<param_def>* external_params();
+
     // the returned reference is invalidated by the next add_port
     port& add_port(direction dir, glm::ivec2 pos);
     // removes the port and the symbol pins linked to it
@@ -62,8 +136,15 @@ struct cell {
     std::string unique_port_name(const std::string& prefix) const;
 
     // replaces the symbol with a box, inputs on the left, outputs and inouts
-    // on the right, ordered by their position in the schematic
-    void generate_symbol();
+    // on the right. buses get thick stubs.
+    void generate_symbol(pin_order order = pin_order::position);
+
+    // replaces the ports with the given ones, e.g. found in a model. ports
+    // with the same name keep their id, position and description (unless the
+    // new one has a description). the symbol is kept if the names and
+    // directions stay the same, otherwise generated. returns true if it was
+    // generated.
+    bool set_ports(const std::vector<port>& ports);
 
     // human readable problems that prevent using the cell, e.g. ports without
     // a pin on the symbol

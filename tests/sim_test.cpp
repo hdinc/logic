@@ -239,6 +239,16 @@ static void test_problems()
     sim::simulator t(g.ws, *g.top, builtin::factory());
     CHECK(t.problems().size() == 1);
     CHECK(t.root().children.size() == 1);
+
+    // external cells can be placed but not simulated yet
+    auto& ext = g.ws.create_cell(*g.ws.find_library("work"), "ext", model::c_model_impl{});
+    i.id = g.top->new_id();
+    i.cell = ext.id;
+    i.name = "X1";
+    g.sch().instances.push_back(i);
+    sim::simulator u(g.ws, *g.top, builtin::factory());
+    CHECK(u.problems().size() == 2);
+    CHECK(u.problems().back().find("c model") != std::string::npos);
 }
 
 static void test_conflict()

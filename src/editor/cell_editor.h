@@ -1,5 +1,6 @@
 #pragma once
 
+#include "model_editor.h"
 #include "schematic_editor.h"
 #include "sim_view.h"
 #include "symbol_editor.h"
@@ -12,6 +13,8 @@ namespace logic::editor {
 
 // schematic and symbol view of one cell, switched with tab. f5 simulates the
 // cell: the editor then shows a sim_view of it and the cell can't be edited.
+// cells implemented outside the program (c models, hdl) have a model page
+// instead of the schematic.
 class cell_editor {
 public:
     explicit cell_editor(context ctx);
@@ -61,7 +64,7 @@ public:
     bool can_place(model::id cell) const;
     void place(model::id cell);
     // the cell being placed in the schematic, no_id if none
-    model::id placing() const { return show_symbol || session ? model::no_id : schematic.placing(); }
+    model::id placing() const { return show_symbol || session || !schematic ? model::no_id : schematic->placing(); }
 
     bool show_symbol = false;
 
@@ -70,12 +73,14 @@ private:
     void edit_toolbar();
     void place_popup();
     void open_place_popup();
-    bool busy() const { return schematic.busy() || symbol.busy(); }
+    bool busy() const { return (schematic && schematic->busy()) || symbol.busy(); }
     void after_undo();
 
     context ctx;
     model::history hist;
-    schematic_editor schematic;
+    // null for cells without a schematic, they have the model page
+    std::unique_ptr<schematic_editor> schematic;
+    std::unique_ptr<model_editor> model_page;
     symbol_editor symbol;
 
     bool focus_search = false;

@@ -31,6 +31,8 @@ struct param_def {
     std::vector<std::string> choices;
 
     std::string description;
+
+    bool operator==(const param_def&) const = default;
 };
 
 param_def int_param(std::string name, std::string label, int64_t def, int64_t min, int64_t max, std::string description = {});

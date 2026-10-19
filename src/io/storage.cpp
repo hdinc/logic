@@ -60,6 +60,7 @@ std::vector<std::string> load_workspace(model::workspace& ws, const fs::path& ro
         }
 
         auto& lib = ws.add_library(name);
+        lib.dir = dir.path();
 
         auto cells_dir = dir.path() / "cells";
         if (!fs::is_directory(cells_dir)) continue;
@@ -88,6 +89,7 @@ void save_library(model::library& lib, const fs::path& root)
     if (lib.read_only) return;
 
     auto dir = root / lib.name;
+    lib.dir = dir;
     auto cells_dir = dir / "cells";
     fs::create_directories(cells_dir);
 

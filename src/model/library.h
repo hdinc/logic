@@ -2,6 +2,7 @@
 
 #include "cell.h"
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -16,6 +17,10 @@ struct library {
 
     // set when something in the library changed since the last save
     bool dirty = false;
+
+    // folder of the library on disk, relative paths in its cells (e.g. hdl
+    // sources) start here. empty for libraries that aren't saved.
+    std::filesystem::path dir;
 
     std::vector<std::unique_ptr<cell>> cells;
 

@@ -1,0 +1,32 @@
+#pragma once
+
+#include "context.h"
+
+#include <string>
+
+namespace logic::editor {
+
+// settings and interface of a cell implemented outside the program: the
+// plugin and model of a c model, or the sources, top and tool of an hdl
+// cell, and the ports and parameters found in it. drawn as a page instead of
+// a schematic.
+class model_editor {
+public:
+    explicit model_editor(context ctx);
+
+    // into the remaining space of the current imgui window
+    void gui(bool locked);
+
+private:
+    void c_model_settings(model::c_model_impl& m);
+    void hdl_settings(model::hdl_impl& h);
+    void ports_table();
+    void params_table();
+
+    context ctx;
+    // result of the last refresh
+    std::string refresh_message;
+    bool refresh_failed = false;
+};
+
+}

@@ -1,0 +1,251 @@
+#include "model_editor.h"
+
+#include <algorithm>
+#include <filesystem>
+
+namespace logic::editor {
+
+namespace {
+
+// editable list of strings, e.g. source files. a list of paths marks the
+// ones that don't exist in dir.
+bool string_list(const char* id, std::vector<std::string>& list, const char* add_label, const std::filesystem::path* dir = nullptr)
+{
+    using namespace ImGui;
+
+    bool changed = false;
+    PushID(id);
+    for (int k = 0; k < (int)list.size(); k++) {
+        PushID(k);
+        SetNextItemWidth(-60);
+        if (input_string("##item", list[k])) changed = true;
+        SameLine();
+        if (SmallButton("x")) {
+            list.erase(list.begin() + k);
+            changed = true;
+            PopID();
+            break;
+        }
+        SetItemTooltip("remove");
+        if (dir && !dir->empty() && !list[k].empty() && !std::filesystem::exists(*dir / list[k])) {
+            SameLine();
+            TextColored({1, 0.6f, 0.2f, 1}, "?");
+            SetItemTooltip("not found in %s", dir->string().c_str());
+        }
+        PopID();
+    }
+    if (SmallButton(add_label)) {
+        list.emplace_back();
+        changed = true;
+    }
+    PopID();
+    return changed;
+}
+
+const char* param_value_text(const model::param_value& v, std::string& buf)
+{
+    if (auto i = std::get_if<int64_t>(&v)) buf = std::to_string(*i);
+    else if (auto b = std::get_if<bool>(&v)) buf = *b ? "true" : "false";
+    else buf = std::get<std::string>(v);
+    return buf.c_str();
+}
+
+}
+
+model_editor::model_editor(context c)
+    : ctx(c)
+{
+}
+
+void model_editor::gui(bool locked)
+{
+    using namespace ImGui;
+
+    BeginChild("model", {0, 0}, ImGuiChildFlags_None);
+    BeginDisabled(locked);
+
+    auto& c = ctx.cell;
+    if (auto m = std::get_if<model::c_model_impl>(&c.impl)) c_model_settings(*m);
+    if (auto h = std::get_if<model::hdl_impl>(&c.impl)) hdl_settings(*h);
+
+    Spacing();
+    if (Button("Refresh interface")) {
+        std::string error;
+        refresh_failed = !ctx.ws.refresh_interface(c, error);
+        refresh_message = refresh_failed ? error : "ports and parameters updated";
+        ctx.modified();
+    }
+    SetItemTooltip("Read the ports and parameters from the model");
+    if (!refresh_message.empty()) {
+        SameLine();
+        if (refresh_failed)
+            TextColored({1, 0.4f, 0.4f, 1}, "%s", refresh_message.c_str());
+        else
+            TextDisabled("%s", refresh_message.c_str());
+    }
+
+    ports_table();
+    params_table();
+
+    EndDisabled();
+    EndChild();
+}
+
+void model_editor::c_model_settings(model::c_model_impl& m)
+{
+    using namespace ImGui;
+
+    SeparatorText("C model");
+    if (input_string("Plugin", m.plugin)) ctx.modified();
+    SetItemTooltip("file name of the plugin without extension, found in the plugin folders, or a path relative to the library folder");
+    if (input_string("Model", m.model)) ctx.modified();
+    SetItemTooltip("name of the model inside the plugin");
+}
+
+void model_editor::hdl_settings(model::hdl_impl& h)
+{
+    using namespace ImGui;
+
+    SeparatorText("HDL");
+
+    int lang = (int)h.language;
+    if (Combo("Language", &lang, "Verilog\0SystemVerilog\0VHDL\0")) {
+        h.language = (model::hdl_language)lang;
+        // a backend for the new language
+        if (!model::supports(h.backend, h.language))
+            h.backend = h.language == model::hdl_language::vhdl ? model::hdl_backend::ghdl : model::hdl_backend::verilator;
+        ctx.modified();
+    }
+
+    const char* backends[] = {"Verilator", "Icarus Verilog", "GHDL"};
+    if (BeginCombo("Simulator", backends[(int)h.backend])) {
+        for (int b = 0; b < 3; b++) {
+            if (!model::supports((model::hdl_backend)b, h.language)) continue;
+            if (Selectable(backends[b], b == (int)h.backend)) {
+                h.backend = (model::hdl_backend)b;
+                ctx.modified();
+            }
+        }
+        EndCombo();
+    }
+    SetItemTooltip("Verilator: fast, 0 and 1 only. Icarus: x and z, delays. GHDL: VHDL.");
+
+    if (input_string(h.language == model::hdl_language::vhdl ? "Top entity" : "Top module", h.top)) ctx.modified();
+
+    auto& dir = ctx.lib.dir;
+    TextUnformatted("Sources");
+    if (!dir.empty()) SetItemTooltip("relative to %s", dir.string().c_str());
+    if (string_list("sources", h.sources, "Add source", &dir)) ctx.modified();
+
+    if (h.language != model::hdl_language::vhdl) {
+        TextUnformatted("Include folders");
+        if (string_list("includes", h.include_dirs, "Add include folder", &dir)) ctx.modified();
+        TextUnformatted("Defines");
+        SetItemTooltip("NAME or NAME=VALUE");
+        if (string_list("defines", h.defines, "Add define")) ctx.modified();
+    }
+
+    if (input_string("Extra arguments", h.args)) ctx.modified();
+    SetItemTooltip("passed to the tool as they are");
+}
+
+void model_editor::ports_table()
+{
+    using namespace ImGui;
+
+    auto& c = ctx.cell;
+    SeparatorText("Ports");
+    TextDisabled("Found by refreshing, or entered by hand");
+
+    model::id remove = model::no_id;
+    if (BeginTable("ports", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 2);
+        TableSetupColumn("Direction", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        TableSetupColumn("Width", ImGuiTableColumnFlags_WidthStretch, 1);
+        TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch, 3);
+        TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
+        TableHeadersRow();
+
+        for (auto& p : c.ports) {
+            PushID((int)p.id);
+            TableNextRow();
+            TableNextColumn();
+            SetNextItemWidth(-1);
+            if (input_string("##name", p.name)) ctx.modified();
+            TableNextColumn();
+            SetNextItemWidth(-1);
+            int dir = (int)p.dir;
+            if (Combo("##dir", &dir, "input\0output\0inout\0")) {
+                p.dir = (model::direction)dir;
+                ctx.modified();
+            }
+            TableNextColumn();
+            SetNextItemWidth(-1);
+            if (InputInt("##width", &p.width, 0)) {
+                p.width = std::clamp(p.width, 1, model::max_width);
+                ctx.modified();
+            }
+            TableNextColumn();
+            SetNextItemWidth(-1);
+            if (input_string("##desc", p.description)) ctx.modified();
+            TableNextColumn();
+            if (SmallButton("x")) remove = p.id;
+            SetItemTooltip("remove the port and its pin");
+            PopID();
+        }
+        EndTable();
+    }
+    if (remove != model::no_id) {
+        c.remove_port(remove);
+        ctx.modified();
+    }
+
+    if (Button("Add port")) {
+        c.add_port(model::direction::input, {0, 0});
+        ctx.modified();
+    }
+    SameLine();
+    if (Button("Generate symbol")) {
+        c.generate_symbol(model::pin_order::declaration);
+        ctx.modified();
+    }
+    SetItemTooltip("Replace the symbol with a box: inputs left, outputs right, in the order of the ports");
+
+    for (auto& problem : c.check())
+        TextColored({1, 0.6f, 0.2f, 1}, "%s", problem.c_str());
+}
+
+void model_editor::params_table()
+{
+    using namespace ImGui;
+
+    auto params = ctx.cell.external_params();
+    if (!params) return;
+
+    SeparatorText("Parameters");
+    if (params->empty()) {
+        TextDisabled("none, refreshing finds them in the model");
+        return;
+    }
+
+    std::string buf;
+    if (BeginTable("params", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        TableSetupColumn("Name");
+        TableSetupColumn("Default");
+        TableSetupColumn("Description");
+        TableHeadersRow();
+        for (auto& d : *params) {
+            TableNextRow();
+            TableNextColumn();
+            TextUnformatted(d.name.c_str());
+            TableNextColumn();
+            TextUnformatted(param_value_text(d.def, buf));
+            TableNextColumn();
+            TextUnformatted(d.description.c_str());
+        }
+        EndTable();
+    }
+    TextDisabled("Instances set the values in their properties");
+}
+
+}

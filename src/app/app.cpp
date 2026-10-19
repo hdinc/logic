@@ -23,7 +23,7 @@ app::app(Hd::Window& w, std::filesystem::path r)
     for (auto& e : io::load_workspace(ws, root))
         message(e);
 
-    if (!ws.find_library("work")) ws.add_library("work");
+    if (!ws.find_library("work")) ws.add_library("work").dir = root / "work";
 
     ws.add_builtin_library(builtin::registry());
 
@@ -299,7 +299,7 @@ void app::menu_bar()
 
     if (BeginMainMenuBar()) {
         if (BeginMenu("File")) {
-            if (MenuItem("New cell", nullptr, false, ws.find_library("work") != nullptr)) new_cell(*ws.find_library("work"));
+            if (auto work = ws.find_library("work")) new_cell_items(*work);
             if (MenuItem("Save all", "Ctrl+S", false, has_unsaved())) save_all();
             Separator();
             if (MenuItem("Exit")) {
@@ -395,6 +395,13 @@ void app::library_panel()
 
     if (auto work = ws.find_library("work")) {
         if (Button("New cell")) new_cell(*work);
+        SameLine(0, 2);
+        if (ArrowButton("##new_kinds", ImGuiDir_Down)) OpenPopup("new_kinds");
+        SetItemTooltip("C model and HDL cells");
+        if (BeginPopup("new_kinds")) {
+            new_cell_items(*work);
+            EndPopup();
+        }
         Separator();
     }
 
@@ -403,7 +410,7 @@ void app::library_panel()
         bool open = TreeNodeEx(label.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
 
         if (!lib->read_only && BeginPopupContextItem()) {
-            if (Selectable("New cell")) new_cell(*lib);
+            new_cell_items(*lib);
             EndPopup();
         }
 
@@ -682,8 +689,8 @@ void app::open_editor(model::cell& c)
     select_tab = c.id;
     if (find_editor(c.id)) return;
 
-    if (!c.get_schematic()) {
-        message("'" + c.name + "' is not a schematic and can't be edited");
+    if (!c.get_schematic() && !c.is_external()) {
+        message("'" + c.name + "' can't be edited");
         return;
     }
 
@@ -703,9 +710,22 @@ editor::cell_editor* app::find_editor(model::id cell)
     return nullptr;
 }
 
-void app::new_cell(model::library& lib)
+void app::new_cell_items(model::library& lib)
 {
-    auto& c = ws.create_cell(lib, lib.unique_cell_name("cell"));
+    using namespace ImGui;
+    if (MenuItem("New cell")) new_cell(lib);
+    SetItemTooltip("A circuit drawn as a schematic");
+    if (MenuItem("New C model cell")) new_cell(lib, model::c_model_impl{});
+    SetItemTooltip("A part simulated by a model in a plugin, e.g. a microcontroller");
+    if (MenuItem("New HDL cell")) new_cell(lib, model::hdl_impl{});
+    SetItemTooltip("A part written in Verilog, SystemVerilog or VHDL");
+}
+
+void app::new_cell(model::library& lib, model::implementation impl)
+{
+    bool external = !std::holds_alternative<model::schematic>(impl);
+    auto& c = ws.create_cell(lib, lib.unique_cell_name(external ? "model" : "cell"), std::move(impl));
+    if (external) c.generate_symbol(model::pin_order::declaration);
     open_editor(c);
 
     renaming = c.id;

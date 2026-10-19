@@ -776,10 +776,8 @@ void schematic_editor::property_panel()
                 // pins may have moved or appeared
                 normalize();
             }
-            if (auto prim = c ? ctx.ws.primitive_of(*c) : nullptr) {
-                auto problem = prim->check(model::resolve_params(defs, i->params));
-                if (!problem.empty()) TextColored({1, 0.6f, 0.2f, 1}, "%s", problem.c_str());
-            }
+            auto problem = ctx.ws.check_instance(*i);
+            if (!problem.empty()) TextColored({1, 0.6f, 0.2f, 1}, "%s", problem.c_str());
         }
         return;
     }

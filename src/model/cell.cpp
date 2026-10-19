@@ -81,15 +81,79 @@ std::vector<std::string> cell::check() const
     return r;
 }
 
-void cell::generate_symbol()
+const std::vector<param_def>* cell::external_params() const
+{
+    return const_cast<cell*>(this)->external_params();
+}
+
+std::vector<param_def>* cell::external_params()
+{
+    if (auto c = std::get_if<c_model_impl>(&impl)) return &c->params;
+    if (auto h = std::get_if<hdl_impl>(&impl)) return &h->params;
+    return nullptr;
+}
+
+const char* to_string(hdl_language l)
+{
+    switch (l) {
+    case hdl_language::verilog: return "verilog";
+    case hdl_language::systemverilog: return "systemverilog";
+    case hdl_language::vhdl: return "vhdl";
+    }
+    return "?";
+}
+
+const char* to_string(hdl_backend b)
+{
+    switch (b) {
+    case hdl_backend::verilator: return "verilator";
+    case hdl_backend::icarus: return "icarus";
+    case hdl_backend::ghdl: return "ghdl";
+    }
+    return "?";
+}
+
+bool supports(hdl_backend b, hdl_language l)
+{
+    return l == hdl_language::vhdl ? b == hdl_backend::ghdl : b != hdl_backend::ghdl;
+}
+
+bool cell::set_ports(const std::vector<port>& list)
+{
+    bool same = list.size() == ports.size();
+    std::vector<port> result;
+    for (auto& p : list) {
+        auto r = p;
+        auto old = std::find_if(ports.begin(), ports.end(), [&](const port& o) { return o.name == p.name; });
+        if (old != ports.end()) {
+            r.id = old->id;
+            r.pos = old->pos;
+            if (r.description.empty()) r.description = old->description;
+            same = same && old->dir == p.dir;
+        } else {
+            r.id = new_id();
+            same = false;
+        }
+        result.push_back(std::move(r));
+    }
+
+    ports = std::move(result);
+    if (same) return false;
+    generate_symbol(pin_order::declaration);
+    return true;
+}
+
+void cell::generate_symbol(pin_order order)
 {
     std::vector<const port*> left, right;
     for (auto& p : ports)
         (p.dir == direction::input ? left : right).push_back(&p);
 
-    auto by_pos = [](const port* a, const port* b) { return a->pos.y != b->pos.y ? a->pos.y > b->pos.y : a->pos.x < b->pos.x; };
-    std::sort(left.begin(), left.end(), by_pos);
-    std::sort(right.begin(), right.end(), by_pos);
+    if (order == pin_order::position) {
+        auto by_pos = [](const port* a, const port* b) { return a->pos.y != b->pos.y ? a->pos.y > b->pos.y : a->pos.x < b->pos.x; };
+        std::stable_sort(left.begin(), left.end(), by_pos);
+        std::stable_sort(right.begin(), right.end(), by_pos);
+    }
 
     // approximate label width, the model doesn't know font metrics
     constexpr float label_size = 6.0f;
@@ -121,7 +185,7 @@ void cell::generate_symbol()
         int y = ((int)side.size() - 1) * grid;
         for (auto p : side) {
             glm::ivec2 pin_pos{x + stub, y};
-            add_line({x, y}, pin_pos);
+            symbol.shapes.push_back({new_id(), line{{x, y}, pin_pos}, p->width > 1 ? bus_stroke : 0.0f});
             symbol.pins.push_back({new_id(), p->id, pin_pos});
             int lx = is_left ? x + 3 : x - 3 - (int)std::ceil(p->name.size() * label_size * 0.6f);
             symbol.shapes.push_back({new_id(), text{{lx, y - 2}, p->name, label_size}});

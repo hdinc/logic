@@ -385,6 +385,212 @@ static void test_builtins()
     CHECK(!ws.interface_of(i));
 }
 
+
+// an hdl cell with a WIDTH parameter: d and q are WIDTH bits, clk is 1
+static model::cell& make_hdl_cell(model::workspace& ws, model::library& lib)
+{
+    model::hdl_impl h;
+    h.language = model::hdl_language::systemverilog;
+    h.backend = model::hdl_backend::icarus;
+    h.sources = {"rtl/reg.sv", "rtl/pkg.sv"};
+    h.top = "reg_n";
+    h.include_dirs = {"rtl/include"};
+    h.defines = {"SIM", "DEPTH=4"};
+    h.args = "-Wall";
+    h.params = {model::int_param("WIDTH", "WIDTH", 8, 1, 64, "data width"), model::choice_param("MODE", "MODE", {"a", "b"}, "a"),
+        model::bool_param("FAST", "FAST", false), model::text_param("NAME", "NAME", "x")};
+    auto& c = ws.create_cell(lib, "reg_n", std::move(h));
+    c.add_port(model::direction::input, {0, 0}).name = "clk";
+    auto& d = c.add_port(model::direction::input, {0, 0});
+    d.name = "d";
+    d.width = 8;
+    auto& q = c.add_port(model::direction::output, {0, 0});
+    q.name = "q";
+    q.width = 8;
+    c.generate_symbol(model::pin_order::declaration);
+    return c;
+}
+
+// pretends to read reg_n: d and q are WIDTH bits, WIDTH 13 adds a port
+class fake_provider : public model::external_provider {
+public:
+    mutable int calls = 0;
+
+    bool handles(const model::cell& c) const override { return std::holds_alternative<model::hdl_impl>(c.impl); }
+
+    bool describe(const model::cell& c, const std::filesystem::path&, std::vector<model::port>& ports, std::vector<model::param_def>& params,
+        std::string& error) const override
+    {
+        if (std::get<model::hdl_impl>(c.impl).top != "reg_n") {
+            error = "no top";
+            return false;
+        }
+        params = {model::int_param("WIDTH", "WIDTH", 8, 1, 64)};
+        return ports_for(c, {}, {{"WIDTH", int64_t(8)}}, ports, error);
+    }
+
+    bool ports_for(const model::cell&, const std::filesystem::path&, const model::param_values& values, std::vector<model::port>& ports,
+        std::string& error) const override
+    {
+        calls++;
+        int w = (int)model::get_int(values, "WIDTH");
+        if (w == 7) {
+            error = "seven is not allowed";
+            return false;
+        }
+        ports.clear();
+        model::port p;
+        p.name = "clk";
+        ports.push_back(p);
+        p.name = "d";
+        p.width = w;
+        ports.push_back(p);
+        p.name = "q";
+        p.dir = model::direction::output;
+        ports.push_back(p);
+        if (w == 13) {
+            p.name = "extra";
+            p.width = 1;
+            ports.push_back(p);
+        }
+        return true;
+    }
+};
+
+static void test_external_cells(const std::filesystem::path& dir)
+{
+    std::filesystem::remove_all(dir);
+
+    model::workspace ws;
+    auto& lib = ws.add_library("work");
+    auto& h = make_hdl_cell(ws, lib);
+    CHECK(h.is_external() && !h.get_schematic());
+    CHECK(h.external_params() && h.external_params()->size() == 4);
+    CHECK(h.check().empty());
+
+    // declaration order, buses with thick stubs
+    CHECK(h.symbol.pins.size() == 3);
+    auto pin_y = [&](const std::string& name) {
+        for (auto& p : h.ports)
+            if (p.name == name) return h.symbol.find_pin_of_port(p.id)->pos.y;
+        return -999;
+    };
+    CHECK(pin_y("clk") > pin_y("d"));
+    CHECK(std::any_of(h.symbol.shapes.begin(), h.symbol.shapes.end(), [](auto& s) { return s.width == model::bus_stroke; }));
+
+    model::c_model_impl m;
+    m.plugin = "chips";
+    m.model = "m6502";
+    m.params = {model::int_param("clock", "Clock", 1000000, 1, 100000000)};
+    auto& cm = ws.create_cell(lib, "cpu", m);
+    cm.add_port(model::direction::output, {0, 0}).width = 16;
+    cm.add_port(model::direction::inout, {0, 0}).width = 8;
+    cm.generate_symbol(model::pin_order::declaration);
+
+    // a cell from a newer version is kept as it is
+    auto future = io::to_json(cm);
+    future["name"] = "future";
+    future["id"] = io::id_to_string(model::workspace::random_id());
+    future["impl"] = {{"type", "spice"}, {"netlist", "R1 a b 1k"}, {"nested", {{"x", 1}}}};
+
+    io::save_library(lib, dir);
+    {
+        std::ofstream f(dir / "work" / "cells" / "future.json");
+        f << future.dump(2);
+    }
+    CHECK(lib.dir == dir / "work");
+
+    model::workspace loaded;
+    auto errors = io::load_workspace(loaded, dir);
+    for (auto& e : errors)
+        std::printf("  %s\n", e.c_str());
+    CHECK(errors.empty());
+    auto l = loaded.find_library("work");
+    CHECK(l && l->cells.size() == 3);
+    if (!l) return;
+    CHECK(l->dir == dir / "work");
+    CHECK(l->find_cell("reg_n")->impl == h.impl);
+    CHECK(l->find_cell("cpu")->impl == cm.impl);
+    CHECK(io::to_json(*l->find_cell("reg_n")) == io::to_json(h));
+    auto f = l->find_cell("future");
+    CHECK(f && std::holds_alternative<model::unknown_impl>(f->impl));
+    if (f) {
+        CHECK(io::to_json(*f) == future);
+        CHECK(f->ports.size() == 2);
+    }
+    std::filesystem::remove_all(dir);
+
+    // instances: defaults use the cell's own interface
+    model::instance i;
+    i.cell = h.id;
+    auto own = ws.interface_of(i);
+    CHECK(own.ports == &h.ports && own.symbol == &h.symbol);
+    CHECK(ws.params_of(i).size() == 4);
+    CHECK(ws.check_instance(i).empty());
+
+    // other parameters without a provider: the cell's interface, with a hint
+    i.params = {{"WIDTH", int64_t(16)}};
+    auto v = ws.interface_of(i);
+    CHECK(v && (*v.ports)[1].width == 8);
+    CHECK(!ws.check_instance(i).empty());
+
+    fake_provider fp;
+    ws.add_provider(fp);
+    CHECK(ws.provider_of(h) == &fp);
+    CHECK(!ws.provider_of(cm));
+
+    // providers are added at startup, parameters not built before use it
+    i.params = {{"WIDTH", int64_t(32)}};
+    v = ws.interface_of(i);
+    CHECK((*v.ports)[1].width == 32 && (*v.ports)[2].width == 32);
+    // the same names keep the symbol and the ids
+    CHECK(*v.symbol == h.symbol);
+    CHECK((*v.ports)[1].id == h.ports[1].id);
+    CHECK(ws.check_instance(i).empty());
+    int calls = fp.calls;
+    ws.interface_of(i);
+    CHECK(fp.calls == calls);
+
+    // a changed cell rebuilds
+    h.ports[0].description = "clock";
+    v = ws.interface_of(i);
+    CHECK(fp.calls == calls + 1);
+    CHECK((*v.ports)[0].description == "clock");
+
+    // another port: a generated symbol
+    i.params = {{"WIDTH", int64_t(13)}};
+    v = ws.interface_of(i);
+    CHECK(v.ports->size() == 4 && v.symbol->pins.size() == 4);
+
+    // the provider fails: the cell's interface and the error
+    i.params = {{"WIDTH", int64_t(7)}};
+    v = ws.interface_of(i);
+    CHECK((*v.ports)[1].width == 8);
+    CHECK(ws.check_instance(i).find("seven") != std::string::npos);
+
+    // refreshing replaces ports and params, a custom symbol stays while the
+    // names do
+    h.symbol.shapes.push_back({h.new_id(), model::circle{{0, 0}, 3.0f}});
+    auto custom = h.symbol;
+    auto d_id = h.ports[1].id;
+    std::string error;
+    CHECK(ws.refresh_interface(h, error));
+    CHECK(h.external_params()->size() == 1);
+    CHECK(h.symbol == custom);
+    CHECK(h.ports[1].id == d_id && h.ports[0].description == "clock");
+
+    std::get<model::hdl_impl>(h.impl).top = "other";
+    CHECK(!ws.refresh_interface(h, error));
+    CHECK(error == "no top");
+    CHECK(!ws.refresh_interface(cm, error));
+
+    // set_ports with a removed port regenerates the symbol
+    auto ports = h.ports;
+    ports.pop_back();
+    CHECK(h.set_ports(ports));
+    CHECK(h.symbol != custom && h.symbol.pins.size() == 2 && h.check().empty());
+}
+
 int main(int argc, char** argv)
 {
     auto dir = std::filesystem::path(argc > 1 ? argv[1] : ".") / "model_test_workspace";
@@ -400,6 +606,7 @@ int main(int argc, char** argv)
     test_clipboard();
     test_builtins();
     test_save_load(dir);
+    test_external_cells(dir);
 
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
