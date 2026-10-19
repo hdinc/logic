@@ -13,7 +13,7 @@ namespace logic::editor {
 class sim_session {
 public:
     // the cells of the hierarchy must not change while it runs
-    sim_session(const model::workspace& ws, const model::cell& top);
+    sim_session(const model::workspace& ws, const model::cell& top, const sim::component_factory& factory);
 
     // takes the latest values from the simulation thread, once per frame
     void update() { run.sync(); }

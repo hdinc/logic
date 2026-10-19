@@ -40,6 +40,11 @@ library* workspace::library_of(id cell)
     return nullptr;
 }
 
+const library* workspace::library_of(id cell) const
+{
+    return const_cast<workspace*>(this)->library_of(cell);
+}
+
 cell& workspace::create_cell(library& lib, const std::string& name, implementation impl)
 {
     auto c = std::make_unique<cell>();
@@ -248,7 +253,7 @@ const workspace::external_entry* workspace::external_interface(const cell& c, co
 
     std::vector<port> ports;
     auto p = provider_of(c);
-    auto lib = const_cast<workspace*>(this)->library_of(c.id);
+    auto lib = library_of(c.id);
     if (!p) {
         e.error = "the model can't be read, the parameters don't change its ports";
     } else if (!p->ports_for(c, lib ? lib->dir : std::filesystem::path{}, values, ports, e.error)) {

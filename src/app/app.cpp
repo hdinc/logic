@@ -16,6 +16,7 @@ app::app(Hd::Window& w, std::filesystem::path r)
     : window(w)
     , gui(&w)
     , root(std::move(r))
+    , factory({&builtin::factory(), &plugins})
     , components(renderer)
     , editor_tex(Hd::Texture::emptyTexture(3840, 2160))
     , editor_fb(editor_tex)
@@ -26,6 +27,8 @@ app::app(Hd::Window& w, std::filesystem::path r)
     if (!ws.find_library("work")) ws.add_library("work").dir = root / "work";
 
     ws.add_builtin_library(builtin::registry());
+    plugins.add_default_dirs(root);
+    ws.add_provider(plugins);
 
     // stable order in the library panel
     std::stable_sort(ws.libraries.begin(), ws.libraries.end(), [](auto& a, auto& b) { return a->read_only < b->read_only; });
@@ -191,6 +194,8 @@ void app::draw_gui()
     if (show_demo) ShowDemoWindow(&show_demo);
 
     update_simulations();
+    for (auto& m : plugins.take_messages())
+        message(m);
 
     components_panel();
     library_panel();
@@ -695,7 +700,7 @@ void app::open_editor(model::cell& c)
     }
 
     auto lib = ws.library_of(c.id);
-    editors.push_back(std::make_unique<editor::cell_editor>(editor::context{ws, *lib, c, renderer}));
+    editors.push_back(std::make_unique<editor::cell_editor>(editor::context{ws, *lib, c, renderer, &factory, &plugins}));
 }
 
 void app::close_editor(model::id cell)

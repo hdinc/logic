@@ -33,6 +33,7 @@ public:
     cell* find_cell(id i);
     const cell* find_cell(id i) const;
     library* library_of(id cell);
+    const library* library_of(id cell) const;
 
     // creates a cell with a fresh id, an empty schematic by default
     cell& create_cell(library& lib, const std::string& name, implementation impl = schematic{});

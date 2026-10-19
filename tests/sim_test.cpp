@@ -248,7 +248,7 @@ static void test_problems()
     g.sch().instances.push_back(i);
     sim::simulator u(g.ws, *g.top, builtin::factory());
     CHECK(u.problems().size() == 2);
-    CHECK(u.problems().back().find("c model") != std::string::npos);
+    CHECK(u.problems().back().find("nothing can simulate") != std::string::npos);
 }
 
 static void test_conflict()
@@ -719,9 +719,10 @@ const model::primitive_registry& registry()
 
 class factory_t : public sim::component_factory {
 public:
-    std::unique_ptr<sim::component> create(const std::string& kind, const model::param_values& params) const override
+    std::unique_ptr<sim::component> create(const model::cell& c, const model::param_values& params, std::string&) const override
     {
-        auto p = static_cast<const builtin::primitive*>(registry().find(kind));
+        auto b = std::get_if<model::builtin_impl>(&c.impl);
+        auto p = b ? static_cast<const builtin::primitive*>(registry().find(b->kind)) : nullptr;
         return p ? p->create(params) : nullptr;
     }
 };
@@ -1032,7 +1033,9 @@ static void test_inspect_state()
 
     // the register's state survives a copy to a new component
     auto params = model::resolve_params(builtin::registry().find("register")->params(), {{"width", int64_t(70)}});
-    auto r1 = builtin::factory().create("register", params);
+    std::string error;
+    auto reg_cell = f.ws.find_cell(model::builtin_cell_id("register"));
+    auto r1 = builtin::factory().create(*reg_cell, params, error);
     std::vector<value> ports{hex("2_00000000_00000001", 70), sim::known(0, 1), sim::floating(70)};
     sim::context ctx(0, false, sim::never);
     r1->eval(ports, ctx);
@@ -1042,7 +1045,7 @@ static void test_inspect_state()
 
     std::vector<uint8_t> bytes;
     CHECK(r1->save_state(bytes));
-    auto r2 = builtin::factory().create("register", params);
+    auto r2 = builtin::factory().create(*reg_cell, params, error);
     CHECK(r2->load_state(bytes));
     CHECK(!r2->load_state(std::span<const uint8_t>(bytes.data(), 3)));
     // clk stays 1: no edge, q comes from the loaded state

@@ -59,10 +59,14 @@ public:
 
     bool operator==(const value& o) const;
 
-private:
+    // the words of the masks: words() bits words, then the x words, then the
+    // z words, e.g. for c models. call normalize() after writing them.
     uint64_t* data() { return m_width <= 64 ? m_small : m_big.data(); }
     const uint64_t* data() const { return m_width <= 64 ? m_small : m_big.data(); }
+    // restores the rules above after writing through data()
+    void normalize();
 
+private:
     int m_width = 0;
     // bits, x, z for up to 64 bits
     uint64_t m_small[3] = {};

@@ -36,6 +36,12 @@ void value::set_word(int w, uint64_t bits, uint64_t x, uint64_t z)
     d[2 * n + w] = z;
 }
 
+void value::normalize()
+{
+    for (int w = 0; w < words(); w++)
+        set_word(w, bits(w), x(w), z(w));
+}
+
 bit_state value::get(int i) const
 {
     if (i < 0 || i >= m_width) return bit_state::z;

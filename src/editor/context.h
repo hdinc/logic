@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../model/workspace.h"
+#include "../plugin/registry.h"
 #include "../render/renderer.h"
 
 #include <imgui.h>
@@ -14,6 +15,10 @@ struct context {
     model::library& lib;
     model::cell& cell;
     render::renderer& r;
+    // creates the simulation models, the builtins only if null
+    const sim::component_factory* factory = nullptr;
+    // c model plugins, null if there are none
+    const plugin::registry* plugins = nullptr;
 
     // call after every change to the cell so the library gets saved
     void modified() { lib.dirty = true; }

@@ -1,10 +1,9 @@
 #include "sim_session.h"
-#include "../builtin/builtin.h"
 
 namespace logic::editor {
 
-sim_session::sim_session(const model::workspace& ws, const model::cell& c)
-    : run(std::make_unique<sim::simulator>(ws, c, builtin::factory()))
+sim_session::sim_session(const model::workspace& ws, const model::cell& c, const sim::component_factory& factory)
+    : run(std::make_unique<sim::simulator>(ws, c, factory))
     , top(c.id)
 {
 }

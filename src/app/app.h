@@ -3,6 +3,7 @@
 #include "component_bar.h"
 #include "../editor/cell_editor.h"
 #include "../model/workspace.h"
+#include "../plugin/registry.h"
 #include "../render/renderer.h"
 
 #include <Hd/FrameBuffer.h>
@@ -65,6 +66,10 @@ private:
     std::filesystem::path root;
 
     model::workspace ws;
+    // c model plugins, the provider of their interfaces. outlives the
+    // editors and their simulations.
+    plugin::registry plugins{ws};
+    sim::factory_chain factory;
     render::renderer renderer;
     component_bar components;
     // dock the bar before the windows are drawn next frame

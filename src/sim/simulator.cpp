@@ -137,25 +137,21 @@ void simulator::elaborate(scope& s, const model::cell& c, const std::vector<int>
             for (auto& p : *iface.pulls)
                 if (pins[p.port] >= 0) pulls.push_back({pins[p.port], p.up});
 
-            auto comp = factory.create(prim->kind(), model::resolve_params(prim->params(), inst.params));
-            if (!comp) {
-                if (links.empty() && iface.pulls->empty()) m_problems.push_back(where(inst) + ": '" + cell->name + "' has no simulation model");
-                continue;
-            }
-
-            instance x;
-            x.c = std::move(comp);
-            x.nets = pins;
-            for (auto& port : *iface.ports) {
-                x.widths.push_back(port.width);
-                x.ports.push_back(floating(port.width));
-                x.drive.push_back(floating(port.width));
-                x.kinds.push_back(port.dir == model::direction::input ? port_kind::in
-                        : port.dir == model::direction::output    ? port_kind::out
-                                                                  : port_kind::inout);
-            }
-            s.components[i] = (int)instances.size();
-            instances.push_back(std::move(x));
+            std::string error;
+            auto comp = factory.create(*cell, model::resolve_params(prim->params(), inst.params), error);
+            if (comp)
+                add_instance(s, i, std::move(comp), *iface.ports, pins);
+            else if (!error.empty())
+                m_problems.push_back(where(inst) + ": " + error);
+            else if (links.empty() && iface.pulls->empty())
+                m_problems.push_back(where(inst) + ": '" + cell->name + "' has no simulation model");
+        } else if (auto defs = cell->external_params()) {
+            std::string error;
+            auto comp = factory.create(*cell, model::resolve_params(*defs, inst.params), error);
+            if (comp)
+                add_instance(s, i, std::move(comp), *iface.ports, pins);
+            else
+                m_problems.push_back(where(inst) + ": " + (error.empty() ? "nothing can simulate '" + cell->name + "'" : error));
         } else if (cell->get_schematic()) {
             if (depth >= max_depth) {
                 m_problems.push_back(where(inst) + ": nested too deep, does '" + cell->name + "' contain itself?");
@@ -170,14 +166,27 @@ void simulator::elaborate(scope& s, const model::cell& c, const std::vector<int>
             elaborate(*child, *cell, pins, depth + 1);
             s.child_index[i] = (int)s.children.size();
             s.children.push_back(std::move(child));
-        } else if (std::holds_alternative<model::c_model_impl>(cell->impl)) {
-            m_problems.push_back(where(inst) + ": '" + cell->name + "' is a c model, they can't be simulated yet");
-        } else if (std::holds_alternative<model::hdl_impl>(cell->impl)) {
-            m_problems.push_back(where(inst) + ": '" + cell->name + "' is an hdl model, they can't be simulated yet");
         } else {
             m_problems.push_back(where(inst) + ": '" + cell->name + "' has no simulation model");
         }
     }
+}
+
+void simulator::add_instance(scope& s, int index, std::unique_ptr<component> c, const std::vector<model::port>& ports, const std::vector<int>& pins)
+{
+    instance x;
+    x.c = std::move(c);
+    x.nets = pins;
+    for (auto& port : ports) {
+        x.widths.push_back(port.width);
+        x.ports.push_back(floating(port.width));
+        x.drive.push_back(floating(port.width));
+        x.kinds.push_back(port.dir == model::direction::input ? port_kind::in
+                : port.dir == model::direction::output    ? port_kind::out
+                                                          : port_kind::inout);
+    }
+    s.components[index] = (int)instances.size();
+    instances.push_back(std::move(x));
 }
 
 int simulator::new_net(int width, bool width_error)

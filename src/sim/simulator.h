@@ -200,6 +200,8 @@ private:
     // building
     const netlist::netlist& netlist_of(const model::cell& c);
     void elaborate(scope& s, const model::cell& c, const std::vector<int>& port_nets, int depth);
+    // the component of instance `index` of the scope's schematic
+    void add_instance(scope& s, int index, std::unique_ptr<component> c, const std::vector<model::port>& ports, const std::vector<int>& pins);
     int new_net(int width, bool width_error);
     int find(int net);
     void join(int a, int b);

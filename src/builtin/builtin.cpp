@@ -6,10 +6,11 @@ namespace {
 
 class builtin_factory : public sim::component_factory {
 public:
-    std::unique_ptr<sim::component> create(const std::string& kind, const model::param_values& params) const override
+    std::unique_ptr<sim::component> create(const model::cell& c, const model::param_values& params, std::string&) const override
     {
+        auto b = std::get_if<model::builtin_impl>(&c.impl);
         // the registry only holds builtin::primitive
-        auto p = static_cast<const primitive*>(registry().find(kind));
+        auto p = b ? static_cast<const primitive*>(registry().find(b->kind)) : nullptr;
         return p ? p->create(params) : nullptr;
     }
 };

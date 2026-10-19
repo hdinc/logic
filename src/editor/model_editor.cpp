@@ -96,10 +96,57 @@ void model_editor::c_model_settings(model::c_model_impl& m)
     using namespace ImGui;
 
     SeparatorText("C model");
+
+    if (ctx.plugins) {
+        // the plugins in the plugin folders
+        if (BeginCombo("##plugins", "Choose", ImGuiComboFlags_NoPreview)) {
+            auto found = ctx.plugins->scan();
+            if (found.empty()) TextDisabled("no plugins found");
+            for (auto& p : found) {
+                if (Selectable(p.name.c_str(), p.name == m.plugin)) {
+                    m.plugin = p.name;
+                    ctx.modified();
+                }
+                SetItemTooltip("%s", p.path.string().c_str());
+            }
+            EndCombo();
+        }
+        if (IsItemHovered()) {
+            std::string dirs;
+            for (auto& d : ctx.plugins->search_dirs)
+                dirs += "\n" + d.string();
+            SetTooltip("plugins found in:%s", dirs.c_str());
+        }
+        SameLine(0, 2);
+    }
     if (input_string("Plugin", m.plugin)) ctx.modified();
     SetItemTooltip("file name of the plugin without extension, found in the plugin folders, or a path relative to the library folder");
+
+    // the models of the plugin
+    std::string error;
+    auto loaded = ctx.plugins && !m.plugin.empty() ? ctx.plugins->load(m.plugin, ctx.lib.dir, error) : nullptr;
+    if (loaded) {
+        if (BeginCombo("##models", "Choose", ImGuiComboFlags_NoPreview)) {
+            for (uint32_t k = 0; k < loaded->info->model_count; k++) {
+                auto& d = loaded->info->models[k];
+                if (Selectable(d.name, m.model == d.name)) {
+                    m.model = d.name;
+                    ctx.modified();
+                }
+                if (d.description) SetItemTooltip("%s", d.description);
+            }
+            EndCombo();
+        }
+        SameLine(0, 2);
+    }
     if (input_string("Model", m.model)) ctx.modified();
     SetItemTooltip("name of the model inside the plugin");
+
+    if (!error.empty()) {
+        TextColored({1, 0.4f, 0.4f, 1}, "%s", error.c_str());
+    } else if (loaded) {
+        if (auto d = loaded->find(m.model); d && d->description) TextDisabled("%s", d->description);
+    }
 }
 
 void model_editor::hdl_settings(model::hdl_impl& h)

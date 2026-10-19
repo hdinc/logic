@@ -1,4 +1,5 @@
 #include "cell_editor.h"
+#include "../builtin/builtin.h"
 #include "../io/json.h"
 
 #include <imgui_internal.h>
@@ -206,7 +207,7 @@ void cell_editor::start_simulation()
     schematic->selection.clear();
     show_symbol = false;
 
-    session = std::make_shared<sim_session>(ctx.ws, ctx.cell);
+    session = std::make_shared<sim_session>(ctx.ws, ctx.cell, ctx.factory ? *ctx.factory : builtin::factory());
     view = std::make_unique<sim_view>(ctx.ws, ctx.r, session);
 }
 

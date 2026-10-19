@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(logic CXX)
+project(logic C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,9 +37,11 @@ add_library(logic_core STATIC
     src/sim/value.cpp
     src/sim/simulator.cpp
     src/sim/runner.cpp
+    src/plugin/dynlib.cpp
+    src/plugin/registry.cpp
 )
-target_include_directories(logic_core PUBLIC src)
-target_link_libraries(logic_core PUBLIC glm::glm nlohmann_json::nlohmann_json Threads::Threads)
+target_include_directories(logic_core PUBLIC src sdk/include)
+target_link_libraries(logic_core PUBLIC glm::glm nlohmann_json::nlohmann_json Threads::Threads ${CMAKE_DL_LIBS})
 target_compile_options(logic_core PRIVATE ${LOGIC_WARNINGS})
 
 add_executable(logic
@@ -64,6 +66,14 @@ target_link_libraries(logic logic_core Hd)
 target_compile_options(logic PRIVATE ${LOGIC_WARNINGS})
 target_compile_definitions(logic PRIVATE LOGIC_DEFAULT_WORKSPACE="${CMAKE_SOURCE_DIR}/workspace")
 
+# c model sdk and the example plugin, built into plugins/ next to the program
+include(sdk/cmake/LogicModel.cmake)
+logic_add_model(logic_examples sdk/examples/examples.cpp sdk/examples/counter.c)
+set_target_properties(logic_examples PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins)
+add_dependencies(logic logic_examples)
+
 enable_testing()
 
 add_executable(model_test tests/model_test.cpp)
@@ -75,3 +85,15 @@ add_executable(sim_test tests/sim_test.cpp)
 target_link_libraries(sim_test logic_core)
 target_compile_options(sim_test PRIVATE ${LOGIC_WARNINGS})
 add_test(NAME sim_test COMMAND sim_test)
+
+# a plugin that refuses every abi version, only for the tests
+logic_add_model(test_bad_plugin tests/plugins/bad_plugin.c)
+set_target_properties(test_bad_plugin PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/test_plugins
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/test_plugins)
+
+add_executable(plugin_test tests/plugin_test.cpp)
+target_link_libraries(plugin_test logic_core)
+target_compile_options(plugin_test PRIVATE ${LOGIC_WARNINGS})
+add_dependencies(plugin_test logic_examples test_bad_plugin)
+add_test(NAME plugin_test COMMAND plugin_test $<TARGET_FILE:logic_examples> $<TARGET_FILE:test_bad_plugin>)

@@ -10,6 +10,10 @@
 #include <string>
 #include <vector>
 
+namespace logic::model {
+struct cell;
+}
+
 namespace logic::sim {
 
 // simulated time in picoseconds
@@ -86,12 +90,35 @@ public:
     virtual bool load_state(std::span<const uint8_t>) { return false; }
 };
 
+// creates the simulation models of cells that aren't schematics
 class component_factory {
 public:
     virtual ~component_factory() = default;
 
-    // the parameters are resolved. null if the kind has no simulation model.
-    virtual std::unique_ptr<component> create(const std::string& kind, const model::param_values& params) const = 0;
+    // the parameters are resolved. null if the factory doesn't handle the
+    // cell, or with an error if it does but can't create the model.
+    virtual std::unique_ptr<component> create(const model::cell& c, const model::param_values& params, std::string& error) const = 0;
+};
+
+// asks factories in order until one creates the model or reports an error
+class factory_chain : public component_factory {
+public:
+    explicit factory_chain(std::vector<const component_factory*> list)
+        : list(std::move(list))
+    {
+    }
+
+    std::unique_ptr<component> create(const model::cell& c, const model::param_values& params, std::string& error) const override
+    {
+        for (auto f : list) {
+            auto r = f->create(c, params, error);
+            if (r || !error.empty()) return r;
+        }
+        return nullptr;
+    }
+
+private:
+    std::vector<const component_factory*> list;
 };
 
 }
