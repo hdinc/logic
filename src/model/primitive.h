@@ -21,11 +21,19 @@ struct bit_link {
     int width = 1;
 };
 
+// a weak 0 or 1 on the net of a port, e.g. by a pull resistor. bits nothing
+// else drives get the pulled value instead of z.
+struct pull {
+    int port = 0;
+    bool up = false;
+};
+
 // what an instance looks like from outside: its ports and symbol
 struct cell_interface {
     std::vector<port> ports;
     model::symbol symbol;
     std::vector<bit_link> links;
+    std::vector<pull> pulls;
 };
 
 // a cell implemented in code, e.g. a gate or a register. its ports and symbol

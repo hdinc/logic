@@ -64,8 +64,8 @@ std::vector<std::string> cell::check() const
         else if (!names.insert(p.name).second)
             r.push_back("duplicate port name '" + p.name + "'");
 
-        if (p.width < 1 || p.width > 64)
-            r.push_back("port '" + p.name + "' width must be between 1 and 64");
+        if (p.width < 1 || p.width > max_width)
+            r.push_back("port '" + p.name + "' width must be between 1 and " + std::to_string(max_width));
 
         auto n = std::count_if(symbol.pins.begin(), symbol.pins.end(), [&](const pin& s) { return s.port == p.id; });
         if (n == 0)

@@ -1,8 +1,36 @@
 #include "simulator.h"
 
 #include <algorithm>
+#include <functional>
 
 namespace logic::sim {
+
+std::string format_time(time t)
+{
+    if (t == 0) return "0 s";
+
+    struct unit {
+        time size;
+        int digits;
+        const char* name;
+    };
+    static const unit units[] = {{seconds, 12, "s"}, {ms, 9, "ms"}, {us, 6, "us"}, {ns, 3, "ns"}, {ps, 0, "ps"}};
+
+    for (auto& u : units) {
+        if (t < u.size && u.size != ps) continue;
+        auto s = std::to_string(t / u.size);
+        if (u.digits > 0) {
+            // the remainder with leading zeros
+            auto frac = std::to_string(t % u.size);
+            frac.insert(0, u.digits - frac.size(), '0');
+            while (!frac.empty() && frac.back() == '0')
+                frac.pop_back();
+            if (!frac.empty()) s += "." + frac;
+        }
+        return s + " " + u.name;
+    }
+    return {};
+}
 
 const scope* scope::child(int instance) const
 {
@@ -20,9 +48,11 @@ simulator::simulator(const model::workspace& w, const model::cell& top, const co
     finish_nets();
     build_nodes();
 
+    cur.nodes.resize(nodes.size());
+
     for (int k = 0; k < (int)top_ports.size(); k++) {
         auto& p = top_ports[k];
-        inputs.push_back(p.dir == model::direction::input ? known(0, p.width) : floating(p.width));
+        cur.inputs.push_back(p.dir == model::direction::input ? known(0, p.width) : floating(p.width));
         int n = net_of_port(*m_root, k);
         if (n >= 0 && p.dir != model::direction::output) add_driver(n, -1, k);
     }
@@ -32,11 +62,8 @@ simulator::simulator(const model::workspace& w, const model::cell& top, const co
         for (int p = 0; p < (int)s.nets.size(); p++) {
             int n = s.nets[p];
             if (n < 0) continue;
-            // inouts are treated as outputs until there are tri-state primitives
-            if (s.is_output[p]) {
-                add_driver(n, i, p);
-                continue;
-            }
+            if (s.kinds[p] != port_kind::in) add_driver(n, i, p);
+            if (s.kinds[p] == port_kind::out) continue;
             for (auto& sl : nets[n].slices) {
                 auto& readers = nodes[sl.node].readers;
                 if (std::find(readers.begin(), readers.end(), i) == readers.end()) readers.push_back(i);
@@ -106,10 +133,13 @@ void simulator::elaborate(scope& s, const model::cell& c, const std::vector<int>
                     if (pins[p] < 0) pins[p] = new_net((*iface.ports)[p].width, false);
                 aliases.push_back({pins[l.a], l.a_bit, pins[l.b], l.b_bit, l.width});
             }
+            // a pull on a pin without a wire has nothing to pull
+            for (auto& p : *iface.pulls)
+                if (pins[p.port] >= 0) pulls.push_back({pins[p.port], p.up});
 
             auto comp = factory.create(prim->kind(), model::resolve_params(prim->params(), inst.params));
             if (!comp) {
-                if (links.empty()) m_problems.push_back(where(inst) + ": '" + cell->name + "' has no simulation model");
+                if (links.empty() && iface.pulls->empty()) m_problems.push_back(where(inst) + ": '" + cell->name + "' has no simulation model");
                 continue;
             }
 
@@ -119,7 +149,10 @@ void simulator::elaborate(scope& s, const model::cell& c, const std::vector<int>
             for (auto& port : *iface.ports) {
                 x.widths.push_back(port.width);
                 x.ports.push_back(floating(port.width));
-                x.is_output.push_back(port.dir != model::direction::input);
+                x.drive.push_back(floating(port.width));
+                x.kinds.push_back(port.dir == model::direction::input ? port_kind::in
+                        : port.dir == model::direction::output    ? port_kind::out
+                                                                  : port_kind::inout);
             }
             s.components[i] = (int)instances.size();
             instances.push_back(std::move(x));
@@ -198,6 +231,8 @@ void simulator::finish_nets()
         a.a = index[a.a];
         a.b = index[a.b];
     }
+    for (auto& p : pulls)
+        p.net = index[p.net];
 
     std::vector<scope*> stack{m_root.get()};
     while (!stack.empty()) {
@@ -258,8 +293,16 @@ void simulator::build_nodes()
         }
     }
 
+    for (auto& p : pulls) {
+        for (auto& sl : nets[p.net].slices) {
+            auto& nd = nodes[sl.node];
+            (p.up ? nd.pull_up : nd.pull_down) = true;
+        }
+    }
+
     parent.clear();
     aliases.clear();
+    pulls.clear();
 }
 
 void simulator::add_driver(int net, int instance, int port)
@@ -268,20 +311,16 @@ void simulator::add_driver(int net, int instance, int port)
         nodes[sl.node].drivers.push_back({instance, port, sl.net_bit, sl.node_bit, sl.width});
 }
 
-value simulator::net_value(int n) const
+value simulator::net_value(const state& st, int n) const
 {
     auto& net = nets[n];
     if (net.width_error) return unknown(net.width);
-    if (net.slices.size() == 1) return nodes[net.slices[0].node].v;
+    // a whole node
+    if (net.slices.size() == 1) return st.nodes[net.slices[0].node];
 
-    value v;
-    for (auto& sl : net.slices) {
-        auto& x = nodes[sl.node].v;
-        auto m = mask(sl.width);
-        v.bits |= ((x.bits >> sl.node_bit) & m) << sl.net_bit;
-        v.x |= ((x.x >> sl.node_bit) & m) << sl.net_bit;
-        v.z |= ((x.z >> sl.node_bit) & m) << sl.net_bit;
-    }
+    value v = floating(net.width);
+    for (auto& sl : net.slices)
+        v.insert(sl.net_bit, st.nodes[sl.node].slice(sl.node_bit, sl.width));
     return v;
 }
 
@@ -297,45 +336,139 @@ int simulator::net_of_port(const scope& s, int port) const
     return local < 0 ? -1 : s.flat_net[local];
 }
 
-value simulator::port_value(const scope& s, int port) const
+value simulator::port_value(const state& st, const scope& s, int port) const
 {
     int n = net_of_port(s, port);
-    return n < 0 ? floating(s.cell->ports[port].width) : net_value(n);
+    return n < 0 ? floating(s.cell->ports[port].width) : net_value(st, n);
 }
 
 void simulator::set_input(int port, value v)
 {
-    auto m = mask(top_ports[port].width);
-    inputs[port] = {v.bits & m, v.x & m, v.z & m};
+    int w = top_ports[port].width;
+    cur.inputs[port] = v.width() == w ? std::move(v) : v.slice(0, w);
 
     int n = net_of_port(*m_root, port);
     if (n >= 0) update_net(n);
     settle();
 }
 
-void simulator::tick()
+std::vector<inspect_item> simulator::inspect(const scope& s, int instance) const
 {
-    tick_count++;
-    for (int i = 0; i < (int)instances.size(); i++)
-        if (instances[i].c && instances[i].c->tick()) schedule(i);
+    std::vector<inspect_item> r;
+    if (instance < 0 || instance >= (int)s.components.size()) return r;
+    int k = s.components[instance];
+    if (k >= 0) instances[k].c->inspect(r);
+    return r;
+}
+
+void simulator::set_wake(int i, time t)
+{
+    auto& s = instances[i];
+    if (t == never) {
+        // the queued event goes stale
+        s.wake = never;
+        return;
+    }
+    s.wake = std::max(t, cur.now);
+    events.push_back({s.wake, i});
+    std::push_heap(events.begin(), events.end(), std::greater<>{});
+}
+
+void simulator::clean_events()
+{
+    while (!events.empty() && instances[events.front().instance].wake != events.front().t) {
+        std::pop_heap(events.begin(), events.end(), std::greater<>{});
+        events.pop_back();
+    }
+}
+
+time simulator::next_event() const
+{
+    // the earliest event that is still wanted. stale ones are only dropped
+    // by run_until, look past them.
+    if (!events.empty() && instances[events.front().instance].wake == events.front().t) return events.front().t;
+    time t = never;
+    for (auto& e : events)
+        if (instances[e.instance].wake == e.t) t = std::min(t, e.t);
+    return t;
+}
+
+bool simulator::run_until(time t, int max_events)
+{
     settle();
+    if (cur.oscillating) return false;
+
+    int n = 0;
+    // rounds of wakes at the same time, a component that keeps asking for
+    // the current time would never let time advance
+    int same_time = 0;
+    time last = cur.now;
+
+    while (true) {
+        clean_events();
+        if (events.empty() || events.front().t > t) break;
+        if (n == max_events) return false;
+
+        time at = std::max(events.front().t, cur.now);
+        if (at == last) {
+            if (++same_time > max_steps) {
+                cur.oscillating = true;
+                return false;
+            }
+        } else {
+            same_time = 0;
+            last = at;
+            n++;
+        }
+        cur.now = at;
+
+        while (!events.empty() && events.front().t <= cur.now) {
+            auto e = events.front();
+            std::pop_heap(events.begin(), events.end(), std::greater<>{});
+            events.pop_back();
+            auto& s = instances[e.instance];
+            if (s.wake != e.t) continue;
+            s.wake = never;
+            s.woken = true;
+            schedule(e.instance);
+        }
+
+        settle();
+        if (cur.oscillating) return false;
+    }
+
+    if (t > cur.now) cur.now = t;
+    return true;
+}
+
+bool simulator::step()
+{
+    time t = next_event();
+    if (t == never) return false;
+    run_until(t);
+    return true;
 }
 
 void simulator::reset()
 {
-    tick_count = 0;
+    cur.now = 0;
+    cur.oscillating = false;
+    events.clear();
 
     for (int i = 0; i < (int)instances.size(); i++) {
         auto& s = instances[i];
-        if (!s.c) continue;
         s.c->reset();
-        for (size_t p = 0; p < s.ports.size(); p++)
+        for (size_t p = 0; p < s.ports.size(); p++) {
             s.ports[p] = floating(s.widths[p]);
+            s.drive[p] = floating(s.widths[p]);
+        }
+        s.wake = never;
+        s.woken = false;
         schedule(i);
     }
 
     for (int n = 0; n < (int)nodes.size(); n++) {
-        nodes[n].v = floating(nodes[n].width);
+        cur.nodes[n] = floating(nodes[n].width);
         update_node(n);
     }
 
@@ -364,34 +497,45 @@ void simulator::update_node(int n)
         v = unknown(nd.width);
     } else {
         // each driver drives its bits, the others are z for it
-        std::vector<value> drivers;
+        scratch.clear();
         for (auto& d : nd.drivers) {
-            auto& src = d.instance < 0 ? inputs[d.port] : instances[d.instance].ports[d.port];
-            auto m = mask(d.width);
-            auto others = mask(nd.width) & ~(m << d.dst_bit);
-            drivers.push_back({((src.bits >> d.src_bit) & m) << d.dst_bit, ((src.x >> d.src_bit) & m) << d.dst_bit,
-                (((src.z >> d.src_bit) & m) << d.dst_bit) | others});
+            auto& src = d.instance < 0 ? cur.inputs[d.port] : instances[d.instance].drive[d.port];
+            if (d.src_bit == 0 && d.dst_bit == 0 && d.width == nd.width && src.width() == nd.width) {
+                scratch.push_back(src);
+            } else {
+                auto& full = scratch.emplace_back(floating(nd.width));
+                full.insert(d.dst_bit, src.slice(d.src_bit, d.width));
+            }
         }
-        v = resolve(drivers, nd.width);
+        v = resolve(scratch, nd.width);
+
+        // pulled bits that nothing drives, both directions at once is a conflict
+        if (nd.pull_up || nd.pull_down) {
+            for (int w = 0; w < v.words(); w++) {
+                auto z = v.z(w);
+                if (!z) continue;
+                bool both = nd.pull_up && nd.pull_down;
+                v.set_word(w, v.bits(w) | (nd.pull_up && !both ? z : 0), v.x(w) | (both ? z : 0), 0);
+            }
+        }
     }
 
-    if (v == nd.v) return;
-    nd.v = v;
+    if (v == cur.nodes[n]) return;
+    cur.nodes[n] = std::move(v);
     for (int r : nd.readers)
         schedule(r);
 }
 
 void simulator::settle()
 {
-    m_oscillating = false;
+    cur.oscillating = false;
 
     std::vector<int> batch;
     std::vector<int> changed;
-    std::vector<value> before;
 
     for (int step = 0; !queue.empty(); step++) {
         if (step == max_steps) {
-            m_oscillating = true;
+            cur.oscillating = true;
             for (int i : queue)
                 queued[i] = false;
             queue.clear();
@@ -407,12 +551,13 @@ void simulator::settle()
         changed.clear();
         for (int i : batch) {
             auto& s = instances[i];
-            // outputs keep what eval wrote last time. inouts are treated as
-            // outputs until there are tri-state primitives.
+            // outputs see what they drive, inputs and inouts their net. an
+            // inout without a net sees what it drives.
             for (size_t p = 0; p < s.ports.size(); p++) {
-                if (s.is_output[p]) continue;
                 int n = s.nets[p];
-                if (n < 0)
+                if (s.kinds[p] == port_kind::out || (n < 0 && s.kinds[p] == port_kind::inout))
+                    s.ports[p] = s.drive[p];
+                else if (n < 0)
                     s.ports[p] = floating(s.widths[p]);
                 else if (nets[n].width_error)
                     s.ports[p] = unknown(s.widths[p]);
@@ -420,14 +565,22 @@ void simulator::settle()
                     s.ports[p] = net_value(n);
             }
 
-            before = s.ports;
-            s.c->eval(s.ports);
+            context ctx(cur.now, s.woken, s.wake);
+            s.woken = false;
+            s.c->eval(s.ports, ctx);
+            if (ctx.wake() != s.wake) set_wake(i, ctx.wake());
 
             for (size_t p = 0; p < s.ports.size(); p++) {
-                auto m = mask(s.widths[p]);
+                if (s.kinds[p] == port_kind::in) continue;
                 auto& v = s.ports[p];
-                v = {v.bits & m, v.x & m, v.z & m};
-                if (s.is_output[p] && v != before[p] && s.nets[p] >= 0) changed.push_back(s.nets[p]);
+                // a component writing the wrong width is a bug, make it visible
+                if (v.width() != s.widths[p]) v = unknown(s.widths[p]);
+                if (v == s.drive[p]) continue;
+                s.drive[p] = v;
+                if (s.nets[p] >= 0)
+                    changed.push_back(s.nets[p]);
+                else if (s.kinds[p] == port_kind::inout)
+                    schedule(i); // it reads what it drives
             }
         }
 

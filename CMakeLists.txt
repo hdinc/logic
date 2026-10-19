@@ -9,6 +9,7 @@ add_subdirectory(Hd)
 
 find_package(glm REQUIRED)
 find_package(nlohmann_json REQUIRED)
+find_package(Threads REQUIRED)
 
 set(LOGIC_WARNINGS -Wall -Wextra -Wpedantic -Wsuggest-override -Wno-sign-compare)
 
@@ -35,9 +36,10 @@ add_library(logic_core STATIC
     src/netlist/netlist.cpp
     src/sim/value.cpp
     src/sim/simulator.cpp
+    src/sim/runner.cpp
 )
 target_include_directories(logic_core PUBLIC src)
-target_link_libraries(logic_core PUBLIC glm::glm nlohmann_json::nlohmann_json)
+target_link_libraries(logic_core PUBLIC glm::glm nlohmann_json::nlohmann_json Threads::Threads)
 target_compile_options(logic_core PRIVATE ${LOGIC_WARNINGS})
 
 add_executable(logic

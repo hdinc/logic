@@ -83,7 +83,7 @@ public:
 
     // while set, wires and ports show the simulated values of the scope and
     // the tools are not drawn. the scope must be an instance of this cell.
-    const sim::simulator* sim = nullptr;
+    const sim::snapshot* sim = nullptr;
     const sim::scope* sim_scope = nullptr;
 
     // used by the tools

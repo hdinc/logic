@@ -18,16 +18,16 @@ public:
         reset();
     }
 
-    void eval(std::span<value> ports) override
+    void eval(std::span<value> ports, sim::context&) override
     {
-        auto& clk = ports[1];
-        bool rising = prev_clk == sim::known(0, 1) && clk == sim::known(1, 1);
+        auto clk = ports[1].get(0);
+        bool rising = prev_clk == sim::bit_state::zero && clk == sim::bit_state::one;
         prev_clk = clk;
 
         if (rising) {
             auto& d = ports[0];
-            auto x = (d.x | d.z) & sim::mask(width);
-            q = {d.bits & ~x, x, 0};
+            for (int w = 0; w < q.words(); w++)
+                q.set_word(w, d.bits(w), d.unknown_bits(w), 0);
         }
         ports[2] = q;
     }
@@ -35,13 +35,46 @@ public:
     void reset() override
     {
         q = sim::known(0, width);
-        prev_clk = sim::floating(1);
+        prev_clk = sim::bit_state::z;
+    }
+
+    void inspect(std::vector<sim::inspect_item>& out) const override { out.push_back({"q", q}); }
+
+    // q's words (bits, x) and the clock
+    bool save_state(std::vector<uint8_t>& out) const override
+    {
+        out.clear();
+        auto put = [&](uint64_t v) {
+            for (int k = 0; k < 8; k++)
+                out.push_back(uint8_t(v >> (8 * k)));
+        };
+        for (int w = 0; w < q.words(); w++) {
+            put(q.bits(w));
+            put(q.x(w));
+        }
+        out.push_back((uint8_t)prev_clk);
+        return true;
+    }
+
+    bool load_state(std::span<const uint8_t> in) override
+    {
+        if (in.size() != size_t(16 * q.words() + 1)) return false;
+        auto get = [&](size_t at) {
+            uint64_t v = 0;
+            for (int k = 0; k < 8; k++)
+                v |= uint64_t(in[at + k]) << (8 * k);
+            return v;
+        };
+        for (int w = 0; w < q.words(); w++)
+            q.set_word(w, get(16 * w), get(16 * w + 8), 0);
+        prev_clk = (sim::bit_state)(in.back() & 3);
+        return true;
     }
 
 private:
     int width;
     value q;
-    value prev_clk;
+    sim::bit_state prev_clk = sim::bit_state::z;
 };
 
 class reg : public primitive {
@@ -53,7 +86,7 @@ public:
 
     std::vector<model::param_def> params() const override
     {
-        return {model::int_param("width", "Bit width", 8, 1, 64)};
+        return {model::int_param("width", "Bit width", 8, 1, model::max_width)};
     }
 
     model::cell_interface build(const model::param_values& v) const override

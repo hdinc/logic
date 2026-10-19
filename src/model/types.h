@@ -13,6 +13,9 @@ constexpr id no_id = 0;
 // schematic elements (ports, wires, instances, pins) are placed on this grid
 constexpr int grid = 10;
 
+// widest port or bus
+constexpr int max_width = 4096;
+
 enum class direction {
     input,
     output,

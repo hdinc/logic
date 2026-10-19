@@ -1,6 +1,7 @@
 #include "builder.h"
 #include "builtin.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -31,37 +32,58 @@ public:
     {
     }
 
-    void eval(std::span<sim::value> ports) override { ports[0] = v; }
+    void eval(std::span<sim::value> ports, sim::context&) override { ports[0] = v; }
 
 private:
     sim::value v;
 };
 
-// low for `low` ticks, then high for `high` ticks
+// starts low, low for `low` then high for `high`
 class clock_component : public sim::component {
 public:
-    clock_component(int64_t high, int64_t low)
+    clock_component(sim::time high, sim::time low)
         : high(high)
         , low(low)
     {
     }
 
-    void eval(std::span<sim::value> ports) override { ports[0] = sim::known(level(), 1); }
-
-    bool tick() override
+    void eval(std::span<sim::value> ports, sim::context& ctx) override
     {
-        bool before = level();
-        phase = (phase + 1) % (high + low);
-        return level() != before;
+        if (ctx.woken()) level = !level;
+        // the first eval after reset starts the clock
+        if (ctx.woken() || !started) {
+            started = true;
+            ctx.wake_after(level ? high : low);
+        }
+        ports[0] = sim::known(level, 1);
     }
 
-    void reset() override { phase = 0; }
+    void reset() override
+    {
+        level = false;
+        started = false;
+    }
+
+    void inspect(std::vector<sim::inspect_item>& out) const override { out.push_back({"level", sim::known(level, 1)}); }
+
+    bool save_state(std::vector<uint8_t>& out) const override
+    {
+        out = {uint8_t(level), uint8_t(started)};
+        return true;
+    }
+
+    bool load_state(std::span<const uint8_t> in) override
+    {
+        if (in.size() != 2) return false;
+        level = in[0];
+        started = in[1];
+        return true;
+    }
 
 private:
-    bool level() const { return phase >= low; }
-
-    int64_t high, low;
-    int64_t phase = 0;
+    sim::time high, low;
+    bool level = false;
+    bool started = false;
 };
 
 class constant : public primitive {
@@ -74,7 +96,7 @@ public:
     std::vector<model::param_def> params() const override
     {
         return {
-            model::int_param("width", "Bit width", 1, 1, 64),
+            model::int_param("width", "Bit width", 1, 1, model::max_width),
             model::int_param("value", "Value", 1, std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::max(),
                 "bits above the width are ignored"),
         };
@@ -118,8 +140,8 @@ public:
     std::vector<model::param_def> params() const override
     {
         return {
-            model::int_param("high", "High ticks", 1, 1, 1000000, "simulation ticks the clock stays 1"),
-            model::int_param("low", "Low ticks", 1, 1, 1000000, "simulation ticks the clock stays 0"),
+            model::int_param("frequency", "Frequency (Hz)", 1, 1, 1000000000, "full periods per simulated second"),
+            model::int_param("duty", "Duty cycle (%)", 50, 1, 99, "part of the period the clock is 1"),
         };
     }
 
@@ -136,7 +158,9 @@ public:
 
     std::unique_ptr<sim::component> create(const model::param_values& v) const override
     {
-        return std::make_unique<clock_component>(model::get_int(v, "high"), model::get_int(v, "low"));
+        auto period = std::max<sim::time>(2, sim::seconds / (sim::time)model::get_int(v, "frequency"));
+        auto high = std::clamp<sim::time>(period * model::get_int(v, "duty") / 100, 1, period - 1);
+        return std::make_unique<clock_component>(high, period - high);
     }
 };
 

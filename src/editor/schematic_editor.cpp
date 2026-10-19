@@ -385,9 +385,9 @@ void port_tooltip(const std::string& name, const model::port& p, const sim::valu
     TextDisabled(p.width == 1 ? "%s, %d bit" : "%s, %d bits", model::to_string(p.dir), p.width);
     if (!p.description.empty()) TextUnformatted(p.description.c_str());
     if (v) {
-        auto c = render::value_color(*v, p.width);
-        auto str = sim::to_string(*v, p.width);
-        if (p.width > 1 && v->fully_known(p.width)) str += " (" + std::to_string(v->bits) + ")";
+        auto c = render::value_color(*v);
+        auto str = sim::to_string(*v);
+        if (p.width > 1 && p.width <= 64 && v->fully_known()) str += " (" + std::to_string(v->to_u64()) + ")";
         TextColored({c.r, c.g, c.b, c.a}, "%s", str.c_str());
     }
     PopTextWrapPos();
@@ -444,12 +444,12 @@ schematic_editor::hover_target schematic_editor::hover_at(glm::vec2 m) const
         auto v = sim->net_value(n);
         return {"net " + std::to_string(n), [width, v] {
                     using namespace ImGui;
-                    if (width > 1 && v.fully_known(width))
-                        SetTooltip("%d bits: %s (%llu)", width, sim::to_string(v, width).c_str(), (unsigned long long)v.bits);
+                    if (width > 1 && width <= 64 && v.fully_known())
+                        SetTooltip("%d bits: %s (%llu)", width, sim::to_string(v).c_str(), (unsigned long long)v.to_u64());
                     else if (width > 1)
-                        SetTooltip("%d bits: %s", width, sim::to_string(v, width).c_str());
+                        SetTooltip("%d bits: %s", width, sim::to_string(v).c_str());
                     else
-                        SetTooltip("%s", width == 0 ? "not connected to a port" : sim::to_string(v, width).c_str());
+                        SetTooltip("%s", width == 0 ? "not connected to a port" : sim::to_string(v).c_str());
                 }};
     }
 
@@ -682,7 +682,7 @@ void schematic_editor::draw()
         bool bus = false;
         if (sim) {
             int n = sim->net_of_wire(*sim_scope, w.id);
-            color = n < 0 ? c.floating : render::value_color(sim->net_value(n), sim->net_width(n));
+            color = n < 0 ? c.floating : render::value_color(sim->net_value(n));
             bus = n >= 0 && sim->net_width(n) > 1;
         } else if (int n = nets.net_of_wire(w.id); n >= 0) {
             auto& net = nets.nets[n];
@@ -799,7 +799,7 @@ void schematic_editor::property_panel()
         }
 
         if (InputInt("Width", &p->width)) {
-            p->width = glm::clamp(p->width, 1, 64);
+            p->width = glm::clamp(p->width, 1, model::max_width);
             ctx.modified();
         }
 

@@ -95,7 +95,7 @@ public:
     std::vector<model::param_def> params() const override
     {
         return {
-            model::int_param("width", "Bus width", 2, 1, 64),
+            model::int_param("width", "Bus width", 2, 1, model::max_width),
             model::int_param("fanout", "Fan out", 2, 1, 64, "number of ends when Bits is empty, the bits are split evenly from bit 0"),
             model::text_param("bits", "Bits", "", "bits of each end instead of an even split, e.g. \"3:0, 7:4\" or \"0, 1, 7:2\""),
         };
@@ -142,11 +142,58 @@ public:
     std::unique_ptr<sim::component> create(const model::param_values&) const override { return nullptr; }
 };
 
+// pulls the bits of a net that nothing drives to 0 or 1, other drivers win
+class pull_resistor : public primitive {
+public:
+    std::string kind() const override { return "pull"; }
+    std::string name() const override { return "Pull resistor"; }
+    std::string category() const override { return "Wiring"; }
+    std::string description() const override { return "gives floating (z) bits of the net a weak 0 or 1"; }
+
+    std::vector<model::param_def> params() const override
+    {
+        return {
+            model::choice_param("direction", "Direction", {"down", "up"}, "down", "pull down to 0 or up to 1"),
+            model::int_param("width", "Bit width", 1, 1, model::max_width),
+        };
+    }
+
+    model::cell_interface build(const model::param_values& v) const override
+    {
+        bool up = model::get_string(v, "direction") == "up";
+        int width = (int)model::get_int(v, "width");
+        // y is up: the resistor goes from the pin towards the supply
+        int s = up ? 1 : -1;
+
+        builder b;
+        b.line({0, 0}, {0, s * 5});
+        b.polyline({{0, s * 5}, {4, s * 7}, {-4, s * 11}, {4, s * 15}, {-4, s * 19}, {4, s * 23}, {0, s * 25}});
+        b.line({0, s * 25}, {0, s * 30});
+        if (up) {
+            b.line({-6, 30}, {6, 30});
+            b.text({-3, 36}, "1", 6.0f);
+        } else {
+            b.line({-6, -30}, {6, -30});
+            b.line({-4, -33}, {4, -33});
+            b.line({-2, -36}, {2, -36});
+        }
+        b.port("pin", direction::inout, width, {0, 0}, up ? "floating bits become 1" : "floating bits become 0");
+
+        auto r = b.finish();
+        r.pulls.push_back({0, up});
+        return r;
+    }
+
+    // works through the pulls of its interface
+    std::unique_ptr<sim::component> create(const model::param_values&) const override { return nullptr; }
+};
+
 }
 
 void add_wiring(model::primitive_registry& r)
 {
     r.add(std::make_unique<splitter>());
+    r.add(std::make_unique<pull_resistor>());
 }
 
 }

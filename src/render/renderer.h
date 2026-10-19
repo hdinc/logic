@@ -121,8 +121,9 @@ void draw_instance(renderer& r, const model::workspace& ws, const model::instanc
 // gets a dot like an instance pin if nothing is connected to it.
 void draw_port(renderer& r, const model::port& p, glm::vec4 color, bool connected = false);
 
-// color of a wire carrying the value. width 0 is a net without ports.
-glm::vec4 value_color(const sim::value& v, int width);
+// color of a wire carrying the value. a net without ports has width 0, it
+// counts as floating.
+glm::vec4 value_color(const sim::value& v);
 
 // value of a port while simulating: inside the connector for single bits,
 // above it for buses

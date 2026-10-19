@@ -378,7 +378,8 @@ void app::menu_bar()
         SeparatorText("Simulate");
         BulletText("F5: start / stop simulating the schematic");
         BulletText("Click an input port: toggle it, wider inputs are set in the properties");
-        BulletText("Space: one clock tick");
+        BulletText("Space: step to the next event, e.g. a clock edge");
+        BulletText("Run: simulated time passes at the set speed (1 x is real time) or as fast as possible");
         BulletText("Double click an instance: look inside, Backspace: back to the parent");
         BulletText("Right click an instance: open it in a new tab");
         if (Button("Close")) CloseCurrentPopup();
@@ -603,9 +604,8 @@ void app::update_simulations()
         if (e->simulation() && e->simulation()->stopped) e->stop_simulation();
     std::erase_if(instance_tabs, [](auto& t) { return t.view->session().stopped; });
 
-    float dt = ImGui::GetIO().DeltaTime;
     for (auto& e : editors) {
-        if (auto& s = e->simulation()) s->update(dt);
+        if (auto& s = e->simulation()) s->update();
     }
 
     // cells of a running simulation can't be edited elsewhere

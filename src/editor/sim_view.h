@@ -20,7 +20,7 @@ namespace logic::editor {
 //   right click an instance    open it here or in a new tab
 //   backspace                  back to the parent
 //   click an input port        toggle it (top cell only)
-//   space                      one clock tick
+//   space                      step to the next event
 class sim_view {
 public:
     // path: instance indices from the top cell down to the shown scope

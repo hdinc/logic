@@ -23,7 +23,7 @@ sim_view::sim_view(model::workspace& w, render::renderer& rr, std::shared_ptr<si
 
 const sim::scope& sim_view::current() const
 {
-    const sim::scope* sc = &s->sim.root();
+    const sim::scope* sc = &s->sim().root();
     for (int i : path) {
         auto c = sc->child(i);
         if (!c) break;
@@ -47,7 +47,7 @@ std::string sim_view::title() const
 {
     auto& sc = current();
     if (!sc.parent) return sc.cell->name;
-    return s->sim.root().cell->name + "/" + sc.path + " (" + sc.cell->name + ")";
+    return s->sim().root().cell->name + "/" + sc.path + " (" + sc.cell->name + ")";
 }
 
 schematic_editor& sim_view::editor_of(const model::cell& c)
@@ -86,7 +86,7 @@ void sim_view::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     e.view.set_size({size.x, size.y});
     e.view.set_mouse(ndc);
 
-    e.sim = &s->sim;
+    e.sim = &s->sim();
     e.sim_scope = &sc;
     if (hovered) e.view.handle_view_input();
     canvas_inputs(hovered, e);
@@ -95,7 +95,7 @@ void sim_view::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     auto& shown = current();
     auto& de = editor_of(*shown.cell);
     de.view.set_size({size.x, size.y});
-    de.sim = &s->sim;
+    de.sim = &s->sim();
     de.sim_scope = &shown;
 
     fb.Bind((int)size.x, (int)size.y);
@@ -112,31 +112,51 @@ void sim_view::toolbar()
 {
     using namespace ImGui;
 
-    auto& sim = s->sim;
+    auto& run = s->run;
+    auto& sim = s->sim();
 
     if (Button("Reset")) {
-        sim.reset();
-        s->running = false;
+        run.run(false);
+        run.reset();
     }
-    SetItemTooltip("Back to the initial state, inputs keep their values");
+    SetItemTooltip("Back to time 0 and the initial state, inputs keep their values");
     SameLine();
 
-    if (Button("Step")) sim.tick();
-    SetItemTooltip("One clock tick (Space)");
+    if (Button("Step")) run.step();
+    SetItemTooltip("To the next event, e.g. a clock edge (Space)");
     SameLine();
 
-    bool running = s->running;
+    bool running = run.running();
     if (running) PushStyleColor(ImGuiCol_Button, GetStyleColorVec4(ImGuiCol_ButtonActive));
-    if (Button(running ? "Pause" : "Run")) s->running = !s->running;
+    if (Button(running ? "Pause" : "Run")) run.run(!running);
     if (running) PopStyleColor();
-    SetItemTooltip("Tick the clocks continuously");
+    SetItemTooltip("Let the simulated time pass");
     SameLine();
 
-    SetNextItemWidth(160);
-    DragFloat("##tps", &s->ticks_per_second, 0.5f, 0.5f, 1000.0f, "%.1f ticks/s", ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
+    // simulated seconds per real second, 0 is as fast as possible
+    double speed = run.speed();
+    bool max = speed <= 0.0;
+    if (Checkbox("Max", &max)) run.set_speed(max ? 0.0 : 1.0);
+    SetItemTooltip("As fast as possible instead of a fixed speed");
+    if (!max) {
+        SameLine();
+        float f = (float)speed;
+        SetNextItemWidth(140);
+        if (DragFloat("##speed", &f, 0.01f, 1e-9f, 1000.0f, "%.3g x", ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp))
+            run.set_speed(f);
+        SetItemTooltip("Simulated time per real time, 1 is real time");
+    }
     SameLine();
 
-    Text("tick %llu", (unsigned long long)sim.ticks());
+    Text("t = %s", sim::format_time(sim.now()).c_str());
+    if (running) {
+        SameLine();
+        double actual = run.actual_speed();
+        if (!max && actual > 0.0 && actual < speed * 0.9)
+            TextColored({1, 0.6f, 0.2f, 1}, "(%.3g x, slower than set)", actual);
+        else
+            TextDisabled("(%.3g x)", actual);
+    }
     if (sim.oscillating()) {
         SameLine();
         TextColored({1, 0.3f, 0.3f, 1}, "oscillating");
@@ -187,13 +207,13 @@ void sim_view::canvas_inputs(bool hovered, schematic_editor& e)
 
     if (!hovered) return;
 
-    auto& sim = s->sim;
+    auto& sim = s->sim();
     auto& sc = current();
     auto m = e.view.mouse_world();
 
     e.hover_tooltip();
 
-    if (IsKeyPressed(ImGuiKey_Space)) sim.tick();
+    if (IsKeyPressed(ImGuiKey_Space)) s->run.step();
     if (IsKeyPressed(ImGuiKey_Backspace) && !path.empty()) path.pop_back();
 
     auto instance_at = [&]() -> int {
@@ -223,7 +243,7 @@ void sim_view::canvas_inputs(bool hovered, schematic_editor& e)
                 auto& p = sc.cell->ports[k];
                 if (p.id != h.id || p.dir != model::direction::input || p.width != 1) continue;
                 auto v = sim.input_value(k);
-                sim.set_input(k, sim::known(!(v.bits & 1), 1));
+                s->run.set_input(k, sim::known(v.get(0) != sim::bit_state::one, 1));
             }
         }
     }
@@ -265,11 +285,11 @@ void sim_view::property_panel()
 {
     using namespace ImGui;
 
-    auto& sim = s->sim;
+    auto& sim = s->sim();
     auto& sc = current();
 
     SeparatorText("Simulation");
-    Text("Top: %s, tick %llu", sim.root().cell->name.c_str(), (unsigned long long)sim.ticks());
+    Text("Top: %s, t = %s", sim.root().cell->name.c_str(), sim::format_time(sim.now()).c_str());
     if (sim.oscillating()) TextColored({1, 0.3f, 0.3f, 1}, "The circuit doesn't settle, e.g. a gate feeding itself");
     for (auto& p : sim.problems())
         TextColored({1, 0.6f, 0.2f, 1}, "%s", p.c_str());
@@ -283,15 +303,35 @@ void sim_view::property_panel()
             if (p.dir == model::direction::output) continue;
             PushID(k);
             auto v = sim.input_value(k);
-            if (p.width == 1) {
-                bool b = v.bits & 1;
-                if (Checkbox(p.name.c_str(), &b)) sim.set_input(k, sim::known(b, 1));
-            } else {
-                uint64_t u = v.bits;
-                if (InputScalar(p.name.c_str(), ImGuiDataType_U64, &u, nullptr, nullptr, "%llX", ImGuiInputTextFlags_CharsHexadecimal))
-                    sim.set_input(k, sim::known(u, p.width));
-                SetItemTooltip("hex, %d bits", p.width);
+
+            // inouts can let go of their net
+            bool driven = !v.fully_floating();
+            if (p.dir == model::direction::inout) {
+                if (Checkbox("##drive", &driven)) s->run.set_input(k, driven ? sim::known(0, p.width) : sim::floating(p.width));
+                SetItemTooltip("drive the inout, otherwise it's z");
+                SameLine();
             }
+            BeginDisabled(!driven);
+
+            if (p.width == 1) {
+                bool b = v.get(0) == sim::bit_state::one;
+                if (Checkbox(p.name.c_str(), &b)) s->run.set_input(k, sim::known(b, 1));
+            } else if (p.width <= 64) {
+                uint64_t u = v.to_u64();
+                if (InputScalar(p.name.c_str(), ImGuiDataType_U64, &u, nullptr, nullptr, "%llX", ImGuiInputTextFlags_CharsHexadecimal))
+                    s->run.set_input(k, sim::known(u, p.width));
+                SetItemTooltip("hex, %d bits", p.width);
+            } else {
+                // too wide for a number, edited as hex text
+                std::string buf = driven ? sim::to_hex(v) : std::string();
+                buf.resize(model::max_width / 4 + 8);
+                if (InputText(p.name.c_str(), buf.data(), buf.size(), ImGuiInputTextFlags_CharsHexadecimal | ImGuiInputTextFlags_EnterReturnsTrue)) {
+                    if (auto parsed = sim::parse_hex(buf.c_str(), p.width)) s->run.set_input(k, *parsed);
+                }
+                SetItemTooltip("hex, %d bits, enter sets it", p.width);
+            }
+
+            EndDisabled();
             PopID();
         }
     } else {
@@ -310,8 +350,8 @@ void sim_view::property_panel()
             TextUnformatted(p.name.c_str());
             TableNextColumn();
             auto v = sim.port_value(sc, k);
-            auto c = render::value_color(v, p.width);
-            TextColored({c.r, c.g, c.b, c.a}, "%s", sim::to_string(v, p.width).c_str());
+            auto c = render::value_color(v);
+            TextColored({c.r, c.g, c.b, c.a}, "%s", sim::to_string(v).c_str());
         }
         EndTable();
     }
@@ -345,7 +385,7 @@ void sim_view::hierarchy_panel()
             TreePop();
         }
     };
-    node(node, s->sim.root(), 0);
+    node(node, s->sim().root(), 0);
 }
 
 }

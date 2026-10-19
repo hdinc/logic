@@ -16,6 +16,8 @@ struct interface_view {
     const model::symbol* symbol = nullptr;
     // never null when the view is valid, empty for schematic cells
     const std::vector<bit_link>* links = nullptr;
+    // never null when the view is valid, empty for schematic cells
+    const std::vector<pull>* pulls = nullptr;
 
     explicit operator bool() const { return symbol != nullptr; }
 };

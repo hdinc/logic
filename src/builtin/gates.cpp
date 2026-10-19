@@ -50,34 +50,39 @@ public:
     {
     }
 
-    void eval(std::span<value> ports) override
+    void eval(std::span<value> ports, sim::context&) override
     {
-        auto m = sim::mask(width);
-        uint64_t one = 0, zero = 0, unk = 0, parity = 0;
         bool any = false;
-
-        for (int k = 0; k < inputs; k++) {
-            auto& v = ports[k];
-            if ((v.z & m) == m) continue;
-            any = true;
-            auto u = (v.x | v.z) & m;
-            unk |= u;
-            one |= v.bits & ~u;
-            zero |= ~v.bits & ~u & m;
-            parity ^= v.bits & ~u;
-        }
+        for (int k = 0; k < inputs; k++)
+            any = any || !ports[k].fully_floating();
 
         value r = sim::unknown(width);
         if (any) {
-            switch (op) {
-            case op_t::and_op: r = {~zero & ~unk & m, unk & ~zero, 0}; break;
-            case op_t::or_op: r = {one, unk & ~one, 0}; break;
-            case op_t::xor_op: r = {parity & ~unk, unk, 0}; break;
+            for (int w = 0; w < r.words(); w++) {
+                auto m = sim::word_mask(width, w);
+                uint64_t one = 0, zero = 0, unk = 0, parity = 0;
+                for (int k = 0; k < inputs; k++) {
+                    auto& v = ports[k];
+                    if (v.fully_floating()) continue;
+                    auto u = v.unknown_bits(w) & m;
+                    unk |= u;
+                    one |= v.bits(w) & ~u;
+                    zero |= ~v.bits(w) & ~u & m;
+                    parity ^= v.bits(w) & ~u;
+                }
+
+                uint64_t bits = 0, x = 0;
+                switch (op) {
+                case op_t::and_op: bits = ~zero & ~unk & m, x = unk & ~zero; break;
+                case op_t::or_op: bits = one, x = unk & ~one; break;
+                case op_t::xor_op: bits = parity & ~unk, x = unk; break;
+                }
+                if (negate) bits = ~bits & ~x & m;
+                r.set_word(w, bits, x, 0);
             }
         }
-        if (negate) r.bits = ~r.bits & ~r.x & m;
 
-        ports[inputs] = r;
+        ports[inputs] = std::move(r);
     }
 
 private:
@@ -96,13 +101,48 @@ public:
     {
     }
 
-    void eval(std::span<value> ports) override
+    void eval(std::span<value> ports, sim::context&) override
     {
-        auto m = sim::mask(width);
         auto& in = ports[0];
-        auto x = (in.x | in.z) & m;
-        auto bits = negate ? ~in.bits & ~x & m : in.bits & ~x;
-        ports[1] = {bits, x, 0};
+        value r(width, 0);
+        for (int w = 0; w < r.words(); w++) {
+            auto x = in.unknown_bits(w);
+            r.set_word(w, negate ? ~in.bits(w) & ~x : in.bits(w), x, 0);
+        }
+        ports[1] = std::move(r);
+    }
+
+private:
+    bool negate;
+    int width;
+};
+
+// in, en, out. out is in while en is 1, z while it is 0, x while it is
+// unknown.
+class tristate_component : public sim::component {
+public:
+    tristate_component(bool negate, int width)
+        : negate(negate)
+        , width(width)
+    {
+    }
+
+    void eval(std::span<value> ports, sim::context&) override
+    {
+        auto& in = ports[0];
+        auto en = ports[1].get(0);
+        if (en == sim::bit_state::zero) {
+            ports[2] = sim::floating(width);
+        } else if (en == sim::bit_state::one) {
+            value r(width, 0);
+            for (int w = 0; w < r.words(); w++) {
+                auto x = in.unknown_bits(w);
+                r.set_word(w, negate ? ~in.bits(w) & ~x : in.bits(w), x, 0);
+            }
+            ports[2] = std::move(r);
+        } else {
+            ports[2] = sim::unknown(width);
+        }
     }
 
 private:
@@ -144,7 +184,7 @@ public:
     {
         return {
             model::int_param("inputs", "Inputs", 2, 2, 32),
-            model::int_param("width", "Bit width", 1, 1, 64, "the gate works on each bit"),
+            model::int_param("width", "Bit width", 1, 1, model::max_width, "the gate works on each bit"),
         };
     }
 
@@ -223,7 +263,7 @@ public:
 
     std::vector<model::param_def> params() const override
     {
-        return {model::int_param("width", "Bit width", 1, 1, 64)};
+        return {model::int_param("width", "Bit width", 1, 1, model::max_width)};
     }
 
     model::cell_interface build(const model::param_values& v) const override
@@ -247,6 +287,52 @@ private:
     bool negate;
 };
 
+// a buffer with an enable input, for buses with several drivers
+class tristate : public primitive {
+public:
+    explicit tristate(bool negate)
+        : negate(negate)
+    {
+    }
+
+    std::string kind() const override { return negate ? "tristate_not" : "tristate"; }
+    std::string name() const override { return negate ? "Tri-state NOT" : "Tri-state buffer"; }
+    std::string description() const override
+    {
+        return negate ? "inverts the input while enabled, doesn't drive the output otherwise"
+                      : "passes the input while enabled, doesn't drive the output otherwise";
+    }
+    std::string category() const override { return "Logic gates"; }
+
+    std::vector<model::param_def> params() const override
+    {
+        return {model::int_param("width", "Bit width", 1, 1, model::max_width)};
+    }
+
+    model::cell_interface build(const model::param_values& v) const override
+    {
+        int width = (int)model::get_int(v, "width");
+
+        builder b;
+        b.polyline({{-grid, grid}, {grid, 0}, {-grid, -grid}, {-grid, grid}});
+        b.line({-2 * grid, 0}, {-grid, 0});
+        b.port("in", direction::input, width, {-2 * grid, 0}, "input");
+        // enable from below to the middle of the slanted side
+        b.line({0, -2 * grid}, {0, -grid / 2});
+        b.port("en", direction::input, 1, {0, -2 * grid}, "1 drives the output, 0 leaves it floating (z)");
+        output(b, grid, negate, width);
+        return b.finish();
+    }
+
+    std::unique_ptr<sim::component> create(const model::param_values& v) const override
+    {
+        return std::make_unique<tristate_component>(negate, (int)model::get_int(v, "width"));
+    }
+
+private:
+    bool negate;
+};
+
 }
 
 void add_gates(model::primitive_registry& r)
@@ -259,6 +345,8 @@ void add_gates(model::primitive_registry& r)
     r.add(std::make_unique<gate>("xnor", "XNOR", op_t::xor_op, true, "1 if an even number of inputs is 1"));
     r.add(std::make_unique<buffer>(true));
     r.add(std::make_unique<buffer>(false));
+    r.add(std::make_unique<tristate>(false));
+    r.add(std::make_unique<tristate>(true));
 }
 
 }

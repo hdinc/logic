@@ -241,21 +241,19 @@ void draw_wire(renderer& r, const model::wire& w, glm::vec4 color, bool bus)
     r.line(w.a, w.b, color, bus ? bus_width : wire_width);
 }
 
-glm::vec4 value_color(const sim::value& v, int width)
+glm::vec4 value_color(const sim::value& v)
 {
     auto& c = colors();
-    if (width == 0) return c.floating;
-    auto m = sim::mask(width);
-    if ((v.z & m) == m) return c.floating;
-    if ((v.x | v.z) & m) return c.unknown;
-    if (width > 1) return c.bus;
-    return (v.bits & 1) ? c.high : c.low;
+    if (v.fully_floating()) return c.floating;
+    if (!v.fully_known()) return c.unknown;
+    if (v.width() > 1) return c.bus;
+    return (v.to_u64() & 1) ? c.high : c.low;
 }
 
 void draw_port_value(renderer& r, const model::port& p, const sim::value& v)
 {
-    auto color = value_color(v, p.width);
-    auto str = sim::to_string(v, p.width);
+    auto color = value_color(v);
+    auto str = sim::to_string(v);
     glm::vec2 pos = p.pos;
     if (p.width == 1)
         r.text_middle(str, pos, 7.0f, color, align::center);
