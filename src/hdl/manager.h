@@ -3,6 +3,7 @@
 #include "../model/workspace.h"
 #include "../plugin/registry.h"
 #include "../sim/component.h"
+#include "ghdl.h"
 #include "icarus.h"
 #include "verilator.h"
 
@@ -31,9 +32,9 @@ struct build_status {
 };
 
 // hdl cells: finds their interfaces, builds their models in the background
-// and creates their simulation models, with verilator (a c model plugin) or
-// icarus verilog (a process with the vpi bridge). builds are cached in
-// <cache root>/<tool>, one per set of parameters.
+// and creates their simulation models, with verilator (a c model plugin),
+// icarus verilog or ghdl (processes with the vpi bridge). builds are cached
+// in <cache root>/<tool>, one per set of parameters (ghdl: one for all).
 class manager : public model::external_provider, public sim::component_factory {
 public:
     // plugins loads the built models
@@ -44,6 +45,7 @@ public:
     // found on first use
     const verilator_tools& verilator() const;
     const icarus_tools& icarus() const;
+    const ghdl_tools& ghdl() const;
     // the version of the backend's tool, or why it can't be used
     std::string tool_status(model::hdl_backend b, bool& ok) const;
 
@@ -94,9 +96,13 @@ private:
     const plugin::registry& plugins;
     std::filesystem::path cache_root;
 
-    mutable std::once_flag verilator_once, icarus_once;
+    mutable std::once_flag verilator_once, icarus_once, ghdl_once;
     mutable verilator_tools verilator_t;
     mutable icarus_tools icarus_t;
+    mutable ghdl_tools ghdl_t;
+
+    // where the build of a job is
+    std::filesystem::path build_path(const job& j) const;
 
     std::shared_ptr<plugin::message_log> log;
 

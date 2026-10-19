@@ -31,6 +31,12 @@ static fs::path sources, cache;
 // the backend the tests use
 static model::hdl_backend backend = model::hdl_backend::verilator;
 
+static bool vhdl() { return backend == model::hdl_backend::ghdl; }
+// test sources of the module for the backend
+static std::string source(const std::string& module) { return module + (vhdl() ? ".vhd" : ".sv"); }
+// bus is a reserved word in vhdl
+static std::string bus_name() { return vhdl() ? "bus_io" : "bus"; }
+
 static value bit(bool b) { return sim::known(b, 1); }
 
 struct fixture {
@@ -57,9 +63,9 @@ struct fixture {
     model::cell& hdl_cell(const std::string& module, bool expect_ok = true)
     {
         model::hdl_impl h;
-        h.language = model::hdl_language::systemverilog;
+        h.language = vhdl() ? model::hdl_language::vhdl : model::hdl_language::systemverilog;
         h.backend = backend;
-        h.sources = {module + ".sv"};
+        h.sources = {source(module)};
         h.top = module;
         auto& c = ws.create_cell(*lib, module, h);
         std::string error;
@@ -134,6 +140,70 @@ static void test_messages()
     CHECK(i[0].file == "/x/a.sv" && i[0].line == 5 && i[0].severity == "error" && i[0].message == "syntax error");
     CHECK(i[1].message == "Invalid module item." && i[1].severity == "error");
     CHECK(i[2].severity == "warning" && i[2].file == "b.v");
+
+    auto g = hdl::parse_ghdl_messages("a.vhd:5:12:error: no declaration for \"x\"\nb.vhd:3:1:warning: unused\nghdl: compilation error\n");
+    CHECK(g.size() == 2 && g[0].line == 5 && g[0].column == 12 && g[0].severity == "error" && g[1].severity == "warning");
+}
+
+static void test_vhdl_parser()
+{
+    const char* src = R"(
+library ieee;  -- the standard
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+entity other is port (x : in bit); end entity;
+
+ENTITY Thing IS
+    GENERIC (
+        constant WIDTH, DEPTH : natural := 16#10#;  -- two at once
+        NAME : string := "a;b";
+        ON_OFF : boolean;
+        F : real := 1.5
+    );
+    port (
+        signal clk : in std_logic;
+        a, b : in std_logic_vector(WIDTH - 1 downto 0) := (others => '0');
+        q : buffer unsigned(WIDTH - 1 downto 0);
+        io : inout std_logic_vector(3 downto 0);
+        o /* old */ : out std_logic
+    );
+end;
+)";
+    hdl::vhdl_entity e;
+    std::string error;
+    CHECK(hdl::parse_vhdl_entity(src, "thing", e, error));
+    CHECK(e.name == "Thing");
+    CHECK(e.context.find("use ieee.numeric_std.all;") != std::string::npos);
+    CHECK(e.generics.size() == 5);
+    if (e.generics.size() == 5) {
+        CHECK(e.generics[0].name == "WIDTH" && e.generics[1].name == "DEPTH" && e.generics[1].def == "16#10#");
+        CHECK(e.generics[2].def == "\"a;b\"" && e.generics[3].def.empty() && e.generics[4].type == "real");
+    }
+    CHECK(e.ports.size() == 6);
+    if (e.ports.size() == 6) {
+        CHECK(e.ports[0].name == "clk" && e.ports[0].mode == "in" && e.ports[0].type == "std_logic");
+        CHECK(e.ports[2].name == "b" && e.ports[2].type == "std_logic_vector(WIDTH - 1 downto 0)");
+        CHECK(e.ports[3].mode == "buffer" && e.ports[4].mode == "inout" && e.ports[5].name == "o");
+    }
+    CHECK(!hdl::parse_vhdl_entity(src, "missing", e, error) && error.empty());
+
+    hdl::parse_vhdl_entity(src, "thing", e, error);
+    auto params = hdl::ghdl_params(e);
+    CHECK(params.size() == 5);
+    if (params.size() == 5) {
+        CHECK(params[0].type == model::param_def::integer && params[0].def == model::param_value(int64_t(16)) && params[0].min == 0);
+        CHECK(params[2].type == model::param_def::text && params[2].def == model::param_value(std::string("a;b")));
+        CHECK(params[3].type == model::param_def::boolean);
+        CHECK(params[4].type == model::param_def::text && params[4].def == model::param_value(std::string("1.5")));
+    }
+
+    auto tb = hdl::ghdl_testbench(e, error);
+    CHECK(tb.find("entity logic_tb is") != std::string::npos);
+    CHECK(tb.find("WIDTH : natural := 16#10#;") != std::string::npos);
+    CHECK(tb.find("signal io_io : std_logic_vector(3 downto 0);") != std::string::npos);
+    CHECK(tb.find("for i in io_io'range generate") != std::string::npos);
+    CHECK(tb.find("q => out_q") != std::string::npos);
 }
 
 static void test_describe()
@@ -160,17 +230,18 @@ static void test_describe()
     CHECK(w.ports.size() == 7);
     if (w.ports.size() == 7) {
         CHECK(w.ports[0].width == 100 && w.ports[2].width == 100);
-        CHECK(w.ports[5].name == "bus" && w.ports[5].dir == model::direction::inout && w.ports[5].width == 4);
+        CHECK(w.ports[5].name == bus_name() && w.ports[5].dir == model::direction::inout && w.ports[5].width == 4);
     }
 
     // errors point at the source
     auto& b = f.hdl_cell("broken", false);
     std::string error;
     CHECK(!f.ws.refresh_interface(b, error));
-    CHECK(error.find("broken.sv:5") != std::string::npos);
+    if (error.find(source("broken") + ":5") == std::string::npos) std::printf("  error: %s\n", error.c_str());
+    CHECK(error.find(source("broken") + ":5") != std::string::npos);
 
     std::get<model::hdl_impl>(b.impl).top = "nothing";
-    std::get<model::hdl_impl>(b.impl).sources = {"counter.sv"};
+    std::get<model::hdl_impl>(b.impl).sources = {source("counter")};
     CHECK(!f.ws.refresh_interface(b, error));
 }
 
@@ -230,7 +301,7 @@ static void test_wide()
     int sum = f.port(model::direction::output, f.pin(u, "sum"), 100);
     int oe = f.port(model::direction::input, f.pin(u, "oe"));
     int d = f.port(model::direction::input, f.pin(u, "d"), 4);
-    int bus = f.port(model::direction::inout, f.pin(u, "bus"), 4);
+    int bus = f.port(model::direction::inout, f.pin(u, bus_name()), 4);
     int seen = f.port(model::direction::output, f.pin(u, "seen"), 4);
     auto s = f.simulate();
     CHECK(s.problems().empty());
@@ -258,7 +329,7 @@ static void test_wide()
     // x and z: icarus has them, verilator reads them as 0
     s.set_input(a, sim::unknown(100));
     s.set_input(b, sim::known(0, 100));
-    if (backend == model::hdl_backend::icarus)
+    if (backend != model::hdl_backend::verilator)
         CHECK(s.port_value(sum) == sim::unknown(100));
     else
         CHECK(s.port_value(sum) == sim::known(0, 100));
@@ -336,7 +407,8 @@ static void test_background_build()
     for (int k = 0; k < 600 && f.hdl.busy(); k++)
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     auto st = f.hdl.status(b.id);
-    CHECK(st.state == hdl::build_status::failed && st.error.find("broken.sv:5") != std::string::npos);
+    if (st.error.find(source("broken") + ":5") == std::string::npos) std::printf("  error: %s\n", st.error.c_str());
+    CHECK(st.state == hdl::build_status::failed && st.error.find(source("broken") + ":5") != std::string::npos);
     auto messages = f.hdl.take_messages();
     CHECK(!messages.empty() && messages.back().find("failed") != std::string::npos);
 }
@@ -375,17 +447,22 @@ int main(int argc, char** argv)
     cache = fs::absolute(argv[2]);
 
     test_messages();
+    test_vhdl_parser();
 
     int tested = 0;
-    for (auto b : {model::hdl_backend::verilator, model::hdl_backend::icarus}) {
+    for (auto b : {model::hdl_backend::verilator, model::hdl_backend::icarus, model::hdl_backend::ghdl}) {
         backend = b;
         std::string tool, problem;
         if (b == model::hdl_backend::verilator) {
             auto t = hdl::find_verilator();
             tool = t.version + ", " + t.cxx_version;
             problem = t.error;
-        } else {
+        } else if (b == model::hdl_backend::icarus) {
             auto t = hdl::find_icarus();
+            tool = t.version;
+            problem = t.error;
+        } else {
+            auto t = hdl::find_ghdl();
             tool = t.version;
             problem = t.error;
         }

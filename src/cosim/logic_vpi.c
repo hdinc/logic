@@ -12,12 +12,16 @@
  * (wire) for outputs, and drv_<name> (reg, driven weakly onto the port) and
  * io_<name> (the port's net) for inouts. the design's drive of an inout is
  * what's stronger than weak on the net.
+ *
+ * under ghdl values are strings of std_logic characters: weak values (L, H,
+ * W) on an inout are the testbench's, U, X and - are unknown.
  */
 
 #include "cosim_protocol.h"
 
 #include <vpi_user.h>
 
+#include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -146,6 +150,8 @@ struct port {
 static struct port* ports;
 static uint32_t port_count;
 static int precision;
+/* values as strings of characters (ghdl) instead of vectors and strengths */
+static int use_strings;
 
 static int words_of(int width) { return (width + 63) / 64; }
 
@@ -158,6 +164,23 @@ static int put_value(struct port* p)
     s_vpi_vecval* vec = (s_vpi_vecval*)calloc((size_t)vecs, sizeof(s_vpi_vecval));
     s_vpi_value v;
     int k, ok = in_get(w, sizeof(uint64_t) * 3 * (size_t)n);
+    if (ok && use_strings) {
+        /* most significant first */
+        char* s = (char*)malloc((size_t)p->width + 1);
+        for (k = 0; k < p->width; k++) {
+            int word = k / 64;
+            uint64_t bit = (uint64_t)1 << (k % 64);
+            s[p->width - 1 - k] = (w[n + word] & bit) ? 'X' : (w[2 * n + word] & bit) ? 'Z' : (w[word] & bit) ? '1' : '0';
+        }
+        s[p->width] = 0;
+        v.format = vpiBinStrVal;
+        v.value.str = s;
+        vpi_put_value(p->drive, &v, NULL, vpiNoDelay);
+        free(s);
+        free(w);
+        free(vec);
+        return 1;
+    }
     /* 0: a0 b0, 1: a1 b0, z: a0 b1, x: a1 b1 */
     for (k = 0; ok && k < vecs; k++) {
         int word = k / 2, shift = 32 * (k % 2);
@@ -183,7 +206,33 @@ static void get_value(struct port* p)
     s_vpi_value v;
     int k;
 
-    if (p->dir == 1) {
+    if (use_strings) {
+        size_t len;
+        v.format = vpiBinStrVal;
+        vpi_get_value(p->net, &v);
+        len = strlen(v.value.str);
+        for (k = 0; k < p->width; k++) {
+            /* the last character is bit 0 */
+            char c = (size_t)k < len ? (char)toupper((unsigned char)v.value.str[len - 1 - (size_t)k]) : 'Z';
+            uint64_t bit = (uint64_t)1 << (k % 64);
+            int word = k / 64;
+            if (p->dir == 1) {
+                if (c == '0' || c == 'L') {
+                } else if (c == '1' || c == 'H') {
+                    w[word] |= bit;
+                } else if (c == 'Z') {
+                    w[2 * n + word] |= bit;
+                } else {
+                    w[n + word] |= bit;
+                }
+            } else {
+                /* only strong values are the design's */
+                if (c == '1') w[word] |= bit;
+                else if (c == 'X' || c == 'U') w[n + word] |= bit;
+                else if (c != '0') w[2 * n + word] |= bit;
+            }
+        }
+    } else if (p->dir == 1) {
         v.format = vpiVectorVal;
         vpi_get_value(p->net, &v);
         for (k = 0; k < (p->width + 31) / 32; k++) {
@@ -251,18 +300,27 @@ static uint64_t to_units(uint64_t ps)
 static int armed;
 static vpiHandle delay_cb;
 static int finished;
+/* the pending sync callbacks, see register_sync */
+static vpiHandle sync_rw, sync_ro;
 
 static PLI_INT32 on_sync(p_cb_data cb);
 
+/* on_sync once everything at the current time happened. ghdl only calls
+ * read-write callbacks when something happens, the read-only one comes in
+ * any case, at the end of the time step. the first cancels the other. */
 static void register_sync(void)
 {
     s_cb_data cb;
     static s_vpi_time t = {vpiSimTime, 0, 0, 0};
     memset(&cb, 0, sizeof(cb));
-    cb.reason = cbReadWriteSynch;
     cb.cb_rtn = on_sync;
     cb.time = &t;
-    vpi_register_cb(&cb);
+    cb.reason = cbReadWriteSynch;
+    cb.user_data = (PLI_BYTE8*)"rw";
+    sync_rw = vpi_register_cb(&cb);
+    cb.reason = cbReadOnlySynch;
+    cb.user_data = (PLI_BYTE8*)"ro";
+    sync_ro = vpi_register_cb(&cb);
 }
 
 static void send_state(int done)
@@ -307,9 +365,16 @@ static PLI_INT32 on_sync(p_cb_data cb)
     unsigned char type;
     uint64_t t;
     uint32_t k;
-    (void)cb;
+
+    if (cb->user_data && cb->user_data[1] == 'w') {
+        if (sync_ro) vpi_remove_cb(sync_ro);
+    } else if (sync_rw) {
+        vpi_remove_cb(sync_rw);
+    }
+    sync_rw = sync_ro = NULL;
 
     if (finished) return 0;
+again:
     send_state(0);
 
     if (!receive(&type)) {
@@ -334,7 +399,8 @@ static PLI_INT32 on_sync(p_cb_data cb)
         in_get(&t, 8);
         until = to_units(t);
         if (until <= now) {
-            register_sync();
+            /* nothing to run, still settled */
+            goto again;
         } else {
             s_cb_data d;
             s_vpi_time dt;
@@ -374,7 +440,12 @@ static PLI_INT32 on_end(p_cb_data cb)
 static vpiHandle find(const char* top, const char* prefix, const char* name)
 {
     char path[1024];
+    size_t k;
     snprintf(path, sizeof(path), "%s.%s%s", top, prefix, name);
+    /* vhdl names are case insensitive, ghdl has them in lower case */
+    if (use_strings)
+        for (k = 0; path[k]; k++)
+            path[k] = (char)tolower((unsigned char)path[k]);
     return vpi_handle_by_name(path, NULL);
 }
 
@@ -387,7 +458,10 @@ static PLI_INT32 start_run(p_cb_data cb)
     uint32_t version, k;
     int one = 1;
     s_cb_data d;
+    s_vpi_vlog_info info;
     (void)cb;
+
+    use_strings = vpi_get_vlog_info(&info) && info.product && strncmp(info.product, "GHDL", 4) == 0;
 
 #ifdef _WIN32
     WSADATA wsa;
@@ -442,6 +516,8 @@ static PLI_INT32 start_run(p_cb_data cb)
         if (ports[k].net) {
             static s_vpi_time t = {vpiSuppressTime, 0, 0, 0};
             static s_vpi_value v = {vpiSuppressVal, {0}};
+            /* ghdl doesn't know vpiSuppressVal */
+            if (use_strings) v.format = vpiBinStrVal;
             memset(&d, 0, sizeof(d));
             d.reason = cbValueChange;
             d.cb_rtn = on_change;

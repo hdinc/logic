@@ -11,15 +11,11 @@ namespace {
 // the last lines of a build are kept
 constexpr size_t max_log_lines = 2000;
 
+// a backend that can simulate the language
 const model::hdl_impl* supported(const model::cell& c)
 {
     auto h = std::get_if<model::hdl_impl>(&c.impl);
-    return h && (h->backend == model::hdl_backend::verilator || h->backend == model::hdl_backend::icarus) ? h : nullptr;
-}
-
-bool is_icarus(const job& j)
-{
-    return j.impl.backend == model::hdl_backend::icarus;
+    return h && model::supports(h->backend, h->language) ? h : nullptr;
 }
 
 }
@@ -56,6 +52,22 @@ const icarus_tools& manager::icarus() const
     return icarus_t;
 }
 
+const ghdl_tools& manager::ghdl() const
+{
+    std::call_once(ghdl_once, [this] { ghdl_t = find_ghdl(); });
+    return ghdl_t;
+}
+
+fs::path manager::build_path(const job& j) const
+{
+    switch (j.impl.backend) {
+    case model::hdl_backend::verilator: return verilator_plugin_path(cache_root, verilator_build_key(verilator(), j));
+    case model::hdl_backend::icarus: return icarus_design_path(cache_root, icarus_build_key(icarus(), j));
+    case model::hdl_backend::ghdl: return ghdl_work_path(cache_root, ghdl_build_key(ghdl(), j));
+    }
+    return {};
+}
+
 std::string manager::tool_status(model::hdl_backend b, bool& ok) const
 {
     if (b == model::hdl_backend::verilator) {
@@ -68,8 +80,9 @@ std::string manager::tool_status(model::hdl_backend b, bool& ok) const
         ok = t.ok();
         return ok ? t.version : t.error;
     }
-    ok = false;
-    return std::string(model::to_string(b)) + " isn't supported yet";
+    auto& t = ghdl();
+    ok = t.ok();
+    return ok ? t.version : t.error;
 }
 
 bool manager::handles(const model::cell& c) const
@@ -100,7 +113,12 @@ bool manager::describe(const model::cell& c, const fs::path& dir, std::vector<mo
     j.dir = dir;
     // the defaults of the sources, not the ones found last time
     j.impl.params.clear();
-    return is_icarus(j) ? icarus_describe(icarus(), j, cache_root, ports, params, error) : verilator_describe(verilator(), j, ports, params, error);
+    switch (j.impl.backend) {
+    case model::hdl_backend::verilator: return verilator_describe(verilator(), j, ports, params, error);
+    case model::hdl_backend::icarus: return icarus_describe(icarus(), j, cache_root, ports, params, error);
+    case model::hdl_backend::ghdl: return ghdl_describe(ghdl(), j, cache_root, ports, params, error);
+    }
+    return false;
 }
 
 bool manager::ports_for(const model::cell& c, const fs::path& dir, const model::param_values& values, std::vector<model::port>& ports,
@@ -109,16 +127,24 @@ bool manager::ports_for(const model::cell& c, const fs::path& dir, const model::
     auto j = job_of(c, values);
     j.dir = dir;
     std::vector<model::param_def> params;
-    return is_icarus(j) ? icarus_describe(icarus(), j, cache_root, ports, params, error) : verilator_describe(verilator(), j, ports, params, error);
+    switch (j.impl.backend) {
+    case model::hdl_backend::verilator: return verilator_describe(verilator(), j, ports, params, error);
+    case model::hdl_backend::icarus: return icarus_describe(icarus(), j, cache_root, ports, params, error);
+    case model::hdl_backend::ghdl: return ghdl_describe(ghdl(), j, cache_root, ports, params, error);
+    }
+    return false;
 }
 
 bool manager::is_built(const model::cell& c, const model::param_values& values) const
 {
     if (!supported(c)) return false;
     auto j = job_of(c, values);
+    bool ok;
+    tool_status(j.impl.backend, ok);
+    if (!ok) return false;
+    auto path = build_path(j);
     std::error_code ec;
-    if (is_icarus(j)) return icarus().ok() && fs::is_regular_file(icarus_design_path(cache_root, icarus_build_key(icarus(), j)), ec);
-    return verilator().ok() && fs::is_regular_file(verilator_plugin_path(cache_root, verilator_build_key(verilator(), j)), ec);
+    return j.impl.backend == model::hdl_backend::ghdl ? ghdl_is_built(path) : fs::is_regular_file(path, ec);
 }
 
 void manager::build(const model::cell& c, const model::param_values& values)
@@ -191,8 +217,12 @@ bool manager::run(const queued_job& j, fs::path& result) const
 
     std::string error;
     std::vector<diagnostic> diagnostics;
-    bool ok = is_icarus(j.v) ? icarus_build(icarus(), j.v, cache_root, result, error, &diagnostics, on_line)
-                             : verilator_build(verilator(), j.v, cache_root, result, error, &diagnostics, on_line);
+    bool ok = false;
+    switch (j.v.impl.backend) {
+    case model::hdl_backend::verilator: ok = verilator_build(verilator(), j.v, cache_root, result, error, &diagnostics, on_line); break;
+    case model::hdl_backend::icarus: ok = icarus_build(icarus(), j.v, cache_root, result, error, &diagnostics, on_line); break;
+    case model::hdl_backend::ghdl: ok = ghdl_build(ghdl(), j.v, cache_root, result, error, &diagnostics, on_line); break;
+    }
 
     std::lock_guard lk(m);
     auto& s = statuses[j.cell];
@@ -227,23 +257,30 @@ std::unique_ptr<sim::component> manager::create(const model::cell& c, const mode
     if (!supported(c)) return nullptr;
 
     auto j = job_of(c, values);
-    bool icarus_cell = is_icarus(j);
+    auto backend = j.impl.backend;
     bool tools_ok;
-    auto status_text = tool_status(j.impl.backend, tools_ok);
+    auto status_text = tool_status(backend, tools_ok);
     if (!tools_ok) {
         error = status_text;
         return nullptr;
     }
 
-    std::error_code ec;
-    auto path = icarus_cell ? icarus_design_path(cache_root, icarus_build_key(icarus(), j))
-                            : verilator_plugin_path(cache_root, verilator_build_key(verilator(), j));
-    if (!fs::is_regular_file(path, ec) && !run({c.id, j}, path)) {
+    auto path = build_path(j);
+    if (!is_built(c, values) && !run({c.id, j}, path)) {
         error = "building '" + c.name + "' failed: " + status(c.id).error;
         return nullptr;
     }
 
-    if (!icarus_cell) {
+    if (backend == model::hdl_backend::ghdl) {
+        fs::path bridge;
+        if (!ghdl_bridge(ghdl(), cache_root, bridge, error)) return nullptr;
+        // the ports for these generics
+        std::vector<model::port> ports = c.ports;
+        if (values != model::resolve_params(*c.external_params(), {}) && !ports_for(c, dir_of(c), values, ports, error)) return nullptr;
+        return cosim::component::start(c.name, ports, ghdl_launch(ghdl(), j, path, bridge), log, error);
+    }
+
+    if (backend == model::hdl_backend::verilator) {
         auto p = plugins.load(path.string(), {}, error);
         if (!p) return nullptr;
         auto d = p->find(j.impl.top);

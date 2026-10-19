@@ -53,6 +53,8 @@ add_library(logic_core STATIC
     src/hdl/job.cpp
     src/hdl/verilator.cpp
     src/hdl/icarus.cpp
+    src/hdl/ghdl.cpp
+    src/hdl/vhdl_parse.cpp
     src/hdl/manager.cpp
     src/cosim/socket.cpp
     src/cosim/component.cpp
