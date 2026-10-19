@@ -40,6 +40,8 @@ public:
     // name of the cell in the builtin library
     virtual std::string name() const = 0;
     virtual std::string description() const { return {}; }
+    // group in the component bar, e.g. "Logic gates"
+    virtual std::string category() const { return {}; }
 
     virtual std::vector<param_def> params() const { return {}; }
 

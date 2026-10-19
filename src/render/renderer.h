@@ -92,6 +92,9 @@ public:
     bool show_grid = true;
     grid_style grid = grid_style::dots;
 
+    // multiplies the line widths of symbol shapes, for small previews
+    float stroke_scale = 1.0f;
+
     Hd::Renderer2D g;
 
 private:

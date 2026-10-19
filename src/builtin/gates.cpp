@@ -138,6 +138,7 @@ public:
     std::string kind() const override { return k; }
     std::string name() const override { return n; }
     std::string description() const override { return d; }
+    std::string category() const override { return "Logic gates"; }
 
     std::vector<model::param_def> params() const override
     {
@@ -218,6 +219,7 @@ public:
     std::string kind() const override { return negate ? "not" : "buffer"; }
     std::string name() const override { return negate ? "NOT" : "Buffer"; }
     std::string description() const override { return negate ? "inverts every bit" : "passes the input through"; }
+    std::string category() const override { return "Logic gates"; }
 
     std::vector<model::param_def> params() const override
     {

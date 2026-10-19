@@ -55,6 +55,14 @@ public:
     void cut();
     void paste();
 
+    // placing instances from outside, e.g. the component bar. switches to
+    // the schematic. can't while simulating, locked or busy, or if the cell
+    // would contain itself.
+    bool can_place(model::id cell) const;
+    void place(model::id cell);
+    // the cell being placed in the schematic, no_id if none
+    model::id placing() const { return show_symbol || session ? model::no_id : schematic.placing(); }
+
     bool show_symbol = false;
 
 private:

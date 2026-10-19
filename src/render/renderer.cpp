@@ -151,7 +151,7 @@ void draw_pin(renderer& r, glm::vec2 pos, glm::vec4 color)
 void draw_shape(renderer& r, const model::shape& s, glm::ivec2 pos, model::transform xf, glm::vec4 color)
 {
     auto tp = [&](glm::vec2 p) { return glm::vec2(pos) + xf.apply(p); };
-    float w = s.width > 0.0f ? s.width : stroke;
+    float w = (s.width > 0.0f ? s.width : stroke) * r.stroke_scale;
 
     if (auto l = std::get_if<model::line>(&s.geom)) {
         r.line(tp(l->a), tp(l->b), color, w);

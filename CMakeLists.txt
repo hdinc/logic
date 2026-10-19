@@ -43,6 +43,7 @@ target_compile_options(logic_core PRIVATE ${LOGIC_WARNINGS})
 add_executable(logic
     src/main.cpp
     src/app/app.cpp
+    src/app/component_bar.cpp
     src/render/renderer.cpp
     src/editor/canvas.cpp
     src/editor/schematic_editor.cpp

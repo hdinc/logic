@@ -60,6 +60,8 @@ public:
     void set_tool(tool_kind k);
     // starts placing instances of the cell
     void begin_place(model::id cell);
+    // the cell being placed, no_id if not placing
+    model::id placing() const { return kind == tool_kind::place_instance ? placing_cell : model::no_id; }
 
     // the selected ports, instances and wires (with both ends selected) in a
     // cell of their own, moved so the middle of the selection is at the
@@ -151,6 +153,7 @@ private:
 
     tool_kind kind = tool_kind::select;
     std::unique_ptr<tool<schematic_editor>> active;
+    model::id placing_cell = model::no_id;
 };
 
 }

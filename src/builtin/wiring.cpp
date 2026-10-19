@@ -89,6 +89,7 @@ class splitter : public primitive {
 public:
     std::string kind() const override { return "splitter"; }
     std::string name() const override { return "Splitter"; }
+    std::string category() const override { return "Wiring"; }
     std::string description() const override { return "connects bits of a bus to narrower ends, works in both directions"; }
 
     std::vector<model::param_def> params() const override

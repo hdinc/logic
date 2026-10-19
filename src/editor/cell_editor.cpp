@@ -272,6 +272,18 @@ void cell_editor::paste()
         schematic.begin_paste(std::move(*part));
 }
 
+bool cell_editor::can_place(model::id cell) const
+{
+    return !busy() && !session && !locked() && !ctx.ws.would_create_cycle(ctx.cell.id, cell);
+}
+
+void cell_editor::place(model::id cell)
+{
+    if (!can_place(cell)) return;
+    show_symbol = false;
+    schematic.begin_place(cell);
+}
+
 void cell_editor::after_undo()
 {
     ctx.modified();

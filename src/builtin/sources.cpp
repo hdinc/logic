@@ -68,6 +68,7 @@ class constant : public primitive {
 public:
     std::string kind() const override { return "constant"; }
     std::string name() const override { return "Constant"; }
+    std::string category() const override { return "Logic sources"; }
     std::string description() const override { return "a fixed value"; }
 
     std::vector<model::param_def> params() const override
@@ -111,6 +112,7 @@ class clock : public primitive {
 public:
     std::string kind() const override { return "clock"; }
     std::string name() const override { return "Clock"; }
+    std::string category() const override { return "Logic sources"; }
     std::string description() const override { return "toggles between 1 and 0 while simulating"; }
 
     std::vector<model::param_def> params() const override

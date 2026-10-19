@@ -48,6 +48,7 @@ class reg : public primitive {
 public:
     std::string kind() const override { return "register"; }
     std::string name() const override { return "Register"; }
+    std::string category() const override { return "Memory"; }
     std::string description() const override { return "stores D on the rising edge of the clock"; }
 
     std::vector<model::param_def> params() const override

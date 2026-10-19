@@ -1,5 +1,6 @@
 #pragma once
 
+#include "component_bar.h"
 #include "../editor/cell_editor.h"
 #include "../model/workspace.h"
 #include "../render/renderer.h"
@@ -37,6 +38,10 @@ private:
     void open_instance_tabs();
     void exit_dialog();
     void settings_window();
+    void components_panel();
+    // docks the component bar next to the editor for its orientation
+    void dock_component_bar();
+    void set_bar_orientation(component_bar::orientation o);
 
     // theme and canvas options, kept in imgui.ini
     void add_settings_handler();
@@ -58,6 +63,9 @@ private:
 
     model::workspace ws;
     render::renderer renderer;
+    component_bar components;
+    // dock the bar before the windows are drawn next frame
+    bool dock_bar = false;
 
     // all editors draw into this, only the visible one each frame
     Hd::Texture editor_tex;
@@ -93,7 +101,7 @@ private:
 
     bool light_theme = false;
     // settings at the last check, a change marks imgui.ini for saving
-    std::tuple<bool, bool, render::grid_style> saved_settings;
+    std::tuple<bool, bool, render::grid_style, component_bar::orientation> saved_settings;
 
     std::vector<std::string> messages;
 };
