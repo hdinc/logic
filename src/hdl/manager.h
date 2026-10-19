@@ -58,7 +58,7 @@ public:
 
     // sim::component_factory. builds the model right away if it isn't
     // built, which may take long: use missing_builds and build first.
-    std::unique_ptr<sim::component> create(const model::cell& c, const model::param_values& params, std::string& error) const override;
+    std::unique_ptr<sim::component> create(const sim::create_info& info, std::string& error) const override;
 
     // the cell's model for the resolved parameter values is in the cache
     bool is_built(const model::cell& c, const model::param_values& values) const;

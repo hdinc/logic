@@ -245,6 +245,9 @@ typedef struct logic_context {
      * the pending request on entry, the model may change it. a time that
      * isn't in the future wakes after the current step. */
     uint64_t wake;
+    /* set to a text (that stays valid) to pause the simulation after the
+     * current point in time, e.g. "breakpoint". null on entry. */
+    const char* pause;
 } logic_context;
 
 /* receives the state of an instance for debugging views */
@@ -257,6 +260,48 @@ typedef struct logic_state_writer {
     void* data;
     void (*write)(void* data, const void* bytes, size_t size);
 } logic_state_writer;
+
+/* the contents of a file, e.g. firmware: bytes at addresses */
+typedef struct logic_segment {
+    uint64_t address;
+    const uint8_t* bytes;
+    uint64_t size;
+} logic_segment;
+
+typedef struct logic_image {
+    const logic_segment* segments;
+    uint32_t segment_count;
+    int has_entry;
+    uint64_t entry;
+} logic_image;
+
+typedef struct logic_memory_info {
+    const char* name;
+    /* in bytes */
+    uint64_t size;
+} logic_memory_info;
+
+/* memories and execution of a processor for the debugger. every function
+ * may be null. called from the simulation thread. */
+typedef struct logic_debug_vtable {
+    /* sizeof(logic_debug_vtable) of the plugin */
+    uint32_t struct_size;
+    uint32_t (*memory_count)(void* instance);
+    /* returns 1 and fills info */
+    int (*memory_info)(void* instance, uint32_t index, logic_memory_info* info);
+    /* return 1 if the range is in the memory */
+    int (*read_memory)(void* instance, uint32_t index, uint64_t address, uint8_t* out, uint64_t size);
+    int (*write_memory)(void* instance, uint32_t index, uint64_t address, const uint8_t* data, uint64_t size);
+    /* returns 1 and the program counter */
+    int (*pc)(void* instance, uint64_t* pc);
+    /* writes the instruction at address as text, returns its length in
+     * bytes or 0 */
+    uint32_t (*disassemble)(void* instance, uint64_t address, char* text, uint32_t text_size);
+    /* the model pauses (logic_context.pause) before executing there */
+    void (*set_breakpoint)(void* instance, uint64_t address, int on);
+    /* the model pauses after the next instruction */
+    void (*step_instruction)(void* instance);
+} logic_debug_vtable;
 
 /* ---- models ---- */
 
@@ -295,7 +340,22 @@ typedef struct logic_model_desc {
     /* return 1 if supported */
     int (*save_state)(void* instance, const logic_state_writer* out);
     int (*load_state)(void* instance, const void* bytes, size_t size);
+
+    /* ---- optional, the host reads them if struct_size includes them ---- */
+
+    /* the contents of a LOGIC_PARAM_FILE parameter, read by the host
+     * (intel hex, s-records, elf or binary). called after create, the model
+     * keeps it over reset. returns 1 if it took it. */
+    int (*load_image)(void* instance, const char* param, const logic_image* image, const logic_host* host);
+    /* a user action, e.g. "press", "release", or "key" with a character.
+     * returns 1 if the outputs may change. */
+    int (*interact)(void* instance, const char* action, int64_t value);
+    /* debugging, null if the model has nothing to debug */
+    const logic_debug_vtable* debug;
 } logic_model_desc;
+
+/* the part of logic_model_desc every plugin has */
+#define LOGIC_MODEL_DESC_MIN_SIZE (offsetof(logic_model_desc, load_state) + sizeof(void*))
 
 typedef struct logic_plugin {
     /* LOGIC_MODEL_ABI_VERSION the plugin was built with */

@@ -3,11 +3,14 @@
 
 #include "../src/builtin/builder.h"
 #include "../src/builtin/builtin.h"
+#include "../src/io/firmware.h"
 #include "../src/sim/runner.h"
 #include "../src/sim/simulator.h"
 
 #include <chrono>
 #include <cstdio>
+#include <cstring>
+#include <fstream>
 #include <thread>
 
 using namespace logic;
@@ -719,11 +722,11 @@ const model::primitive_registry& registry()
 
 class factory_t : public sim::component_factory {
 public:
-    std::unique_ptr<sim::component> create(const model::cell& c, const model::param_values& params, std::string&) const override
+    std::unique_ptr<sim::component> create(const sim::create_info& info, std::string& error) const override
     {
-        auto b = std::get_if<model::builtin_impl>(&c.impl);
+        auto b = std::get_if<model::builtin_impl>(&info.cell.impl);
         auto p = b ? static_cast<const builtin::primitive*>(registry().find(b->kind)) : nullptr;
-        return p ? p->create(params) : nullptr;
+        return p ? p->create(info, error) : nullptr;
     }
 };
 
@@ -1035,7 +1038,7 @@ static void test_inspect_state()
     auto params = model::resolve_params(builtin::registry().find("register")->params(), {{"width", int64_t(70)}});
     std::string error;
     auto reg_cell = f.ws.find_cell(model::builtin_cell_id("register"));
-    auto r1 = builtin::factory().create(*reg_cell, params, error);
+    auto r1 = builtin::factory().create({*reg_cell, params, {}}, error);
     std::vector<value> ports{hex("2_00000000_00000001", 70), sim::known(0, 1), sim::floating(70)};
     sim::context ctx(0, false, sim::never);
     r1->eval(ports, ctx);
@@ -1045,7 +1048,7 @@ static void test_inspect_state()
 
     std::vector<uint8_t> bytes;
     CHECK(r1->save_state(bytes));
-    auto r2 = builtin::factory().create(*reg_cell, params, error);
+    auto r2 = builtin::factory().create({*reg_cell, params, {}}, error);
     CHECK(r2->load_state(bytes));
     CHECK(!r2->load_state(std::span<const uint8_t>(bytes.data(), 3)));
     // clk stays 1: no edge, q comes from the loaded state
@@ -1167,6 +1170,204 @@ static void test_runner()
     }
 }
 
+static std::vector<uint8_t> bytes_of(const std::string& s)
+{
+    return std::vector<uint8_t>(s.begin(), s.end());
+}
+
+// a minimal little endian elf32: one loadable segment and a symbol table
+static std::vector<uint8_t> tiny_elf()
+{
+    std::vector<uint8_t> e(512, 0);
+    auto u16 = [&](size_t at, uint16_t v) { e[at] = uint8_t(v), e[at + 1] = uint8_t(v >> 8); };
+    auto u32 = [&](size_t at, uint32_t v) {
+        for (int k = 0; k < 4; k++)
+            e[at + k] = uint8_t(v >> (8 * k));
+    };
+    std::memcpy(e.data(), "\x7f" "ELF", 4);
+    e[4] = 1; // 32 bit
+    e[5] = 1; // little endian
+    e[6] = 1;
+    u16(16, 2);         // executable
+    u32(24, 0x1000);    // entry
+    u32(28, 52);        // program headers
+    u32(32, 200);       // section headers
+    u16(40, 52);        // header size
+    u16(42, 32);        // program header size
+    u16(44, 1);         // one
+    u16(46, 40);        // section header size
+    u16(48, 3);         // null, symtab, strtab
+    // the segment: 4 bytes at file offset 100 to address 0x1000
+    u32(52, 1);
+    u32(56, 100);
+    u32(64, 0x1000);
+    u32(68, 4);
+    u32(72, 4);
+    std::memcpy(e.data() + 100, "\x01\x02\x03\x04", 4);
+    // symbols at 120: null, main = 0x1000 (func)
+    u32(136, 1);
+    u32(140, 0x1000);
+    e[148] = 0x12; // global func
+    // strings at 160
+    std::memcpy(e.data() + 160, "\0main\0", 6);
+    // section 1: symtab, link 2
+    u32(240 + 4, 2);
+    u32(240 + 16, 120);
+    u32(240 + 20, 32);
+    u32(240 + 24, 2);
+    u32(240 + 36, 16);
+    // section 2: strtab
+    u32(280 + 4, 3);
+    u32(280 + 16, 160);
+    u32(280 + 20, 6);
+    return e;
+}
+
+static void test_firmware()
+{
+    io::firmware f;
+    std::string error;
+
+    // two data records, an extended linear address, a start address
+    auto hex = ":0400000001020304F2\n"
+               ":020000040001F9\n"
+               ":02001000AABB89\n"
+               ":0400000500000100F6\n"
+               ":00000001FF\n";
+    CHECK(io::parse_firmware(bytes_of(hex), io::firmware_format::automatic, f, error));
+    CHECK(f.segments.size() == 2);
+    if (f.segments.size() == 2) {
+        CHECK(f.segments[0].address == 0 && f.segments[0].bytes == (std::vector<uint8_t>{1, 2, 3, 4}));
+        CHECK(f.segments[1].address == 0x10010 && f.segments[1].bytes == (std::vector<uint8_t>{0xAA, 0xBB}));
+    }
+    CHECK(f.has_entry && f.entry == 0x100);
+    CHECK(f.end() == 0x10012);
+    CHECK(f.flatten(2, 4, 0) == (std::vector<uint8_t>{3, 4, 0, 0}));
+
+    CHECK(!io::parse_firmware(bytes_of(":0400000001020304F3\n"), io::firmware_format::intel_hex, f, error));
+    CHECK(error.find("checksum") != std::string::npos);
+
+    // s-records: S1 data, S9 start
+    auto srec = "S1070000AABBCCDDEA\nS9030100FB\n";
+    CHECK(io::parse_firmware(bytes_of(srec), io::firmware_format::automatic, f, error));
+    CHECK(f.segments.size() == 1 && f.segments[0].bytes == (std::vector<uint8_t>{0xAA, 0xBB, 0xCC, 0xDD}));
+    CHECK(f.has_entry && f.entry == 0x100);
+
+    // binary at a base address
+    CHECK(io::parse_firmware({9, 8, 7}, io::firmware_format::binary, f, error, 0x8000));
+    CHECK(f.segments.size() == 1 && f.segments[0].address == 0x8000 && f.segments[0].bytes.size() == 3);
+
+    error.clear();
+    CHECK(io::parse_firmware(tiny_elf(), io::firmware_format::automatic, f, error));
+    if (!error.empty()) std::printf("  %s\n", error.c_str());
+    CHECK(f.segments.size() == 1 && f.segments[0].address == 0x1000 && f.segments[0].bytes == (std::vector<uint8_t>{1, 2, 3, 4}));
+    CHECK(f.has_entry && f.entry == 0x1000);
+    CHECK(f.symbols.size() == 1 && f.symbols[0x1000] == "main");
+}
+
+static void test_io_parts()
+{
+    fixture f;
+    // button at (0, 0): out (20, 0), switch at (0, 100)
+    f.place("button", {0, 0});
+    f.place("switch", {0, 100}, {{"active_low", true}});
+    f.place("led", {60, 0});
+    int b = f.port(model::direction::output, {20, 0});
+    int sw = f.port(model::direction::output, {20, 100});
+    f.wire({20, 0}, {40, 0});
+    sim::simulator s(f.ws, *f.top, builtin::factory());
+    CHECK(s.problems().empty());
+
+    CHECK(s.port_value(b) == bit(false));
+    CHECK(s.port_value(sw) == bit(true));
+    CHECK(s.interact(s.root(), 0, "press", 0));
+    CHECK(s.port_value(b) == bit(true));
+    s.interact(s.root(), 0, "release", 0);
+    CHECK(s.port_value(b) == bit(false));
+    s.interact(s.root(), 1, "press", 0);
+    CHECK(s.port_value(sw) == bit(false));
+    s.interact(s.root(), 1, "press", 0);
+    CHECK(s.port_value(sw) == bit(true));
+    // the led has nothing to interact with
+    CHECK(!s.interact(s.root(), 5, "press", 0));
+
+    // two terminals: what one sends the other shows
+    fixture g;
+    // terminal at (0, 0): rx (-30, 10), tx (-30, -10). the second at
+    // (0, 100), its rx gets the first's tx.
+    g.place("terminal", {0, 0}, {{"baud", int64_t(1000)}});
+    g.place("terminal", {0, 100}, {{"baud", int64_t(1000)}});
+    g.wire({-30, -10}, {-60, -10});
+    g.wire({-60, -10}, {-60, 110});
+    g.wire({-60, 110}, {-30, 110});
+    sim::simulator t(g.ws, *g.top, builtin::factory());
+    CHECK(t.problems().empty());
+    t.interact(t.root(), 0, "key", 'H');
+    t.interact(t.root(), 0, "key", 'i');
+    t.run_until(30 * sim::ms);
+    auto items = t.inspect(t.root(), 1);
+    CHECK(items.size() == 1 && items[0].name == "screen" && items[0].text == "Hi");
+    CHECK(t.next_event() == sim::never);
+}
+
+static void test_rom_ram()
+{
+    auto dir = std::filesystem::temp_directory_path() / "logic_sim_test";
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream out(dir / "rom.hex");
+        out << ":040000001122334452\n:00000001FF\n";
+    }
+
+    fixture f;
+    f.top = &f.ws.create_cell(*f.ws.find_library("work"), "mem");
+    f.ws.find_library("work")->dir = dir;
+    // rom at (0, 0): addr (-40, 10), data (40, 10), cs (-40, -10)
+    f.place("rom", {0, 0}, {{"file", std::string("rom.hex")}, {"addr_width", int64_t(4)}});
+    int a = f.port(model::direction::input, {-40, 10}, 4);
+    int d = f.port(model::direction::output, {40, 10}, 8);
+    int cs = f.port(model::direction::input, {-40, -10});
+
+    // ram at (0, 200): addr (-40, 210), data (40, 210), cs (-40, 190),
+    // we (-40, 180)
+    f.place("ram", {0, 200}, {{"addr_width", int64_t(4)}});
+    int ra = f.port(model::direction::input, {-40, 210}, 4);
+    int rd = f.port(model::direction::inout, {40, 210}, 8);
+    int we = f.port(model::direction::input, {-40, 180});
+
+    sim::simulator s(f.ws, *f.top, builtin::factory());
+    for (auto& p : s.problems())
+        std::printf("  %s\n", p.c_str());
+    CHECK(s.problems().empty());
+
+    s.set_input(cs, bit(true));
+    s.set_input(a, sim::known(2, 4));
+    CHECK(s.port_value(d) == sim::known(0x33, 8));
+    s.set_input(cs, bit(false));
+    CHECK(s.port_value(d) == sim::floating(8));
+
+    // the debugger sees the contents
+    auto comp = s.component_of(s.root(), 0);
+    auto dbg = comp ? comp->debug() : nullptr;
+    CHECK(dbg && dbg->memories().size() == 1 && dbg->memories()[0].size == 16);
+    uint8_t buf[4];
+    CHECK(dbg && dbg->read_memory(0, 0, buf) && buf[0] == 0x11 && buf[3] == 0x44);
+
+    // write 0x5A to 7, then read it back
+    s.set_input(ra, sim::known(7, 4));
+    s.set_input(rd, sim::known(0x5A, 8));
+    s.set_input(we, bit(true));
+    s.set_input(we, bit(false));
+    s.set_input(rd, sim::floating(8));
+    CHECK(s.port_value(rd) == sim::known(0x5A, 8));
+
+    // a missing file is a problem
+    f.sch().instances[0].params["file"] = std::string("nothing.hex");
+    sim::simulator t(f.ws, *f.top, builtin::factory());
+    CHECK(t.problems().size() == 1 && t.problems()[0].find("nothing.hex") != std::string::npos);
+    std::filesystem::remove_all(dir);
+}
+
 int main()
 {
     test_values();
@@ -1190,6 +1391,9 @@ int main()
     test_inout();
     test_inspect_state();
     test_runner();
+    test_firmware();
+    test_io_parts();
+    test_rom_ram();
 
     if (failures) {
         std::printf("%d check(s) failed\n", failures);

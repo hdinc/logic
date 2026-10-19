@@ -252,8 +252,10 @@ void manager::loop()
     }
 }
 
-std::unique_ptr<sim::component> manager::create(const model::cell& c, const model::param_values& values, std::string& error) const
+std::unique_ptr<sim::component> manager::create(const sim::create_info& info, std::string& error) const
 {
+    auto& c = info.cell;
+    auto& values = info.params;
     if (!supported(c)) return nullptr;
 
     auto j = job_of(c, values);

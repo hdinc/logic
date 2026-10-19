@@ -14,6 +14,7 @@
 
 #include "logic_model.h"
 
+#include <algorithm>
 #include <exception>
 #include <string>
 #include <vector>
@@ -28,6 +29,21 @@ public:
     virtual void inspect(const logic_inspect_sink&) {}
     virtual bool save_state(const logic_state_writer&) { return false; }
     virtual bool load_state(const void*, size_t) { return false; }
+
+    // see logic_model_desc
+    virtual bool load_image(const char* /*param*/, const logic_image& /*image*/, const logic_host& /*host*/) { return false; }
+    virtual bool interact(const char* /*action*/, int64_t /*value*/) { return false; }
+
+    // debugging, see logic_debug_vtable. a model with memories or a program
+    // counter overrides these.
+    virtual std::vector<logic_memory_info> memories() { return {}; }
+    virtual bool read_memory(uint32_t, uint64_t, uint8_t*, uint64_t) { return false; }
+    virtual bool write_memory(uint32_t, uint64_t, const uint8_t*, uint64_t) { return false; }
+    virtual bool pc(uint64_t&) { return false; }
+    // the length of the instruction, 0 if unknown
+    virtual uint32_t disassemble(uint64_t, std::string&) { return 0; }
+    virtual void set_breakpoint(uint64_t, bool) {}
+    virtual void step_instruction() {}
 };
 
 // adds a port to the sink
@@ -70,6 +86,41 @@ void write(const logic_state_writer& w, const T& v)
     w.write(w.data, &v, sizeof(T));
 }
 
+// forwards the debug table to the instance
+inline const logic_debug_vtable* debug_vtable()
+{
+    static const logic_debug_vtable v = [] {
+        logic_debug_vtable t{};
+        t.struct_size = sizeof(logic_debug_vtable);
+        t.memory_count = [](void* i) { return (uint32_t)static_cast<instance*>(i)->memories().size(); };
+        t.memory_info = [](void* i, uint32_t k, logic_memory_info* out) {
+            auto m = static_cast<instance*>(i)->memories();
+            if (k >= m.size()) return 0;
+            *out = m[k];
+            return 1;
+        };
+        t.read_memory = [](void* i, uint32_t k, uint64_t a, uint8_t* out, uint64_t n) { return static_cast<instance*>(i)->read_memory(k, a, out, n) ? 1 : 0; };
+        t.write_memory = [](void* i, uint32_t k, uint64_t a, const uint8_t* d, uint64_t n) {
+            return static_cast<instance*>(i)->write_memory(k, a, d, n) ? 1 : 0;
+        };
+        t.pc = [](void* i, uint64_t* out) { return static_cast<instance*>(i)->pc(*out) ? 1 : 0; };
+        t.disassemble = [](void* i, uint64_t a, char* text, uint32_t size) {
+            std::string s;
+            auto n = static_cast<instance*>(i)->disassemble(a, s);
+            if (size > 0) {
+                auto len = std::min<size_t>(s.size(), size - 1);
+                s.copy(text, len);
+                text[len] = 0;
+            }
+            return n;
+        };
+        t.set_breakpoint = [](void* i, uint64_t a, int on) { static_cast<instance*>(i)->set_breakpoint(a, on != 0); };
+        t.step_instruction = [](void* i) { static_cast<instance*>(i)->step_instruction(); };
+        return t;
+    }();
+    return &v;
+}
+
 template <class T>
 logic_model_desc make_model(const char* name, const char* description, const char* category, const logic_param_desc* params, uint32_t param_count,
     int (*get_ports)(const logic_params*, const logic_port_sink*))
@@ -96,6 +147,11 @@ logic_model_desc make_model(const char* name, const char* description, const cha
     d.inspect = [](void* i, const logic_inspect_sink* s) { static_cast<instance*>(i)->inspect(*s); };
     d.save_state = [](void* i, const logic_state_writer* w) { return static_cast<instance*>(i)->save_state(*w) ? 1 : 0; };
     d.load_state = [](void* i, const void* b, size_t n) { return static_cast<instance*>(i)->load_state(b, n) ? 1 : 0; };
+    d.load_image = [](void* i, const char* param, const logic_image* image, const logic_host* host) {
+        return static_cast<instance*>(i)->load_image(param, *image, *host) ? 1 : 0;
+    };
+    d.interact = [](void* i, const char* action, int64_t value) { return static_cast<instance*>(i)->interact(action, value) ? 1 : 0; };
+    d.debug = debug_vtable();
     return d;
 }
 

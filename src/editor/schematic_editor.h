@@ -85,6 +85,8 @@ public:
     // the tools are not drawn. the scope must be an instance of this cell.
     const sim::snapshot* sim = nullptr;
     const sim::scope* sim_scope = nullptr;
+    // highlighted while simulating, -1 for none
+    int sim_selected = -1;
 
     // used by the tools
 
@@ -133,6 +135,8 @@ public:
 
 private:
     void set_tool(tool_kind k, std::unique_ptr<tool<schematic_editor>> t);
+    // what displays and inputs show while simulating
+    void draw_live(const model::instance& i, size_t index);
 
     // what is under the mouse for the tooltip, empty key if nothing
     struct hover_target {

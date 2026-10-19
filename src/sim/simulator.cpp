@@ -111,6 +111,10 @@ void simulator::elaborate(scope& s, const model::cell& c, const std::vector<int>
     s.components.assign(sch->instances.size(), -1);
     s.child_index.assign(sch->instances.size(), -1);
 
+    // relative file parameters of the instances start at this cell's library
+    auto lib = ws.library_of(c.id);
+    auto dir = lib ? lib->dir : std::filesystem::path{};
+
     for (int i = 0; i < (int)sch->instances.size(); i++) {
         auto& inst = sch->instances[i];
         auto iface = ws.interface_of(inst);
@@ -138,18 +142,20 @@ void simulator::elaborate(scope& s, const model::cell& c, const std::vector<int>
                 if (pins[p.port] >= 0) pulls.push_back({pins[p.port], p.up});
 
             std::string error;
-            auto comp = factory.create(*cell, model::resolve_params(prim->params(), inst.params), error);
+            auto values = model::resolve_params(prim->params(), inst.params);
+            auto comp = factory.create({*cell, values, dir}, error);
             if (comp)
-                add_instance(s, i, std::move(comp), *iface.ports, pins);
+                add_instance(s, i, std::move(comp), *iface.ports, pins, s.path.empty() ? inst.name : s.path + "/" + inst.name);
             else if (!error.empty())
                 m_problems.push_back(where(inst) + ": " + error);
             else if (links.empty() && iface.pulls->empty())
                 m_problems.push_back(where(inst) + ": '" + cell->name + "' has no simulation model");
         } else if (auto defs = cell->external_params()) {
             std::string error;
-            auto comp = factory.create(*cell, model::resolve_params(*defs, inst.params), error);
+            auto values = model::resolve_params(*defs, inst.params);
+            auto comp = factory.create({*cell, values, dir}, error);
             if (comp)
-                add_instance(s, i, std::move(comp), *iface.ports, pins);
+                add_instance(s, i, std::move(comp), *iface.ports, pins, s.path.empty() ? inst.name : s.path + "/" + inst.name);
             else
                 m_problems.push_back(where(inst) + ": " + (error.empty() ? "nothing can simulate '" + cell->name + "'" : error));
         } else if (cell->get_schematic()) {
@@ -172,10 +178,12 @@ void simulator::elaborate(scope& s, const model::cell& c, const std::vector<int>
     }
 }
 
-void simulator::add_instance(scope& s, int index, std::unique_ptr<component> c, const std::vector<model::port>& ports, const std::vector<int>& pins)
+void simulator::add_instance(scope& s, int index, std::unique_ptr<component> c, const std::vector<model::port>& ports, const std::vector<int>& pins,
+    std::string path)
 {
     instance x;
     x.c = std::move(c);
+    x.path = std::move(path);
     x.nets = pins;
     for (auto& port : ports) {
         x.widths.push_back(port.width);
@@ -365,6 +373,22 @@ void simulator::set_input(int port, value v)
     settle();
 }
 
+component* simulator::component_of(const scope& s, int instance)
+{
+    if (instance < 0 || instance >= (int)s.components.size()) return nullptr;
+    int k = s.components[instance];
+    return k < 0 ? nullptr : instances[k].c.get();
+}
+
+bool simulator::interact(const scope& s, int instance, const std::string& action, int64_t value)
+{
+    if (instance < 0 || instance >= (int)s.components.size() || s.components[instance] < 0) return false;
+    int k = s.components[instance];
+    if (instances[k].c->interact(action, value)) schedule(k);
+    settle();
+    return true;
+}
+
 std::vector<inspect_item> simulator::inspect(const scope& s, int instance) const
 {
     std::vector<inspect_item> r;
@@ -428,8 +452,10 @@ bool simulator::run_until(time t, int max_events)
 
 bool simulator::run(time t, int max_events)
 {
+    // going on after a pause
+    cur.paused.clear();
     settle();
-    if (cur.oscillating) return false;
+    if (cur.oscillating || !cur.paused.empty()) return false;
 
     int n = 0;
     // rounds of wakes at the same time, a component that keeps asking for
@@ -467,7 +493,7 @@ bool simulator::run(time t, int max_events)
         }
 
         settle();
-        if (cur.oscillating) return false;
+        if (cur.oscillating || !cur.paused.empty()) return false;
     }
 
     if (t > cur.now) cur.now = t;
@@ -481,7 +507,7 @@ bool simulator::step()
     // what's due now first (e.g. an external simulator running ahead), then
     // the next point in time
     if (t <= cur.now) {
-        run(cur.now, std::numeric_limits<int>::max());
+        if (!run(cur.now, std::numeric_limits<int>::max()) && !cur.paused.empty()) return true;
         t = next_event();
         if (t == never) return true;
     }
@@ -494,6 +520,7 @@ void simulator::reset()
 {
     cur.now = 0;
     cur.oscillating = false;
+    cur.paused.clear();
     events.clear();
 
     for (int i = 0; i < (int)instances.size(); i++) {
@@ -610,6 +637,7 @@ void simulator::settle()
             s.woken = false;
             s.c->eval(s.ports, ctx);
             if (ctx.wake() != s.wake) set_wake(i, ctx.wake());
+            if (!ctx.pause_request().empty()) cur.paused = s.path + ": " + ctx.pause_request();
 
             for (size_t p = 0; p < s.ports.size(); p++) {
                 if (s.kinds[p] == port_kind::in) continue;

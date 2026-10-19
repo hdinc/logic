@@ -31,8 +31,18 @@ Use the helpers `logic_get_bit`, `logic_get_u64`, `logic_set_u64`,
 `logic_set_z`, ... Time is in picoseconds. To do something later, set
 `ctx->wake` (e.g. `ctx->now + LOGIC_US`) and act when `ctx->woken` is set.
 
-See `examples/` for a counter in C, and a 7 segment decoder and a timed
-UART transmitter in C++.
+Optional parts (a model built with an older header simply doesn't have them):
+
+- `load_image`: the program reads the files of `LOGIC_PARAM_FILE` parameters
+  (Intel HEX, S-records, ELF or binary) and passes them as segments, e.g. the
+  firmware of a processor
+- `interact`: user actions while simulating
+- `debug`: memories, program counter, disassembly, breakpoints and single
+  steps for the debugger in the program. To stop the simulation (e.g. at a
+  breakpoint) set `ctx->pause` to a text in `eval`.
+
+See `examples/` for a counter in C, a 7 segment decoder, a timed UART
+transmitter and a tiny processor with a debugger interface in C++.
 
 ## Building
 

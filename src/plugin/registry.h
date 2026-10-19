@@ -84,7 +84,7 @@ public:
         std::string& error) const override;
 
     // sim::component_factory, creates c models
-    std::unique_ptr<sim::component> create(const model::cell& c, const model::param_values& params, std::string& error) const override;
+    std::unique_ptr<sim::component> create(const sim::create_info& info, std::string& error) const override;
 
     // a simulation model of the plugin for an instance of the cell. its
     // ports must be the cell's for the default parameters. dir is the

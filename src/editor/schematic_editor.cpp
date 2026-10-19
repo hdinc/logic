@@ -1,4 +1,5 @@
 #include "schematic_editor.h"
+#include "../render/live.h"
 #include "param_editor.h"
 
 #include <algorithm>
@@ -652,6 +653,24 @@ void schematic_editor::validate_selection()
     });
 }
 
+void schematic_editor::draw_live(const model::instance& i, size_t index)
+{
+    auto cell = ctx.ws.find_cell(i.cell);
+    auto prim = cell ? ctx.ws.primitive_of(*cell) : nullptr;
+    if (!prim) return;
+    auto iface = ctx.ws.interface_of(i);
+    if (!iface) return;
+
+    // the values at the pins
+    std::vector<sim::value> pins;
+    auto& local = sim_scope->nets->instance_nets;
+    for (size_t p = 0; p < iface.ports->size(); p++) {
+        int n = index < local.size() && p < local[index].size() ? local[index][p] : -1;
+        pins.push_back(n < 0 ? sim::floating((*iface.ports)[p].width) : sim->net_value(sim_scope->flat_net[n]));
+    }
+    render::draw_live(ctx.r, prim->kind(), model::resolve_params(prim->params(), i.params), i, *iface.symbol, pins);
+}
+
 std::string schematic_editor::unique_instance_name() const
 {
     for (int n = 1;; n++) {
@@ -706,8 +725,9 @@ void schematic_editor::draw()
     auto& instance_nets = sim ? sim_scope->nets->instance_nets : nets.instance_nets;
     for (size_t k = 0; k < sch.instances.size(); k++) {
         auto& i = sch.instances[k];
-        bool sel = is_selected({handle::instance, i.id});
+        bool sel = is_selected({handle::instance, i.id}) || (sim && (int)k == sim_selected);
         render::draw_instance(r, ctx.ws, i, sel ? c.selection : c.symbol, k < instance_nets.size() ? &instance_nets[k] : nullptr);
+        if (sim) draw_live(i, k);
     }
 
     for (int k = 0; k < (int)ctx.cell.ports.size(); k++) {

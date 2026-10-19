@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <fstream>
 #include <thread>
 
 using namespace logic;
@@ -112,7 +113,7 @@ static void test_discovery()
 
     std::string error;
     auto p = f.plugins.load("logic_examples", {}, error);
-    CHECK(p && p->info->model_count == 3);
+    CHECK(p && p->info->model_count == 4);
     CHECK(p && p->find("counter") && p->find("uart_tx") && !p->find("x"));
     // loaded once while unchanged
     CHECK(f.plugins.load("logic_examples", {}, error) == p);
@@ -272,7 +273,8 @@ static void test_errors()
     // a model that refuses its parameters logs why
     fixture h;
     auto& u = h.model_cell("uart_tx");
-    auto comp = h.plugins.create(u, {{"baud", int64_t(0)}}, error);
+    model::param_values zero{{"baud", int64_t(0)}};
+    auto comp = h.plugins.create({u, zero, {}}, error);
     CHECK(!comp && !error.empty());
     auto messages = h.plugins.take_messages();
     CHECK(messages.size() == 1 && messages[0].find("baud") != std::string::npos);
@@ -333,6 +335,110 @@ static void test_runner()
     CHECK(r.view().port_value(q) == sim::known(edges, 32));
 }
 
+static void test_toy_cpu()
+{
+    // ldi 3; out; dec; jnz 2; out; halt
+    auto dir = fs::temp_directory_path() / "logic_plugin_test_cpu";
+    fs::create_directories(dir);
+    {
+        // a broken file, to check the error
+        std::ofstream out(dir / "count.hex");
+        out << ":0800000001030306050203FF00\n";
+    }
+    std::vector<uint8_t> program{0x01, 0x03, 0x03, 0x06, 0x05, 0x02, 0x03, 0xFF};
+    {
+        // written as binary, simplest
+        std::ofstream out(dir / "count.bin", std::ios::binary);
+        out.write((const char*)program.data(), (std::streamsize)program.size());
+    }
+
+    fixture f;
+    f.lib->dir = dir;
+    auto& c = f.model_cell("toy_cpu");
+    CHECK(c.ports.size() == 3 && (*c.external_params())[0].name == "firmware");
+    int u = f.place(c.id, {0, 0}, {{"firmware", std::string("count.bin")}});
+    f.place(model::builtin_cell_id("clock"), f.pin(u, "clk") - glm::ivec2{10, 0}, {{"frequency", int64_t(1000)}});
+    int port = f.port(model::direction::output, f.pin(u, "port"), 8);
+    int halted = f.port(model::direction::output, f.pin(u, "halted"));
+
+    auto s = f.simulate();
+    CHECK(s.problems().empty());
+    auto comp = s.component_of(s.root(), u);
+    auto dbg = comp ? comp->debug() : nullptr;
+    CHECK(dbg != nullptr);
+    if (!dbg) return;
+
+    CHECK(dbg->pc() == 0u);
+    std::string text;
+    CHECK(dbg->disassemble(0, text) == 2 && text == "ldi 0x03");
+    CHECK(dbg->disassemble(3, text) == 1 && text == "dec");
+    CHECK(dbg->memories().size() == 1 && dbg->memories()[0].size == 256);
+    uint8_t mem[8];
+    CHECK(dbg->read_memory(0, 0, mem) && std::equal(mem, mem + 8, program.begin()));
+
+    // stops before dec each time through the loop
+    dbg->set_breakpoint(3, true);
+    CHECK(dbg->breakpoints() == std::vector<uint64_t>{3});
+    CHECK(!s.run_until(sim::seconds));
+    CHECK(s.paused().find("breakpoint") != std::string::npos && s.paused().find("U1") == 0);
+    CHECK(dbg->pc() == 3u);
+    CHECK(s.port_value(port) == sim::known(3, 8));
+
+    CHECK(!s.run_until(sim::seconds));
+    CHECK(dbg->pc() == 3u);
+    CHECK(s.port_value(port) == sim::known(2, 8));
+
+    // one instruction: the dec
+    dbg->step_instruction();
+    CHECK(!s.run_until(sim::seconds));
+    CHECK(s.paused().find("step") != std::string::npos);
+    CHECK(dbg->pc() == 4u);
+
+    dbg->set_breakpoint(3, false);
+    CHECK(s.run_until(sim::seconds));
+    CHECK(s.paused().empty());
+    CHECK(s.port_value(halted) == bit(true));
+    CHECK(s.port_value(port) == sim::known(0, 8));
+    auto items = s.inspect(s.root(), u);
+    CHECK(items.size() == 2 && items[0].name == "a" && items[0].v == sim::known(0, 8));
+
+    // reset starts the program again from the file's contents
+    s.reset();
+    CHECK(dbg->pc() == 0u);
+    CHECK(s.port_value(halted) == bit(false));
+
+    // a broken file is reported
+    f.sch().instances[u].params["firmware"] = std::string("count.hex");
+    auto t = f.simulate();
+    CHECK(t.problems().size() == 1 && t.problems()[0].find("count.hex") != std::string::npos);
+    fs::remove_all(dir);
+}
+
+static void test_uart_to_terminal()
+{
+    // the plugin's transmitter into the builtin terminal
+    fixture f;
+    auto& c = f.model_cell("uart_tx");
+    int u = f.place(c.id, {0, 0}, {{"baud", int64_t(1000)}});
+    int data = f.port(model::direction::input, f.pin(u, "data"), 8);
+    int send = f.port(model::direction::input, f.pin(u, "send"));
+    int t = f.place(model::builtin_cell_id("terminal"), {300, 300}, {{"baud", int64_t(1000)}});
+    auto tx = f.pin(u, "tx"), rx = f.pin(t, "rx");
+    f.sch().wires.push_back({f.top->new_id(), tx, {tx.x, rx.y}});
+    f.sch().wires.push_back({f.top->new_id(), {tx.x, rx.y}, rx});
+    auto s = f.simulate();
+    CHECK(s.problems().empty());
+
+    for (char ch : std::string("ok")) {
+        s.set_input(data, sim::known((uint8_t)ch, 8));
+        s.set_input(send, bit(true));
+        s.run_until(s.now() + 12 * sim::ms);
+        s.set_input(send, bit(false));
+    }
+    auto items = s.inspect(s.root(), t);
+    CHECK(items.size() == 1 && items[0].text == "ok");
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 3) {
@@ -350,6 +456,8 @@ int main(int argc, char** argv)
     test_errors();
     test_hot_reload();
     test_runner();
+    test_toy_cpu();
+    test_uart_to_terminal();
 
     if (failures) {
         std::printf("%d check(s) failed\n", failures);

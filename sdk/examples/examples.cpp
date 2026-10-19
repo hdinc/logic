@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 extern "C" const logic_model_desc example_counter;
+const logic_model_desc& example_toy_cpu();
 
 namespace {
 
@@ -115,17 +116,21 @@ int uart_ports(const logic_params*, const logic_port_sink* s)
     return 1;
 }
 
-const logic_model_desc models[] = {
-    example_counter,
-    logic_sdk::make_model<seg7>("seg7_decoder", "hex digit to 7 segments", "Examples", seg7_params, 1, seg7_ports),
-    logic_sdk::make_model<uart_tx>("uart_tx", "sends bytes over a serial line", "Examples", uart_params, 1, uart_ports),
-};
-
-const logic_plugin plugin = {LOGIC_MODEL_ABI_VERSION, "logic_examples", models, sizeof(models) / sizeof(models[0])};
+const logic_plugin* plugin()
+{
+    static const logic_model_desc models[] = {
+        example_counter,
+        logic_sdk::make_model<seg7>("seg7_decoder", "hex digit to 7 segments", "Examples", seg7_params, 1, seg7_ports),
+        logic_sdk::make_model<uart_tx>("uart_tx", "sends bytes over a serial line", "Examples", uart_params, 1, uart_ports),
+        example_toy_cpu(),
+    };
+    static const logic_plugin p = {LOGIC_MODEL_ABI_VERSION, "logic_examples", models, sizeof(models) / sizeof(models[0])};
+    return &p;
+}
 
 }
 
 extern "C" LOGIC_EXPORT const logic_plugin* logic_plugin_entry(uint32_t host_abi_version)
 {
-    return host_abi_version == LOGIC_MODEL_ABI_VERSION ? &plugin : nullptr;
+    return host_abi_version == LOGIC_MODEL_ABI_VERSION ? plugin() : nullptr;
 }

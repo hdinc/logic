@@ -1,4 +1,5 @@
 #include "registry.h"
+#include "../io/firmware.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -113,6 +114,85 @@ bool collect_ports(const logic_model_desc& d, const model::param_values& values,
     return true;
 }
 
+// the optional field of a model is there
+#define HAS_FIELD(d, field) ((d).struct_size >= offsetof(logic_model_desc, field) + sizeof((d).field) && (d).field)
+
+// the debug table of a model as the simulator's debug interface. keeps the
+// breakpoints it set.
+class debug_adapter : public sim::debug_interface {
+public:
+    debug_adapter(const logic_debug_vtable* t, void** inst)
+        : t(t)
+        , inst(inst)
+    {
+    }
+
+    bool has(size_t offset) const { return t->struct_size >= offset + sizeof(void*); }
+#define DBG(f) (has(offsetof(logic_debug_vtable, f)) && t->f)
+
+    std::vector<sim::memory_space> memories() const override
+    {
+        std::vector<sim::memory_space> r;
+        if (!DBG(memory_count) || !DBG(memory_info)) return r;
+        uint32_t n = t->memory_count(*inst);
+        for (uint32_t k = 0; k < n; k++) {
+            logic_memory_info m{};
+            if (t->memory_info(*inst, k, &m)) r.push_back({m.name ? m.name : "memory", m.size});
+        }
+        return r;
+    }
+
+    bool read_memory(int space, uint64_t address, std::span<uint8_t> out) const override
+    {
+        return DBG(read_memory) && t->read_memory(*inst, (uint32_t)space, address, out.data(), out.size());
+    }
+
+    bool write_memory(int space, uint64_t address, std::span<const uint8_t> data) override
+    {
+        return DBG(write_memory) && t->write_memory(*inst, (uint32_t)space, address, data.data(), data.size());
+    }
+
+    std::optional<uint64_t> pc() const override
+    {
+        uint64_t v;
+        if (DBG(pc) && t->pc(*inst, &v)) return v;
+        return std::nullopt;
+    }
+
+    int disassemble(uint64_t address, std::string& text) const override
+    {
+        if (!DBG(disassemble)) return 0;
+        char buf[256] = {};
+        auto n = t->disassemble(*inst, address, buf, sizeof(buf));
+        text = buf;
+        return (int)n;
+    }
+
+    void set_breakpoint(uint64_t address, bool on) override
+    {
+        if (!DBG(set_breakpoint)) return;
+        t->set_breakpoint(*inst, address, on ? 1 : 0);
+        std::erase(bps, address);
+        if (on) bps.push_back(address);
+    }
+
+    std::vector<uint64_t> breakpoints() const override { return bps; }
+
+    void step_instruction() override
+    {
+        if (DBG(step_instruction)) t->step_instruction(*inst);
+    }
+#undef DBG
+
+    // something to debug at all
+    bool useful() const { return !memories().empty() || pc().has_value(); }
+
+private:
+    const logic_debug_vtable* t;
+    void** inst;
+    std::vector<uint64_t> bps;
+};
+
 // the simulation model of one instance, calls into the plugin
 class c_model_component : public sim::component {
 public:
@@ -135,7 +215,49 @@ public:
     bool create(const logic_params& params)
     {
         inst = d->create(&params, &host);
+        if (inst && HAS_FIELD(*d, debug)) {
+            dbg = std::make_unique<debug_adapter>(d->debug, &inst);
+            // models without memories or a program counter have nothing to show
+            if (!dbg->useful()) dbg.reset();
+        }
         return inst != nullptr;
+    }
+
+    // reads the files of the file parameters and gives them to the model
+    bool load_files(const model::param_values& values, const fs::path& dir, std::string& error)
+    {
+        for (uint32_t k = 0; k < d->param_count; k++) {
+            auto& p = d->params[k];
+            if (p.type != LOGIC_PARAM_FILE) continue;
+            auto it = values.find(p.name);
+            auto file = it == values.end() ? std::string(p.def_text ? p.def_text : "") : std::get<std::string>(it->second);
+            if (file.empty()) continue;
+
+            fs::path path = file;
+            if (path.is_relative()) path = dir / path;
+            io::firmware fw;
+            if (!io::load_firmware(path, fw, error)) return false;
+            if (!HAS_FIELD(*d, load_image)) {
+                error = std::string("model '") + d->name + "' doesn't take files";
+                return false;
+            }
+            std::vector<logic_segment> segments;
+            for (auto& s : fw.segments)
+                segments.push_back({s.address, s.bytes.data(), s.bytes.size()});
+            logic_image image{segments.data(), (uint32_t)segments.size(), fw.has_entry ? 1 : 0, fw.entry};
+            if (!d->load_image(inst, p.name, &image, &host)) {
+                error = std::string("model '") + d->name + "' didn't take " + path.filename().string();
+                return false;
+            }
+        }
+        return true;
+    }
+
+    sim::debug_interface* debug() override { return dbg.get(); }
+
+    bool interact(const std::string& action, int64_t value) override
+    {
+        return HAS_FIELD(*d, interact) && d->interact(inst, action.c_str(), value) != 0;
     }
 
     ~c_model_component() override
@@ -152,9 +274,10 @@ public:
             values[p] = {data, data + n, data + 2 * n, (uint32_t)ports[p].width()};
         }
 
-        logic_context c{ctx.now(), ctx.woken() ? 1 : 0, ctx.wake()};
+        logic_context c{ctx.now(), ctx.woken() ? 1 : 0, ctx.wake(), nullptr};
         d->eval(inst, values.data(), &c);
         ctx.wake_at(c.wake);
+        if (c.pause) ctx.request_pause(c.pause);
 
         for (auto& v : ports)
             v.normalize();
@@ -205,6 +328,7 @@ private:
     logic_host host{};
     void* inst = nullptr;
     std::vector<logic_value> values;
+    std::unique_ptr<debug_adapter> dbg;
 };
 
 bool has_extension(const std::string& s)
@@ -334,7 +458,7 @@ std::shared_ptr<loaded_plugin> registry::load(const std::string& plugin, const f
     for (uint32_t k = 0; k < p->info->model_count; k++) {
         auto& d = p->info->models[k];
         // everything up to load_state is required to be known
-        if (d.struct_size < sizeof(logic_model_desc) || !d.name || !d.get_ports || !d.create || !d.destroy || !d.reset || !d.eval) {
+        if (d.struct_size < LOGIC_MODEL_DESC_MIN_SIZE || !d.name || !d.get_ports || !d.create || !d.destroy || !d.reset || !d.eval) {
             error = path.filename().string() + ": model " + std::to_string(k) + " is incomplete";
             return nullptr;
         }
@@ -428,15 +552,16 @@ bool registry::ports_for(const model::cell& c, const fs::path& dir, const model:
     return d && collect_ports(*d, values, ports, error);
 }
 
-std::unique_ptr<sim::component> registry::create(const model::cell& c, const model::param_values& values, std::string& error) const
+std::unique_ptr<sim::component> registry::create(const sim::create_info& info, std::string& error) const
 {
+    auto& c = info.cell;
     if (!handles(c)) return nullptr;
 
-    auto dir = dir_of(c);
+    // the plugin is found from the cell's library, files from the instance's
     std::shared_ptr<loaded_plugin> p;
-    auto d = model_of(c, dir, p, error);
+    auto d = model_of(c, dir_of(c), p, error);
     if (!d) return nullptr;
-    return create_from(p, *d, c, values, dir, error);
+    return create_from(p, *d, c, info.params, info.dir.empty() ? dir_of(c) : info.dir, error);
 }
 
 std::unique_ptr<sim::component> registry::create_from(const std::shared_ptr<loaded_plugin>& p, const logic_model_desc& model, const model::cell& c,
@@ -465,6 +590,7 @@ std::unique_ptr<sim::component> registry::create_from(const std::shared_ptr<load
         error = "model '" + std::string(d->name) + "' refused to start, see the messages";
         return nullptr;
     }
+    if (!comp->load_files(values, dir, error)) return nullptr;
     return comp;
 }
 

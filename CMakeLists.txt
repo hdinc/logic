@@ -37,12 +37,14 @@ add_library(logic_core STATIC
     src/model/primitive.cpp
     src/io/json.cpp
     src/io/storage.cpp
+    src/io/firmware.cpp
     src/builtin/builtin.cpp
     src/builtin/builder.cpp
     src/builtin/gates.cpp
     src/builtin/sources.cpp
     src/builtin/memory.cpp
     src/builtin/wiring.cpp
+    src/builtin/io.cpp
     src/netlist/netlist.cpp
     src/sim/value.cpp
     src/sim/simulator.cpp
@@ -73,6 +75,7 @@ add_executable(logic
     src/app/app.cpp
     src/app/component_bar.cpp
     src/render/renderer.cpp
+    src/render/live.cpp
     src/editor/canvas.cpp
     src/editor/schematic_editor.cpp
     src/editor/symbol_editor.cpp
@@ -92,7 +95,7 @@ target_compile_definitions(logic PRIVATE LOGIC_DEFAULT_WORKSPACE="${CMAKE_SOURCE
 
 # c model sdk and the example plugin, built into plugins/ next to the program
 include(sdk/cmake/LogicModel.cmake)
-logic_add_model(logic_examples sdk/examples/examples.cpp sdk/examples/counter.c)
+logic_add_model(logic_examples sdk/examples/examples.cpp sdk/examples/counter.c sdk/examples/toy_cpu.cpp)
 set_target_properties(logic_examples PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins)

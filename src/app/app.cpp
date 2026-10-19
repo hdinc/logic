@@ -388,6 +388,8 @@ void app::menu_bar()
         BulletText("Click an input port: toggle it, wider inputs are set in the properties");
         BulletText("Space: step to the next event, e.g. a clock edge");
         BulletText("Run: simulated time passes at the set speed (1 x is real time) or as fast as possible");
+        BulletText("Click an instance: its state and, for processors and memories, the debugger in the properties");
+        BulletText("Buttons are pressed while held down, switches toggle on a click");
         BulletText("Double click an instance: look inside, Backspace: back to the parent");
         BulletText("Right click an instance: open it in a new tab");
         if (Button("Close")) CloseCurrentPopup();

@@ -89,7 +89,10 @@ void sim_view::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     e.sim = &s->sim();
     e.sim_scope = &sc;
     if (hovered) e.view.handle_view_input();
+    auto path_before = path;
     canvas_inputs(hovered, e);
+    // another scope: nothing is selected in it
+    if (path != path_before) select(-1);
 
     // the path may have changed, draw what is shown now
     auto& shown = current();
@@ -106,6 +109,12 @@ void sim_view::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     Image((ImTextureID)tex.Id(), size, {0, size.y / tex.GetHeight()}, {size.x / tex.GetWidth(), 0});
 
     instance_menu();
+
+    // a held button is let go anywhere
+    if (pressed >= 0 && !IsMouseDown(ImGuiMouseButton_Left)) {
+        s->interact(&current(), pressed, "release", 0);
+        pressed = -1;
+    }
 }
 
 void sim_view::toolbar()
@@ -160,6 +169,10 @@ void sim_view::toolbar()
     if (sim.oscillating()) {
         SameLine();
         TextColored({1, 0.3f, 0.3f, 1}, "oscillating");
+    }
+    if (!sim.paused().empty() && !running) {
+        SameLine();
+        TextColored({1, 0.75f, 0.2f, 1}, "paused, %s", sim.paused().c_str());
     }
     if (!sim.problems().empty()) {
         SameLine();
@@ -234,6 +247,20 @@ void sim_view::canvas_inputs(bool hovered, schematic_editor& e)
         }
     }
 
+    // select, press buttons and switches
+    if (IsMouseClicked(ImGuiMouseButton_Left)) {
+        int i = instance_at();
+        select(i);
+        if (i >= 0) {
+            auto cell = ws.find_cell(sc.cell->get_schematic()->instances[i].cell);
+            auto prim = cell ? ws.primitive_of(*cell) : nullptr;
+            if (prim && (prim->kind() == "button" || prim->kind() == "switch")) {
+                s->interact(&sc, i, "press", 0);
+                if (prim->kind() == "button") pressed = i;
+            }
+        }
+    }
+
     // inputs of the top cell are set by the user, inside an instance they
     // come from the parent
     if (!sc.parent && IsMouseClicked(ImGuiMouseButton_Left)) {
@@ -257,6 +284,16 @@ void sim_view::canvas_inputs(bool hovered, schematic_editor& e)
             OpenPopup("instance");
         }
     }
+}
+
+void sim_view::select(int instance)
+{
+    if (instance == selected) return;
+    selected = instance;
+    memory = 0;
+    memory_address = 0;
+    follow_pc = true;
+    s->watch(instance >= 0 ? &current() : nullptr, instance);
 }
 
 void sim_view::instance_menu()
@@ -340,6 +377,8 @@ void sim_view::property_panel()
         TextDisabled("ports are driven by the parent");
     }
 
+    instance_panel();
+
     SeparatorText(sc.parent ? "Ports" : "Outputs");
     if (BeginTable("ports", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
         for (int k = 0; k < (int)ports.size(); k++) {
@@ -354,6 +393,156 @@ void sim_view::property_panel()
             TextColored({c.r, c.g, c.b, c.a}, "%s", sim::to_string(v).c_str());
         }
         EndTable();
+    }
+}
+
+void sim_view::instance_panel()
+{
+    using namespace ImGui;
+
+    auto& sc = current();
+    auto sch = sc.cell->get_schematic();
+    if (selected < 0 || !sch || selected >= (int)sch->instances.size() || s->watched_scope() != &sc) return;
+    auto& inst = sch->instances[selected];
+    auto cell = ws.find_cell(inst.cell);
+
+    std::optional<uint64_t> from;
+    if (!follow_pc) from = disassemble_from;
+    s->refresh_watch(memory, memory_address, 256, from, 16);
+    auto w = s->watched();
+
+    SeparatorText(("Instance " + inst.name + (cell ? " (" + cell->name + ")" : "")).c_str());
+    if (!w.valid) {
+        TextDisabled(sc.child(selected) ? "a subcircuit, double click to look inside" : "nothing to show");
+        return;
+    }
+
+    // the state the component tells
+    std::string terminal;
+    bool has_terminal = false;
+    if (BeginTable("state", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        for (auto& item : w.items) {
+            if (item.v.width() == 0) {
+                // texts, e.g. a terminal's screen, below the table
+                if (item.name == "screen") {
+                    terminal = item.text;
+                    has_terminal = true;
+                }
+                continue;
+            }
+            TableNextRow();
+            TableNextColumn();
+            TextUnformatted(item.name.c_str());
+            TableNextColumn();
+            auto c = render::value_color(item.v);
+            TextColored({c.r, c.g, c.b, c.a}, "%s", sim::to_string(item.v).c_str());
+        }
+        EndTable();
+    }
+
+    if (has_terminal) {
+        SeparatorText("Terminal");
+        BeginChild("screen", {0, 220}, ImGuiChildFlags_Borders);
+        TextUnformatted(terminal.c_str());
+        if (GetScrollY() >= GetScrollMaxY() - 20) SetScrollHereY(1.0f);
+        EndChild();
+        SetNextItemWidth(-60);
+        if (input_string("##send", terminal_input, ImGuiInputTextFlags_EnterReturnsTrue)) {
+            for (char ch : terminal_input)
+                s->interact(&sc, selected, "key", (uint8_t)ch);
+            s->interact(&sc, selected, "key", '\r');
+            terminal_input.clear();
+            SetKeyboardFocusHere(-1);
+        }
+        SetItemTooltip("Enter sends the text and a carriage return");
+        SameLine();
+        if (Button("Clear")) s->interact(&sc, selected, "clear", 0);
+    }
+
+    if (!w.debug) return;
+
+    SeparatorText("Debugger");
+    if (w.pc) Text("pc %llX", (unsigned long long)*w.pc);
+    if (w.pc && Button("Step instruction")) {
+        s->debug([](sim::debug_interface& d) { d.step_instruction(); });
+        s->run.run(true);
+    }
+    if (w.pc) SetItemTooltip("Runs until the processor executed one instruction");
+
+    // breakpoints
+    if (w.pc) {
+        SetNextItemWidth(120);
+        InputScalar("##bp", ImGuiDataType_U64, &new_breakpoint, nullptr, nullptr, "%llX", ImGuiInputTextFlags_CharsHexadecimal);
+        SameLine();
+        if (Button("Add breakpoint")) {
+            auto a = new_breakpoint;
+            s->debug([a](sim::debug_interface& d) { d.set_breakpoint(a, true); });
+        }
+        for (auto bp : w.breakpoints) {
+            PushID((int)bp);
+            if (SmallButton("x")) s->debug([bp](sim::debug_interface& d) { d.set_breakpoint(bp, false); });
+            SameLine();
+            Text("breakpoint at %llX", (unsigned long long)bp);
+            PopID();
+        }
+    }
+
+    // disassembly from the program counter or an address
+    if (!w.disassembly.empty() || w.pc) {
+        Checkbox("Follow pc", &follow_pc);
+        if (!follow_pc) {
+            SameLine();
+            SetNextItemWidth(120);
+            InputScalar("From", ImGuiDataType_U64, &disassemble_from, nullptr, nullptr, "%llX", ImGuiInputTextFlags_CharsHexadecimal);
+        }
+        BeginChild("disassembly", {0, 16 * GetTextLineHeightWithSpacing()}, ImGuiChildFlags_Borders);
+        for (auto& l : w.disassembly) {
+            bool bp = std::find(w.breakpoints.begin(), w.breakpoints.end(), l.address) != w.breakpoints.end();
+            bool at_pc = w.pc && *w.pc == l.address;
+            auto label = std::string(bp ? "* " : "  ") + (at_pc ? "> " : "  ");
+            char addr[32];
+            std::snprintf(addr, sizeof(addr), "%04llX  ", (unsigned long long)l.address);
+            PushID((int)l.address);
+            if (at_pc) PushStyleColor(ImGuiCol_Text, ImVec4{1, 0.85f, 0.3f, 1});
+            // a click sets or clears a breakpoint
+            if (Selectable((label + addr + l.text).c_str(), false)) {
+                auto a = l.address;
+                s->debug([a, bp](sim::debug_interface& d) { d.set_breakpoint(a, !bp); });
+            }
+            if (at_pc) PopStyleColor();
+            PopID();
+        }
+        EndChild();
+    }
+
+    // memory as hex
+    if (!w.memories.empty()) {
+        std::vector<const char*> names;
+        for (auto& m : w.memories)
+            names.push_back(m.name.c_str());
+        SetNextItemWidth(140);
+        Combo("##memory", &memory, names.data(), (int)names.size());
+        SameLine();
+        SetNextItemWidth(120);
+        if (InputScalar("Address", ImGuiDataType_U64, &memory_address, nullptr, nullptr, "%llX", ImGuiInputTextFlags_CharsHexadecimal))
+            memory_address &= ~uint64_t(15);
+        SameLine();
+        if (ArrowButton("##up", ImGuiDir_Up) && memory_address >= 256) memory_address -= 256;
+        SameLine();
+        if (ArrowButton("##down", ImGuiDir_Down)) memory_address += 256;
+
+        if (w.memory == memory && w.memory_address == memory_address) {
+            for (size_t row = 0; row * 16 < w.bytes.size(); row++) {
+                char line[128];
+                int n = std::snprintf(line, sizeof(line), "%06llX ", (unsigned long long)(memory_address + row * 16));
+                std::string ascii;
+                for (size_t k = row * 16; k < std::min(w.bytes.size(), row * 16 + 16); k++) {
+                    n += std::snprintf(line + n, sizeof(line) - n, " %02X", w.bytes[k]);
+                    ascii += w.bytes[k] >= 32 && w.bytes[k] < 127 ? (char)w.bytes[k] : '.';
+                }
+                Text("%s  %s", line, ascii.c_str());
+            }
+        }
     }
 }
 

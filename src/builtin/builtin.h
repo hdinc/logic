@@ -14,6 +14,13 @@ public:
     // the parameters are resolved. null for primitives that are only wiring
     // (see cell_interface::links).
     virtual std::unique_ptr<sim::component> create(const model::param_values& params) const = 0;
+    // the same with the folder relative files start at, for primitives that
+    // load files. an error if it can't be created.
+    virtual std::unique_ptr<sim::component> create(const sim::create_info& info, std::string& error) const
+    {
+        (void)error;
+        return create(info.params);
+    }
 };
 
 // all primitives implemented in code
@@ -30,5 +37,7 @@ void add_sources(model::primitive_registry& r);
 void add_memory(model::primitive_registry& r);
 // splitter
 void add_wiring(model::primitive_registry& r);
+// led, displays, button, switch, terminal
+void add_io(model::primitive_registry& r);
 
 }

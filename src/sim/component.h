@@ -4,8 +4,10 @@
 #include "value.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -64,18 +66,67 @@ public:
     // models that run ahead, e.g. an external simulator.
     time horizon() const { return m_horizon ? m_horizon(m_owner, m_now) : never; }
 
+    // asks to pause the simulation after the current point in time, e.g. at
+    // a breakpoint. the reason is shown to the user.
+    void request_pause(std::string reason) { m_pause = std::move(reason); }
+    const std::string& pause_request() const { return m_pause; }
+
 private:
     time m_now;
     bool m_woken;
     time m_wake;
     horizon_fn m_horizon;
     const void* m_owner;
+    std::string m_pause;
 };
 
-// a named part of a component's state, shown by debugging views
+// a named part of a component's state, shown by debugging views: a value,
+// or a text (e.g. the screen of a terminal) if the value has width 0
 struct inspect_item {
     std::string name;
     value v;
+    std::string text;
+};
+
+struct memory_space {
+    std::string name;
+    // in bytes
+    uint64_t size = 0;
+};
+
+// memories and execution of a processor or memory part, for debugging views.
+// called on the simulation thread only.
+class debug_interface {
+public:
+    virtual ~debug_interface() = default;
+
+    virtual std::vector<memory_space> memories() const { return {}; }
+    // false if the range isn't in the memory
+    virtual bool read_memory(int space, uint64_t address, std::span<uint8_t> out) const
+    {
+        (void)space, (void)address, (void)out;
+        return false;
+    }
+    virtual bool write_memory(int space, uint64_t address, std::span<const uint8_t> data)
+    {
+        (void)space, (void)address, (void)data;
+        return false;
+    }
+
+    // the program counter of a processor
+    virtual std::optional<uint64_t> pc() const { return std::nullopt; }
+    // the instruction at the address as text and its length in bytes, 0 if
+    // it can't be disassembled
+    virtual int disassemble(uint64_t address, std::string& text) const
+    {
+        (void)address, (void)text;
+        return 0;
+    }
+    // the processor pauses the simulation before executing there
+    virtual void set_breakpoint(uint64_t address, bool on) { (void)address, (void)on; }
+    virtual std::vector<uint64_t> breakpoints() const { return {}; }
+    // pauses the simulation after the next instruction
+    virtual void step_instruction() {}
 };
 
 // behaviour of one instance of a primitive. ports are in the order of the
@@ -98,10 +149,32 @@ public:
     // the internal state, e.g. register contents, for debugging views
     virtual void inspect(std::vector<inspect_item>&) const {}
 
+    // memories and execution for the debugger, null if there is nothing
+    virtual debug_interface* debug() { return nullptr; }
+
+    // a user action while simulating, e.g. "press" and "release" on a
+    // button or "key" with a character on a terminal. true if the outputs
+    // may change, eval is called then.
+    virtual bool interact(const std::string& action, int64_t value)
+    {
+        (void)action, (void)value;
+        return false;
+    }
+
     // copies the internal state into bytes and back, for snapshots of the
     // whole simulation. false if the component doesn't support it.
     virtual bool save_state(std::vector<uint8_t>&) const { return false; }
     virtual bool load_state(std::span<const uint8_t>) { return false; }
+};
+
+// what a factory needs to create the model of an instance
+struct create_info {
+    const model::cell& cell;
+    // resolved
+    const model::param_values& params;
+    // relative file parameters (e.g. firmware) start here: the folder of
+    // the library with the schematic the instance is in
+    std::filesystem::path dir;
 };
 
 // creates the simulation models of cells that aren't schematics
@@ -109,9 +182,9 @@ class component_factory {
 public:
     virtual ~component_factory() = default;
 
-    // the parameters are resolved. null if the factory doesn't handle the
-    // cell, or with an error if it does but can't create the model.
-    virtual std::unique_ptr<component> create(const model::cell& c, const model::param_values& params, std::string& error) const = 0;
+    // null if the factory doesn't handle the cell, or with an error if it
+    // does but can't create the model
+    virtual std::unique_ptr<component> create(const create_info& info, std::string& error) const = 0;
 };
 
 // asks factories in order until one creates the model or reports an error
@@ -122,10 +195,10 @@ public:
     {
     }
 
-    std::unique_ptr<component> create(const model::cell& c, const model::param_values& params, std::string& error) const override
+    std::unique_ptr<component> create(const create_info& info, std::string& error) const override
     {
         for (auto f : list) {
-            auto r = f->create(c, params, error);
+            auto r = f->create(info, error);
             if (r || !error.empty()) return r;
         }
         return nullptr;

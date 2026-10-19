@@ -43,11 +43,11 @@ runner::~runner()
     worker.join();
 }
 
-void runner::push(std::function<void(simulator&)> f)
+void runner::push(std::function<void(simulator&)> f, bool restarts)
 {
     {
         std::lock_guard lk(m);
-        commands.push_back(std::move(f));
+        commands.push_back({std::move(f), restarts});
         sent++;
     }
     cv.notify_all();
@@ -71,6 +71,11 @@ void runner::reset()
 void runner::post(std::function<void(simulator&)> f)
 {
     push(std::move(f));
+}
+
+void runner::query(std::function<void(simulator&)> f)
+{
+    push(std::move(f), false);
 }
 
 void runner::run(bool on)
@@ -152,12 +157,12 @@ void runner::loop()
         auto seq = sent;
         double speed = m_speed;
         bool run = m_running;
-        bool restart = restart_clock || !cmds.empty();
+        bool restart = restart_clock || std::any_of(cmds.begin(), cmds.end(), [](auto& c) { return c.restarts; });
         restart_clock = false;
         lk.unlock();
 
         for (auto& c : cmds)
-            c(*s);
+            c.f(*s);
 
         auto now_wall = clock::now();
         if (restart) {
@@ -175,14 +180,14 @@ void runner::loop()
             if (speed <= 0.0) {
                 // as fast as possible, event by event
                 if (s->next_event() == never) wait = idle_wait;
-                for (int n = 0; s->next_event() != never && !s->oscillating(); n++) {
+                for (int n = 0; s->next_event() != never && !s->oscillating() && s->paused().empty(); n++) {
                     s->step();
                     if (n % 64 == 63 && clock::now() > deadline) break;
                 }
             } else {
                 auto target = base_sim + time(to_seconds(now_wall - base_wall) * speed * double(seconds));
                 bool reached = false;
-                while (!s->oscillating()) {
+                while (!s->oscillating() && s->paused().empty()) {
                     reached = s->run_until(std::max(target, s->now()), 64);
                     if (reached || clock::now() > deadline) break;
                 }
@@ -210,7 +215,8 @@ void runner::loop()
             }
         }
 
-        bool stop = run && s->oscillating();
+        // a component paused it, e.g. at a breakpoint
+        bool stop = run && (s->oscillating() || !s->paused().empty());
         auto t = clock::now();
         if (!cmds.empty() || stop || !run || t - last_publish >= publish_interval) {
             publish(run ? measured : 0.0);

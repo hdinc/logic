@@ -32,8 +32,10 @@ public:
     void step();
     // back to time 0, see simulator::reset
     void reset();
-    // runs f on the simulation thread, e.g. to read the state of a component
+    // runs f on the simulation thread, e.g. to change a component
     void post(std::function<void(simulator&)> f);
+    // the same for reading only: real time running goes on undisturbed
+    void query(std::function<void(simulator&)> f);
 
     // keeps running until paused or the circuit oscillates
     void run(bool on);
@@ -57,7 +59,7 @@ public:
 
 private:
     void loop();
-    void push(std::function<void(simulator&)> f);
+    void push(std::function<void(simulator&)> f, bool restarts = true);
     // copies the values for sync(), called by the simulation thread
     void publish(double measured);
 
@@ -68,7 +70,12 @@ private:
     std::condition_variable idle_cv;
 
     // shared, guarded by m
-    std::vector<std::function<void(simulator&)>> commands;
+    struct command {
+        std::function<void(simulator&)> f;
+        // changes the simulation, real time starts over from it
+        bool restarts;
+    };
+    std::vector<command> commands;
     uint64_t sent = 0;
     uint64_t done = 0;
     double m_speed = 1.0;

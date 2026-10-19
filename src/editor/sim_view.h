@@ -16,6 +16,8 @@ namespace logic::editor {
 // shows one instance (scope) of a running simulation: the schematic of its
 // cell with the values of that instance.
 //
+//   click an instance          select it, its state is in the properties
+//   click a button / switch    press it / switch it
 //   double click an instance   show its schematic
 //   right click an instance    open it here or in a new tab
 //   backspace                  back to the parent
@@ -49,6 +51,10 @@ private:
     void breadcrumb();
     void canvas_inputs(bool hovered, schematic_editor& e);
     void instance_menu();
+    // the state and the debugger of the selected instance
+    void instance_panel();
+    // selects an instance of the shown scope, -1 for none
+    void select(int instance);
 
     const sim::scope& current() const;
     std::vector<int> path_of(const sim::scope& target) const;
@@ -64,6 +70,19 @@ private:
 
     // instance under the right click menu
     int menu_instance = -1;
+
+    // selected in the shown scope, -1 for none
+    int selected = -1;
+    // a button held down with the mouse, -1 for none
+    int pressed = -1;
+
+    // debugger settings of the selected instance
+    int memory = 0;
+    uint64_t memory_address = 0;
+    bool follow_pc = true;
+    uint64_t disassemble_from = 0;
+    uint64_t new_breakpoint = 0;
+    std::string terminal_input;
 };
 
 }

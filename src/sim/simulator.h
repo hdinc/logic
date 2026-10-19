@@ -49,6 +49,9 @@ struct state {
     time now = 0;
     // the last settle didn't come to rest, e.g. a gate feeding itself
     bool oscillating = false;
+    // why a component paused the simulation (e.g. a breakpoint), empty if
+    // it didn't. cleared when it goes on.
+    std::string paused;
 };
 
 // event driven simulation of a schematic cell and everything it contains.
@@ -122,6 +125,15 @@ public:
     // empty if it has none
     std::vector<inspect_item> inspect(const scope& s, int instance) const;
 
+    // the component of an instance in the scope's schematic, null if it has
+    // none. for debugging views.
+    component* component_of(const scope& s, int instance);
+    // passes a user action to the instance's component and settles, false
+    // if it has no component
+    bool interact(const scope& s, int instance, const std::string& action, int64_t value);
+    // the reason a component paused the simulation, see state::paused
+    const std::string& paused() const { return cur.paused; }
+
 private:
     enum class port_kind : uint8_t {
         in,
@@ -142,6 +154,8 @@ private:
         time wake = never;
         // the wake is due, eval sees it in the context
         bool woken = false;
+        // instance names from the top, for messages
+        std::string path;
     };
 
     // bits [net_bit, net_bit + width) of a net are bits [node_bit, ...) of
@@ -205,7 +219,8 @@ private:
     const netlist::netlist& netlist_of(const model::cell& c);
     void elaborate(scope& s, const model::cell& c, const std::vector<int>& port_nets, int depth);
     // the component of instance `index` of the scope's schematic
-    void add_instance(scope& s, int index, std::unique_ptr<component> c, const std::vector<model::port>& ports, const std::vector<int>& pins);
+    void add_instance(scope& s, int index, std::unique_ptr<component> c, const std::vector<model::port>& ports, const std::vector<int>& pins,
+        std::string path);
     int new_net(int width, bool width_error);
     int find(int net);
     void join(int a, int b);
@@ -290,6 +305,7 @@ public:
 
     time now() const { return st.now; }
     bool oscillating() const { return st.oscillating; }
+    const std::string& paused() const { return st.paused; }
 
 private:
     const simulator* s;
