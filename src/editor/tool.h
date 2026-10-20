@@ -112,7 +112,9 @@ public:
         }
     }
 
-    bool busy() const override { return state != state_t::idle; }
+    // only while a drag moves things: a click or a box selection doesn't
+    // grey out the rest of the editor
+    bool busy() const override { return state == state_t::moving && drag_moved; }
 
 private:
     enum class state_t {
