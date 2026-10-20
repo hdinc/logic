@@ -40,6 +40,13 @@ param_def choice_param(std::string name, std::string label, std::vector<std::str
     return d;
 }
 
+param_def file_param(std::string name, std::string label, std::string description)
+{
+    auto d = text_param(std::move(name), std::move(label), "", std::move(description));
+    d.file = true;
+    return d;
+}
+
 param_def text_param(std::string name, std::string label, std::string def, std::string description)
 {
     param_def d;

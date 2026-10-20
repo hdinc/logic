@@ -297,7 +297,7 @@ public:
         return {
             model::int_param("addr_width", "Address bits", 8, 1, 24),
             model::int_param("data_width", "Data bits", 8, 1, 64),
-            model::text_param("file", "Contents", "",
+            model::file_param("file", "Contents",
                 "intel hex, s-records, elf or binary, relative to the library folder. bytes per word little endian"),
         };
     }

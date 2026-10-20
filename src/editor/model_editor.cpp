@@ -1,4 +1,5 @@
 #include "model_editor.h"
+#include "file_dialog.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -8,8 +9,10 @@ namespace logic::editor {
 namespace {
 
 // editable list of strings, e.g. source files. a list of paths marks the
-// ones that don't exist in dir.
-bool string_list(const char* id, std::vector<std::string>& list, const char* add_label, const std::filesystem::path* dir = nullptr)
+// ones that don't exist in dir. with filters every item can be chosen with a
+// file dialog.
+bool string_list(const char* id, std::vector<std::string>& list, const char* add_label, const std::filesystem::path* dir = nullptr,
+    const char* filters = nullptr)
 {
     using namespace ImGui;
 
@@ -17,8 +20,12 @@ bool string_list(const char* id, std::vector<std::string>& list, const char* add
     PushID(id);
     for (int k = 0; k < (int)list.size(); k++) {
         PushID(k);
-        SetNextItemWidth(-60);
+        SetNextItemWidth(filters ? -90 : -60);
         if (input_string("##item", list[k])) changed = true;
+        if (filters) {
+            SameLine();
+            if (browse_button("browse", list[k], dir ? *dir : std::filesystem::path{}, filters)) changed = true;
+        }
         SameLine();
         if (SmallButton("x")) {
             list.erase(list.begin() + k);
@@ -184,6 +191,8 @@ void model_editor::c_model_settings(model::c_model_impl& m)
         }
         SameLine(0, 2);
     }
+    if (browse_button("plugin_file", m.plugin, ctx.lib.dir, plugin_files, "Choose a plugin")) ctx.modified();
+    SameLine(0, 2);
     if (input_string("Plugin", m.plugin)) ctx.modified();
     SetItemTooltip("file name of the plugin without extension, found in the plugin folders, or a path relative to the library folder");
 
@@ -247,7 +256,7 @@ void model_editor::hdl_settings(model::hdl_impl& h)
     auto& dir = ctx.lib.dir;
     TextUnformatted("Sources");
     if (!dir.empty()) SetItemTooltip("relative to %s", dir.string().c_str());
-    if (string_list("sources", h.sources, "Add source", &dir)) ctx.modified();
+    if (string_list("sources", h.sources, "Add source", &dir, hdl_files)) ctx.modified();
 
     if (h.language != model::hdl_language::vhdl) {
         TextUnformatted("Include folders");

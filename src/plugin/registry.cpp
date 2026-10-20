@@ -505,8 +505,13 @@ std::vector<model::param_def> registry::params_of(const logic_model_desc& d)
             r.push_back(model::choice_param(name, label, choices, text, desc));
             break;
         }
-        case LOGIC_PARAM_TEXT:
-        case LOGIC_PARAM_FILE: r.push_back(model::text_param(name, label, text, desc)); break;
+        case LOGIC_PARAM_TEXT: r.push_back(model::text_param(name, label, text, desc)); break;
+        case LOGIC_PARAM_FILE: {
+            auto d = model::file_param(name, label, desc);
+            d.def = text;
+            r.push_back(std::move(d));
+            break;
+        }
         }
     }
     return r;

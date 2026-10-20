@@ -1,11 +1,12 @@
 #include "param_editor.h"
 #include "context.h"
+#include "file_dialog.h"
 
 #include <algorithm>
 
 namespace logic::editor {
 
-bool edit_params(const std::vector<model::param_def>& defs, model::param_values& values)
+bool edit_params(const std::vector<model::param_def>& defs, model::param_values& values, const std::filesystem::path& base)
 {
     using namespace ImGui;
 
@@ -51,10 +52,20 @@ bool edit_params(const std::vector<model::param_def>& defs, model::param_values&
 
         case model::param_def::text: {
             auto s = std::get<std::string>(v);
-            if (input_string(d.label.c_str(), s)) {
-                v = s;
-                edited = true;
+            if (d.file) {
+                // the path, "..." and the label
+                auto& style = GetStyle();
+                float button = CalcTextSize("...").x + style.FramePadding.x * 2.0f;
+                SetNextItemWidth(CalcItemWidth() - button - style.ItemInnerSpacing.x);
+                edited = input_string("##path", s);
+                SameLine(0, style.ItemInnerSpacing.x);
+                edited |= browse_button("browse", s, base, firmware_files);
+                SameLine(0, style.ItemInnerSpacing.x);
+                TextUnformatted(d.label.c_str());
+            } else {
+                edited = input_string(d.label.c_str(), s);
             }
+            if (edited) v = s;
         } break;
         }
 

@@ -29,6 +29,9 @@ struct param_def {
     int64_t min = 0; // integer range
     int64_t max = 0;
     std::vector<std::string> choices;
+    // a text that is the path of a file (firmware, memory contents: intel
+    // hex, s-records, elf or binary), relative to the library folder
+    bool file = false;
 
     std::string description;
 
@@ -39,6 +42,8 @@ param_def int_param(std::string name, std::string label, int64_t def, int64_t mi
 param_def bool_param(std::string name, std::string label, bool def, std::string description = {});
 param_def choice_param(std::string name, std::string label, std::vector<std::string> choices, std::string def, std::string description = {});
 param_def text_param(std::string name, std::string label, std::string def, std::string description = {});
+// a text parameter holding a file path, empty by default
+param_def file_param(std::string name, std::string label, std::string description = {});
 
 // a value for every definition: the stored one if it is valid (right type,
 // integers in range, a known choice), otherwise the default. values without a

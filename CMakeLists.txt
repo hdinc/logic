@@ -83,6 +83,7 @@ add_executable(logic
     src/editor/cell_editor.cpp
     src/editor/model_editor.cpp
     src/editor/param_editor.cpp
+    src/editor/file_dialog.cpp
     src/editor/sim_session.cpp
     src/editor/sim_view.cpp
 )
@@ -90,7 +91,12 @@ add_executable(logic
 include(Hd/cmake/resource.cmake)
 add_resource_dir(logic res)
 
-target_link_libraries(logic logic_core Hd)
+# file dialogs
+add_subdirectory(deps/ImGuiFileDialog)
+target_link_libraries(ImGuiFileDialog PUBLIC imgui)
+target_compile_definitions(ImGuiFileDialog PUBLIC USE_STD_FILESYSTEM)
+
+target_link_libraries(logic logic_core Hd ImGuiFileDialog)
 target_compile_options(logic PRIVATE ${LOGIC_WARNINGS})
 target_compile_definitions(logic PRIVATE LOGIC_DEFAULT_WORKSPACE="${CMAKE_SOURCE_DIR}/workspace")
 

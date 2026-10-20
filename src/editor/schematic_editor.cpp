@@ -843,7 +843,7 @@ void schematic_editor::selection_properties(const std::vector<handle>& elements)
             if (auto it = insts[0]->params.find(d.name); it != insts[0]->params.end()) one[d.name] = it->second;
             PushID(d.name.c_str());
             PushItemFlag(ImGuiItemFlags_MixedValue, !same);
-            bool changed = edit_params({d}, one);
+            bool changed = edit_params({d}, one, ctx.lib.dir);
             PopItemFlag();
             if (!same) {
                 SameLine();
@@ -931,7 +931,7 @@ void schematic_editor::property_panel()
 
         if (auto defs = ctx.ws.params_of(*i); !defs.empty()) {
             SeparatorText("Parameters");
-            if (edit_params(defs, i->params)) {
+            if (edit_params(defs, i->params, ctx.lib.dir)) {
                 ctx.modified();
                 // pins may have moved or appeared
                 normalize();

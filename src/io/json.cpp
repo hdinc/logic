@@ -85,6 +85,7 @@ json params_to_json(const std::vector<param_def>& defs)
             j["max"] = d.max;
         }
         if (d.type == param_def::choice) j["choices"] = d.choices;
+        if (d.file) j["file"] = true;
         if (!d.description.empty()) j["description"] = d.description;
         a.push_back(std::move(j));
     }
@@ -108,6 +109,7 @@ std::vector<param_def> params_from_json(const json& a)
         d.min = j.value("min", int64_t(0));
         d.max = j.value("max", int64_t(0));
         if (j.contains("choices")) d.choices = j.at("choices").get<std::vector<std::string>>();
+        d.file = j.value("file", false);
         d.description = j.value("description", "");
         r.push_back(std::move(d));
     }

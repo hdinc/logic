@@ -509,7 +509,7 @@ static void test_external_cells(const std::filesystem::path& dir)
     model::c_model_impl m;
     m.plugin = "chips";
     m.model = "m6502";
-    m.params = {model::int_param("clock", "Clock", 1000000, 1, 100000000)};
+    m.params = {model::int_param("clock", "Clock", 1000000, 1, 100000000), model::file_param("firmware", "Firmware")};
     auto& cm = ws.create_cell(lib, "cpu", m);
     cm.add_port(model::direction::output, {0, 0}).width = 16;
     cm.add_port(model::direction::inout, {0, 0}).width = 8;
