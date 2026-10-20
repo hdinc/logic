@@ -25,6 +25,19 @@ public:
     // converts a distance in pixels to world units, for hit test tolerances
     float pixels(float px) const;
 
+    // the same zoom as another view of the same world, and the same point
+    // in its bottom left corner: views in the same window (editing and
+    // simulating) share that corner, the simulation has a toolbar row more
+    // above. takes effect with the next set_size.
+    void copy_camera(const canvas& other)
+    {
+        zoom = other.zoom;
+        center = other.center;
+        anchor = other.to_world({-1.0f, -1.0f});
+        anchored = true;
+        recalc();
+    }
+
 private:
     void recalc();
 
@@ -34,6 +47,10 @@ private:
 
     glm::vec2 center{0.0f, 0.0f};
     float zoom = 0.01f;
+
+    // keep this world point in the bottom left corner, see copy_camera
+    glm::vec2 anchor{0.0f, 0.0f};
+    bool anchored = false;
 
     bool panning = false;
     glm::vec2 pan_last{0.0f, 0.0f};

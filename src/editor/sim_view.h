@@ -42,6 +42,10 @@ public:
     // e.g. "bar/U3 (foo)"
     std::string title() const;
 
+    // the camera of the cell's schematic in this view, e.g. to keep the one
+    // of the editor when the simulation starts
+    canvas& camera_of(const model::cell& c) { return editor_of(c).view; }
+
     // set when the user asks to open an instance in a new tab, the app
     // takes and clears it
     std::optional<std::vector<int>> open_in_new_tab;

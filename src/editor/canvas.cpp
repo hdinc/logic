@@ -9,6 +9,11 @@ void canvas::set_size(glm::vec2 s)
 {
     size = glm::max(s, glm::vec2{1.0f, 1.0f});
     recalc();
+    if (anchored) {
+        anchored = false;
+        center += anchor - to_world({-1.0f, -1.0f});
+        recalc();
+    }
 }
 
 void canvas::handle_view_input()

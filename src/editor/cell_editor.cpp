@@ -244,12 +244,16 @@ void cell_editor::start_simulation()
 
     session = std::make_shared<sim_session>(ctx.ws, ctx.cell, ctx.factory ? *ctx.factory : builtin::factory());
     view = std::make_unique<sim_view>(ctx.ws, ctx.r, session);
+    // the camera stays where it is
+    view->camera_of(ctx.cell).copy_camera(schematic->view);
 }
 
 void cell_editor::stop_simulation()
 {
     // views of it in other tabs close
     if (session) session->stopped = true;
+    // back to editing where the top cell was looked at
+    if (view && schematic) schematic->view.copy_camera(view->camera_of(ctx.cell));
     view.reset();
     session.reset();
 }
