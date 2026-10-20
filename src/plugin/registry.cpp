@@ -300,7 +300,7 @@ public:
                 data[2 * n + w] = v->z[w];
             }
             r.normalize();
-            ((std::vector<sim::inspect_item>*)p)->push_back({name ? name : "", std::move(r)});
+            ((std::vector<sim::inspect_item>*)p)->push_back({name ? name : "", std::move(r), {}});
         };
         d->inspect(inst, &sink);
     }

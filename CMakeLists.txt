@@ -51,6 +51,7 @@ add_library(logic_core STATIC
     src/sim/runner.cpp
     src/plugin/dynlib.cpp
     src/plugin/registry.cpp
+    src/plugin/libraries.cpp
     src/hdl/process.cpp
     src/hdl/job.cpp
     src/hdl/verilator.cpp

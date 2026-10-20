@@ -21,4 +21,9 @@ std::vector<std::string> load_workspace(model::workspace& ws, const std::filesys
 // or renamed). throws std::runtime_error on failure.
 void save_library(model::library& lib, const std::filesystem::path& root);
 
+// writes the edited symbols of a read only library with a symbols folder
+// (a plugin's) as cell files there. a symbol that is the default again
+// removes its file. throws std::runtime_error on failure.
+void save_symbols(model::library& lib);
+
 }

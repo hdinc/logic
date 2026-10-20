@@ -1,6 +1,7 @@
 #include "app.h"
 #include "../builtin/builtin.h"
 #include "../io/storage.h"
+#include "../plugin/libraries.h"
 
 #include <Hd/Resource.h>
 #include <imgui.h>
@@ -30,9 +31,16 @@ app::app(Hd::Window& w, std::filesystem::path r)
     plugins.add_default_dirs(root);
     ws.add_provider(plugins);
     ws.add_provider(hdl);
+    reload_plugins();
+}
 
-    // stable order in the library panel
-    std::stable_sort(ws.libraries.begin(), ws.libraries.end(), [](auto& a, auto& b) { return a->read_only < b->read_only; });
+void app::reload_plugins()
+{
+    for (auto& m : plugin::sync_libraries(ws, plugins, root / "plugins"))
+        message(m);
+    // stable order in the library panel: the user's, builtin, plugins
+    auto rank = [](auto& l) { return !l->read_only ? 0 : l->symbols_dir.empty() ? 1 : 2; };
+    std::stable_sort(ws.libraries.begin(), ws.libraries.end(), [&](auto& a, auto& b) { return rank(a) < rank(b); });
 }
 
 void app::run()
@@ -309,6 +317,10 @@ void app::menu_bar()
         if (BeginMenu("File")) {
             if (auto work = ws.find_library("work")) new_cell_items(*work);
             if (MenuItem("Save all", "Ctrl+S", false, has_unsaved())) save_all();
+            // cells change in place, not under a running simulation
+            bool simulating = std::any_of(editors.begin(), editors.end(), [](auto& e) { return e->simulating(); });
+            if (MenuItem("Reload plugins", nullptr, false, !simulating)) reload_plugins();
+            SetItemTooltip("Finds new plugins and takes the ports, parameters and symbols of rebuilt ones");
             Separator();
             if (MenuItem("Exit")) {
                 if (has_unsaved())
@@ -416,7 +428,8 @@ void app::library_panel()
     }
 
     for (auto& lib : ws.libraries) {
-        auto label = lib->name + (lib->dirty ? " *" : "") + (lib->read_only ? " (read only)" : "") + "###lib" + lib->name;
+        bool plugin = !lib->symbols_dir.empty();
+        auto label = lib->name + (lib->dirty ? " *" : "") + (plugin ? " (plugin)" : lib->read_only ? " (read only)" : "") + "###lib" + lib->name;
         bool open = TreeNodeEx(label.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
 
         if (!lib->read_only && BeginPopupContextItem()) {
@@ -747,9 +760,11 @@ void app::new_cell(model::library& lib, model::implementation impl)
 void app::save_all()
 {
     for (auto& lib : ws.libraries) {
-        if (!lib->dirty || lib->read_only) continue;
+        if (!lib->dirty) continue;
         try {
-            io::save_library(*lib, root);
+            // plugins: only their edited symbols
+            if (lib->read_only) io::save_symbols(*lib);
+            else io::save_library(*lib, root);
         } catch (std::exception& e) {
             message("saving library '" + lib->name + "' failed: " + e.what());
         }
@@ -758,7 +773,7 @@ void app::save_all()
 
 bool app::has_unsaved() const
 {
-    return std::any_of(ws.libraries.begin(), ws.libraries.end(), [](auto& l) { return l->dirty && !l->read_only; });
+    return std::any_of(ws.libraries.begin(), ws.libraries.end(), [](auto& l) { return l->dirty && (!l->read_only || !l->symbols_dir.empty()); });
 }
 
 void app::message(std::string m)

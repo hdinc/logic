@@ -61,11 +61,14 @@ std::vector<component_bar::group> component_bar::groups(const model::workspace& 
             if (p) add(cat.empty() ? lib->name : cat, c.get());
         }
     }
+    // plugin models by their category
     for (auto& lib : ws.libraries) {
         for (auto& c : lib->cells) {
             if (ws.primitive_of(*c)) continue;
-            if (!search.empty() && !contains_ignore_case(c->name, search) && !contains_ignore_case(lib->name, search)) continue;
-            add(lib->name, c.get());
+            auto it = lib->categories.find(c->id);
+            std::string cat = it != lib->categories.end() ? it->second : "";
+            if (!search.empty() && !contains_ignore_case(c->name, search) && !contains_ignore_case(cat, search) && !contains_ignore_case(lib->name, search)) continue;
+            add(cat.empty() ? lib->name : cat, c.get());
         }
     }
     return gs;

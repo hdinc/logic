@@ -44,6 +44,38 @@ int seg7_ports(const logic_params*, const logic_port_sink* s)
     return 1;
 }
 
+// a symbol instead of the generated box: pins name their port, y is up,
+// one grid is 10. a symbol edited in the program can be pasted here too,
+// from <workspace>/plugins/logic_examples/symbols/seg7_decoder.json.
+const char* const seg7_symbol = R"({
+    "shapes": [
+        {"type": "line", "a": [-20, 20], "b": [20, 20]},
+        {"type": "line", "a": [20, 20], "b": [20, -20]},
+        {"type": "line", "a": [20, -20], "b": [-20, -20]},
+        {"type": "line", "a": [-20, -20], "b": [-20, 20]},
+        {"type": "line", "a": [-30, 0], "b": [-20, 0], "width": 2.5},
+        {"type": "line", "a": [20, 0], "b": [30, 0], "width": 2.5},
+        {"type": "line", "a": [4, 12], "b": [12, 12]},
+        {"type": "line", "a": [12, 12], "b": [12, -12]},
+        {"type": "line", "a": [12, -12], "b": [4, -12]},
+        {"type": "line", "a": [4, 0], "b": [12, 0]},
+        {"type": "line", "a": [4, 12], "b": [4, -12]},
+        {"type": "text", "pos": [-17, -2], "text": "hex", "size": 6},
+        {"type": "text", "pos": [-20, 23], "text": "seg7_decoder", "size": 8}
+    ],
+    "pins": [
+        {"port": "digit", "pos": [-30, 0]},
+        {"port": "seg", "pos": [30, 0]}
+    ]
+})";
+
+logic_model_desc seg7_model()
+{
+    auto d = logic_sdk::make_model<seg7>("seg7_decoder", "hex digit to 7 segments", "Examples", seg7_params, 1, seg7_ports);
+    d.symbol = seg7_symbol;
+    return d;
+}
+
 // data, send -> tx, busy. a rising edge on send while not busy sends data:
 // a 0 start bit, 8 data bits from bit 0, a 1 stop bit, each 1/baud long.
 // tx is 1 while idle.
@@ -120,7 +152,7 @@ const logic_plugin* plugin()
 {
     static const logic_model_desc models[] = {
         example_counter,
-        logic_sdk::make_model<seg7>("seg7_decoder", "hex digit to 7 segments", "Examples", seg7_params, 1, seg7_ports),
+        seg7_model(),
         logic_sdk::make_model<uart_tx>("uart_tx", "sends bytes over a serial line", "Examples", uart_params, 1, uart_ports),
         example_toy_cpu(),
     };

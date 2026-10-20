@@ -4,7 +4,9 @@
 
 #include "../sdk/include/logic_model.h"
 #include "../src/builtin/builtin.h"
+#include "../src/io/storage.h"
 #include "../src/plugin/dynlib.h"
+#include "../src/plugin/libraries.h"
 #include "../src/plugin/registry.h"
 #include "../src/sim/runner.h"
 #include "../src/sim/simulator.h"
@@ -900,6 +902,106 @@ static void test_avr_sleep()
     CHECK(t.next_event() == sim::never);
 }
 
+static void test_plugin_libraries()
+{
+    auto root = fs::temp_directory_path() / "logic_plugin_test_libraries";
+    fs::remove_all(root);
+    auto sync = [&](fixture& f) {
+        auto m = plugin::sync_libraries(f.ws, f.plugins, root);
+        for (auto& s : m)
+            std::printf("  message: %s\n", s.c_str());
+        return m;
+    };
+
+    fixture f;
+    CHECK(sync(f).empty());
+    auto lib = f.ws.find_library("logic_examples");
+    CHECK(lib && lib->read_only && lib->symbols_dir == root / "logic_examples" / "symbols");
+    CHECK(f.ws.find_library("logic_chips") != nullptr);
+    if (!lib) return;
+
+    // a cell per model with a stable id, ports and parameters
+    auto counter = f.ws.find_cell(plugin::model_cell_id("logic_examples", "counter"));
+    CHECK(counter && counter->name == "counter" && counter->check().empty());
+    CHECK(counter && counter->ports.size() == 4 && counter->external_params()->size() == 1);
+    CHECK(counter && lib->categories[counter->id] == "Examples");
+    if (!counter) return;
+
+    // generated: the pins of a side are a grid apart
+    std::vector<int> left;
+    for (auto& p : counter->symbol.pins)
+        if (p.pos.x < 0) left.push_back(p.pos.y);
+    CHECK(left.size() == 3 && left[0] - left[1] == model::grid && left[1] - left[2] == model::grid);
+
+    // the 7 segment decoder brings its own symbol
+    auto seg7 = lib->find_cell("seg7_decoder");
+    CHECK(seg7 && seg7->check().empty() && seg7->symbol.pins.size() == 2);
+    if (!seg7) return;
+    auto digit = seg7->symbol.find_pin_of_port(seg7->ports[0].id);
+    CHECK(seg7->ports[0].name == "digit" && digit && digit->pos == glm::ivec2(-30, 0));
+
+    // placed from the library it simulates like any c model cell
+    int u = f.place(counter->id, {0, 0});
+    f.place(model::builtin_cell_id("clock"), f.pin(u, "clk") - glm::ivec2{10, 0}, {{"frequency", int64_t(1000)}});
+    int q = f.port(model::direction::output, f.pin(u, "q"), 8);
+    {
+        auto s = f.simulate();
+        CHECK(s.problems().empty());
+        s.run_until(10 * sim::ms);
+        CHECK(s.port_value(q) == sim::known(10, 8));
+    }
+
+    // an edited symbol is saved and used the next time
+    for (auto& p : seg7->symbol.pins)
+        p.pos.y += model::grid;
+    lib->changed_symbols.insert(seg7->id);
+    lib->dirty = true;
+    io::save_symbols(*lib);
+    auto file = root / "logic_examples" / "symbols" / "seg7_decoder.json";
+    CHECK(fs::exists(file) && !lib->dirty);
+    {
+        fixture g;
+        CHECK(sync(g).empty());
+        auto c = g.ws.find_cell(plugin::model_cell_id("logic_examples", "seg7_decoder"));
+        auto pin = c ? c->symbol.find_pin_of_port(c->ports[0].id) : nullptr;
+        CHECK(pin && pin->pos == glm::ivec2(-30, 10));
+        // the default stays the plugin's
+        CHECK(c && g.ws.find_library("logic_examples")->default_symbols[c->id] != c->symbol);
+    }
+
+    // the default again removes the file
+    seg7->symbol = lib->default_symbols[seg7->id];
+    lib->changed_symbols.insert(seg7->id);
+    io::save_symbols(*lib);
+    CHECK(!fs::exists(file));
+
+    // generated again (new ids) is the default as well
+    counter->symbol.pins[0].pos.y += model::grid;
+    counter->generate_symbol(model::pin_order::declaration);
+    lib->changed_symbols.insert(counter->id);
+    io::save_symbols(*lib);
+    CHECK(!fs::exists(root / "logic_examples" / "symbols" / "counter.json"));
+
+    // a saved symbol that doesn't fit the model is reported, the default used
+    {
+        std::ofstream out(root / "logic_examples" / "symbols" / "counter.json");
+        out << R"({"shapes": [], "pins": [{"port": "nope", "pos": [0, 0]}]})";
+    }
+    {
+        fixture g;
+        auto m = plugin::sync_libraries(g.ws, g.plugins, root);
+        CHECK(m.size() == 1 && m[0].find("counter.json") != std::string::npos);
+        auto c = g.ws.find_cell(plugin::model_cell_id("logic_examples", "counter"));
+        CHECK(c && c->check().empty());
+    }
+
+    // syncing again keeps the cells (and their ids)
+    auto before = lib->cells.size();
+    CHECK(sync(f).size() == 1);
+    CHECK(lib->cells.size() == before && f.ws.find_cell(counter->id) == counter);
+    fs::remove_all(root);
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 5) {
@@ -922,6 +1024,7 @@ int main(int argc, char** argv)
     test_runner();
     test_toy_cpu();
     test_uart_to_terminal();
+    test_plugin_libraries();
     test_m6502_functional();
     test_m6502_schematic();
     if (avr_path.empty()) {

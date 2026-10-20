@@ -164,10 +164,13 @@ void cell::generate_symbol(pin_order order)
         return n * label_size * 0.6f;
     };
 
+    // pins are one grid apart from the top, the first at or just above the
+    // origin so they stay on the grid
     int rows = (int)std::max<size_t>({left.size(), right.size(), 1});
     int half_w = std::max(2 * grid, (int)std::ceil((label_w(left) + label_w(right) + 12.0f) / 2.0f / grid) * grid);
-    int top = rows * grid;
-    int bottom = -rows * grid;
+    int first = (rows - 1) / 2 * grid;
+    int top = first + grid;
+    int bottom = first - rows * grid;
 
     symbol = {};
 
@@ -181,15 +184,14 @@ void cell::generate_symbol(pin_order order)
     auto add_side = [&](const std::vector<const port*>& side, bool is_left) {
         int x = is_left ? -half_w : half_w;
         int stub = is_left ? -grid : grid;
-        // pins are two grid apart and centered on the origin
-        int y = ((int)side.size() - 1) * grid;
+        int y = first;
         for (auto p : side) {
             glm::ivec2 pin_pos{x + stub, y};
             symbol.shapes.push_back({new_id(), line{{x, y}, pin_pos}, p->width > 1 ? bus_stroke : 0.0f});
             symbol.pins.push_back({new_id(), p->id, pin_pos});
             int lx = is_left ? x + 3 : x - 3 - (int)std::ceil(p->name.size() * label_size * 0.6f);
             symbol.shapes.push_back({new_id(), text{{lx, y - 2}, p->name, label_size}});
-            y -= 2 * grid;
+            y -= grid;
         }
     };
     add_side(left, true);

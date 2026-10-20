@@ -64,7 +64,7 @@ public:
         started = false;
     }
 
-    void inspect(std::vector<sim::inspect_item>& out) const override { out.push_back({"level", sim::known(level, 1)}); }
+    void inspect(std::vector<sim::inspect_item>& out) const override { out.push_back({"level", sim::known(level, 1), {}}); }
 
     bool save_state(std::vector<uint8_t>& out) const override
     {

@@ -24,7 +24,11 @@ struct context {
     hdl::manager* hdl = nullptr;
 
     // call after every change to the cell so the library gets saved
-    void modified() { lib.dirty = true; }
+    void modified()
+    {
+        lib.dirty = true;
+        if (!lib.symbols_dir.empty()) lib.changed_symbols.insert(cell.id);
+    }
 };
 
 // imgui text input for std::string, returns true when the string changed

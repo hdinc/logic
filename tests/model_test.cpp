@@ -107,6 +107,12 @@ static void test_generate_symbol()
     // inputs left of the origin, outputs right
     for (auto& p : c.symbol.pins)
         CHECK((c.find_port(p.port)->dir == model::direction::input) == (p.pos.x < 0));
+
+    // pins of a side one grid apart, from the top
+    std::vector<int> ys;
+    for (auto& p : c.symbol.pins)
+        if (p.pos.x < 0) ys.push_back(p.pos.y);
+    CHECK(ys.size() == 2 && ys[0] - ys[1] == model::grid);
 }
 
 static void test_cycles()

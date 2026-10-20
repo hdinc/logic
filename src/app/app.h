@@ -57,6 +57,8 @@ private:
     void new_cell(model::library& lib, model::implementation impl = model::schematic{});
     // "New ..." items for the kinds of cells
     void new_cell_items(model::library& lib);
+    // the plugins' libraries, see plugin::sync_libraries
+    void reload_plugins();
     void save_all();
     bool has_unsaved() const;
 

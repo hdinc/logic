@@ -62,9 +62,23 @@ void model_editor::gui(bool locked)
     using namespace ImGui;
 
     BeginChild("model", {0, 0}, ImGuiChildFlags_None);
-    BeginDisabled(locked);
-
     auto& c = ctx.cell;
+
+    // a model in its plugin's library: only the symbol can be changed
+    if (!ctx.lib.symbols_dir.empty()) {
+        auto m = std::get_if<model::c_model_impl>(&c.impl);
+        SeparatorText("Plugin model");
+        Text("%s from the plugin %s", m ? m->model.c_str() : "?", m ? m->plugin.c_str() : "?");
+        TextDisabled("in %s", ctx.lib.dir.string().c_str());
+        TextWrapped("The ports and parameters come from the plugin, File > Reload plugins reads them again. "
+                    "The symbol can be edited (Symbol above), it's saved to %s.",
+            (ctx.lib.symbols_dir / (c.name + ".json")).string().c_str());
+        plugin_tables();
+        EndChild();
+        return;
+    }
+
+    BeginDisabled(locked);
     if (auto m = std::get_if<model::c_model_impl>(&c.impl)) c_model_settings(*m);
     if (auto h = std::get_if<model::hdl_impl>(&c.impl)) {
         hdl_settings(*h);
@@ -92,6 +106,54 @@ void model_editor::gui(bool locked)
 
     EndDisabled();
     EndChild();
+}
+
+void model_editor::plugin_tables()
+{
+    using namespace ImGui;
+
+    auto& c = ctx.cell;
+    SeparatorText("Ports");
+    if (BeginTable("ports", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit)) {
+        TableSetupColumn("Name");
+        TableSetupColumn("Direction");
+        TableSetupColumn("Width");
+        TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch);
+        TableHeadersRow();
+        for (auto& p : c.ports) {
+            TableNextRow();
+            TableNextColumn();
+            TextUnformatted(p.name.c_str());
+            TableNextColumn();
+            TextUnformatted(model::to_string(p.dir));
+            TableNextColumn();
+            Text("%d", p.width);
+            TableNextColumn();
+            TextWrapped("%s", p.description.c_str());
+        }
+        EndTable();
+    }
+
+    auto params = c.external_params();
+    if (!params || params->empty()) return;
+    SeparatorText("Parameters");
+    if (BeginTable("params", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit)) {
+        TableSetupColumn("Name");
+        TableSetupColumn("Default");
+        TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch);
+        TableHeadersRow();
+        std::string buf;
+        for (auto& d : *params) {
+            TableNextRow();
+            TableNextColumn();
+            TextUnformatted(d.label.empty() ? d.name.c_str() : d.label.c_str());
+            TableNextColumn();
+            TextUnformatted(param_value_text(d.def, buf));
+            TableNextColumn();
+            TextWrapped("%s", d.description.c_str());
+        }
+        EndTable();
+    }
 }
 
 void model_editor::c_model_settings(model::c_model_impl& m)

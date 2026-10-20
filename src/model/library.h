@@ -3,7 +3,9 @@
 #include "cell.h"
 
 #include <filesystem>
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -23,6 +25,16 @@ struct library {
     std::filesystem::path dir;
 
     std::vector<std::unique_ptr<cell>> cells;
+
+    // a read only library made from a plugin still lets its symbols be
+    // edited: they're saved to this folder as cell files. empty otherwise.
+    std::filesystem::path symbols_dir;
+    // the symbols the cells have without a saved one, by cell
+    std::map<id, model::symbol> default_symbols;
+    // cells whose symbol was edited since the last save
+    std::set<id> changed_symbols;
+    // groups in the component bar by cell, e.g. a plugin model's category
+    std::map<id, std::string> categories;
 
     cell* find_cell(id i);
     cell* find_cell(const std::string& name);

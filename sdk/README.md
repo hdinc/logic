@@ -40,6 +40,10 @@ Optional parts (a model built with an older header simply doesn't have them):
 - `debug`: memories, program counter, disassembly, breakpoints and single
   steps for the debugger in the program. To stop the simulation (e.g. at a
   breakpoint) set `ctx->pause` to a text in `eval`.
+- `symbol`: the model's symbol as JSON text instead of a generated box (see
+  `logic_model.h` for the format, `examples.cpp` has one for the 7 segment
+  decoder). The easiest way to make one: edit the symbol of the model's
+  cell in the program and copy the file it saves.
 
 See `examples/` for a counter in C, a 7 segment decoder, a timed UART
 transmitter and a tiny processor with a debugger interface in C++.
@@ -65,8 +69,18 @@ Copy the plugin into a plugin folder:
 - `plugins` next to the program
 - a folder listed in `LOGIC_PLUGIN_PATH` (`:` separated, `;` on Windows)
 
-Then create a cell with *New C model cell*, choose the plugin and model on its
-model page and press *Refresh interface*. A plugin path relative to the
+Each plugin found there shows up as a read only library named after it, with
+a cell per model, ready to place (*File > Reload plugins* finds new ones and
+reads rebuilt ones again). The symbol of a model's cell is, in this order:
+
+1. one edited in the program, saved as
+   `<workspace>/plugins/<plugin>/symbols/<model>.json`
+2. the model's `symbol`
+3. a generated box with the inputs on the left and the rest on the right
+
+A plugin somewhere else can still be used through a cell of its own: *New C
+model cell*, choose the plugin and model on its model page and press
+*Refresh interface*. A plugin path relative to the
 library folder works as well. A plugin that is rebuilt while the program runs
 is loaded again the next time it's used; running simulations keep the old
 version until they stop.

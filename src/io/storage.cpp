@@ -84,6 +84,41 @@ std::vector<std::string> load_workspace(model::workspace& ws, const fs::path& ro
     return errors;
 }
 
+namespace {
+
+// the same drawing and pins, whatever the ids
+bool same_symbol(const model::symbol& a, const model::symbol& b)
+{
+    if (a.shapes.size() != b.shapes.size() || a.pins.size() != b.pins.size()) return false;
+    for (size_t k = 0; k < a.shapes.size(); k++)
+        if (a.shapes[k].geom != b.shapes[k].geom || a.shapes[k].width != b.shapes[k].width) return false;
+    for (size_t k = 0; k < a.pins.size(); k++)
+        if (a.pins[k].port != b.pins[k].port || a.pins[k].pos != b.pins[k].pos) return false;
+    return true;
+}
+
+}
+
+void save_symbols(model::library& lib)
+{
+    if (lib.symbols_dir.empty()) return;
+    for (auto id : lib.changed_symbols) {
+        auto c = lib.find_cell(id);
+        if (!c) continue;
+        auto p = lib.symbols_dir / (c->name + ".json");
+        auto def = lib.default_symbols.find(id);
+        if (def != lib.default_symbols.end() && same_symbol(def->second, c->symbol)) {
+            std::error_code ec;
+            fs::remove(p, ec);
+            continue;
+        }
+        fs::create_directories(lib.symbols_dir);
+        write_json(p, to_json(*c));
+    }
+    lib.changed_symbols.clear();
+    lib.dirty = false;
+}
+
 void save_library(model::library& lib, const fs::path& root)
 {
     if (lib.read_only) return;

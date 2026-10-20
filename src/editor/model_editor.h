@@ -23,6 +23,8 @@ private:
     // build button, tool and status of the last build
     void hdl_build(const model::hdl_impl& h);
     void ports_table();
+    // read only ports and parameters of a plugin's model
+    void plugin_tables();
     void params_table();
 
     context ctx;

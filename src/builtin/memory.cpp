@@ -41,7 +41,7 @@ public:
         prev_clk = sim::bit_state::z;
     }
 
-    void inspect(std::vector<sim::inspect_item>& out) const override { out.push_back({"q", q}); }
+    void inspect(std::vector<sim::inspect_item>& out) const override { out.push_back({"q", q, {}}); }
 
     // q's words (bits, x) and the clock
     bool save_state(std::vector<uint8_t>& out) const override

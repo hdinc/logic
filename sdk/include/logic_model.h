@@ -352,6 +352,15 @@ typedef struct logic_model_desc {
     int (*interact)(void* instance, const char* action, int64_t value);
     /* debugging, null if the model has nothing to debug */
     const logic_debug_vtable* debug;
+
+    /* the model's symbol as json text, null for a generated box. either a
+     * cell file as the program saves it (e.g. after editing the symbol of
+     * the model's cell, from <workspace>/plugins/<plugin>/symbols), or just
+     * a symbol whose pins name their port:
+     *   {"shapes": [{"type": "line", "a": [-20, 10], "b": [20, 10]}, ...],
+     *    "pins": [{"port": "clk", "pos": [-30, 0]}, ...]}
+     * coordinates are y up, one grid is 10. every port needs a pin. */
+    const char* symbol;
 } logic_model_desc;
 
 /* the part of logic_model_desc every plugin has */

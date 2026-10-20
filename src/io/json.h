@@ -23,6 +23,14 @@ std::string to_clipboard(const model::cell& part, const std::string& what);
 // null if the text isn't a clipboard of that kind
 std::optional<model::cell> from_clipboard(const std::string& text, const std::string& what);
 
+// a symbol for the ports of c from json: a cell file (its symbol, pins
+// matched to c's ports by the names of the file's ports) or a symbol whose
+// pins name their port:
+//   {"shapes": [...], "pins": [{"port": "clk", "pos": [x, y]}]}
+// shapes and pins get new ids from c. throws std::runtime_error (or a json
+// exception) on invalid input or when a port of c has no pin.
+model::symbol symbol_for(model::cell& c, const nlohmann::json& j);
+
 std::string id_to_string(model::id i);
 model::id id_from_string(const std::string& s);
 

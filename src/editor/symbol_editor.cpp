@@ -509,7 +509,7 @@ void symbol_editor::property_panel()
 
     if (Button("Generate from ports")) {
         if (sym.shapes.empty() && sym.pins.empty()) {
-            ctx.cell.generate_symbol();
+            ctx.cell.generate_symbol(ctx.cell.is_external() ? model::pin_order::declaration : model::pin_order::position);
             ctx.modified();
         } else {
             OpenPopup("Replace symbol?");
@@ -520,7 +520,7 @@ void symbol_editor::property_panel()
     if (BeginPopupModal("Replace symbol?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         TextUnformatted("This replaces all shapes and pins of the symbol.");
         if (Button("Replace")) {
-            ctx.cell.generate_symbol();
+            ctx.cell.generate_symbol(ctx.cell.is_external() ? model::pin_order::declaration : model::pin_order::position);
             selection.clear();
             ctx.modified();
             CloseCurrentPopup();

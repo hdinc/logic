@@ -1,6 +1,7 @@
 #include "json.h"
 
 #include <algorithm>
+#include <map>
 #include <cstdio>
 #include <optional>
 #include <stdexcept>
@@ -127,7 +128,7 @@ const char* const backend_names[] = {"verilator", "icarus", "ghdl"};
 shape shape_from_json(const json& j)
 {
     shape s;
-    s.id = j.at("id");
+    s.id = j.value("id", model::id{0});
     auto type = j.at("type").get<std::string>();
     if (type == "line") {
         s.geom = line{vec(j.at("a")), vec(j.at("b"))};
@@ -256,6 +257,42 @@ json to_json(const cell& c)
     }
 
     return j;
+}
+
+symbol symbol_for(cell& c, const json& j)
+{
+    const json* sym = &j;
+    // a cell file's pins name its ports by id
+    std::map<id, std::string> file_ports;
+    if (j.contains("symbol")) {
+        sym = &j.at("symbol");
+        for (auto& p : j.at("ports"))
+            file_ports[p.at("id").get<id>()] = p.at("name").get<std::string>();
+    }
+
+    symbol s;
+    for (auto& js : sym->at("shapes")) {
+        auto sh = shape_from_json(js);
+        sh.id = c.new_id();
+        s.shapes.push_back(std::move(sh));
+    }
+    for (auto& jp : sym->at("pins")) {
+        auto& pj = jp.at("port");
+        std::string name;
+        if (pj.is_string()) {
+            name = pj.get<std::string>();
+        } else {
+            auto it = file_ports.find(pj.get<id>());
+            if (it == file_ports.end()) throw std::runtime_error("a pin of an unknown port");
+            name = it->second;
+        }
+        auto port = std::find_if(c.ports.begin(), c.ports.end(), [&](auto& p) { return p.name == name; });
+        if (port == c.ports.end()) throw std::runtime_error("no port '" + name + "'");
+        s.pins.push_back({c.new_id(), port->id, vec(jp.at("pos"))});
+    }
+    for (auto& p : c.ports)
+        if (!s.find_pin_of_port(p.id)) throw std::runtime_error("no pin for port '" + p.name + "'");
+    return s;
 }
 
 cell cell_from_json(const json& j)
