@@ -4,11 +4,13 @@
 
 namespace logic::editor {
 
-// 2d view of the world: zoom with the mouse wheel, pan with right drag
+// 2d view of the world: zoom with the mouse wheel (smoothly) or a middle
+// drag, pan with a right drag
 class canvas {
 public:
-    // size of the viewport in pixels, set every frame before drawing
-    void set_size(glm::vec2 size);
+    // every frame before the input and drawing: the size of the viewport in
+    // pixels. moves a zoom on.
+    void begin_frame(glm::vec2 size);
 
     // mouse position in normalized device coordinates [-1, 1], y up
     void set_mouse(glm::vec2 ndc) { mouse = ndc; }
@@ -28,10 +30,10 @@ public:
     // the same zoom as another view of the same world, and the same point
     // in its bottom left corner: views in the same window (editing and
     // simulating) share that corner, the simulation has a toolbar row more
-    // above. takes effect with the next set_size.
+    // above. takes effect with the next begin_frame.
     void copy_camera(const canvas& other)
     {
-        zoom = other.zoom;
+        zoom = target_zoom = other.zoom;
         center = other.center;
         anchor = other.to_world({-1.0f, -1.0f});
         anchored = true;
@@ -48,12 +50,21 @@ private:
     glm::vec2 center{0.0f, 0.0f};
     float zoom = 0.01f;
 
+    // the wheel sets the zoom to go to, begin_frame moves there over a few
+    // frames with this world point staying at this screen point
+    float target_zoom = 0.01f;
+    glm::vec2 zoom_world{0.0f, 0.0f};
+    glm::vec2 zoom_ndc{0.0f, 0.0f};
+
     // keep this world point in the bottom left corner, see copy_camera
     glm::vec2 anchor{0.0f, 0.0f};
     bool anchored = false;
 
     bool panning = false;
     glm::vec2 pan_last{0.0f, 0.0f};
+
+    bool drag_zooming = false;
+    float zoom_last_y = 0.0f;
 };
 
 }

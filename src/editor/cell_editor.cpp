@@ -100,7 +100,7 @@ void cell_editor::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     glm::vec2 ndc{2.0f * (mouse.x - screen_pos.x) / size.x - 1.0f, 1.0f - 2.0f * (mouse.y - screen_pos.y) / size.y};
 
     canvas& c = show_symbol ? symbol.view : schematic->view;
-    c.set_size({size.x, size.y});
+    c.begin_frame({size.x, size.y});
     c.set_mouse(ndc);
 
     if (locked()) {

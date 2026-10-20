@@ -83,7 +83,7 @@ void sim_view::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
 
     auto mouse = GetMousePos();
     glm::vec2 ndc{2.0f * (mouse.x - screen_pos.x) / size.x - 1.0f, 1.0f - 2.0f * (mouse.y - screen_pos.y) / size.y};
-    e.view.set_size({size.x, size.y});
+    e.view.begin_frame({size.x, size.y});
     e.view.set_mouse(ndc);
 
     e.sim = &s->sim();
@@ -97,7 +97,7 @@ void sim_view::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     // the path may have changed, draw what is shown now
     auto& shown = current();
     auto& de = editor_of(*shown.cell);
-    de.view.set_size({size.x, size.y});
+    de.view.begin_frame({size.x, size.y});
     de.sim = &s->sim();
     de.sim_scope = &shown;
 

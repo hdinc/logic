@@ -41,7 +41,7 @@ public:
     // when hovered, drags continue outside the editor area.
     void process_inputs(bool hovered);
 
-    // draws into the currently bound framebuffer, after view.set_size()
+    // draws into the currently bound framebuffer, after view.begin_frame()
     void draw();
 
     void property_panel();
