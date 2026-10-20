@@ -1,5 +1,6 @@
 // tests for the c model plugins with the example plugin of the sdk.
 // usage: plugin_test <logic_examples plugin> <bad plugin> <logic_chips plugin> <test rom folder>
+//                    [<logic_avr plugin>, empty or missing without simavr]
 
 #include "../sdk/include/logic_model.h"
 #include "../src/builtin/builtin.h"
@@ -27,7 +28,7 @@ static int failures = 0;
         }                                                                        \
     } while (0)
 
-static fs::path examples_path, bad_path, chips_path, roms_path;
+static fs::path examples_path, bad_path, chips_path, roms_path, avr_path;
 
 static value bit(bool b) { return sim::known(b, 1); }
 
@@ -636,6 +637,269 @@ static void test_m6502_schematic()
     fs::remove_all(dir);
 }
 
+// avr instructions for hand written test programs (atmega328p io addresses)
+namespace avr_asm {
+const int pinb = 0x03, ddrb = 0x04, portb = 0x05, smcr = 0x33;
+const int ucsr0a = 0xC0, ucsr0b = 0xC1, ubrr0l = 0xC4, udr0 = 0xC6;
+uint16_t sbi(int a, int b) { return uint16_t(0x9A00 | (a << 3) | b); }
+uint16_t cbi(int a, int b) { return uint16_t(0x9800 | (a << 3) | b); }
+uint16_t sbic(int a, int b) { return uint16_t(0x9900 | (a << 3) | b); }
+uint16_t sbis(int a, int b) { return uint16_t(0x9B00 | (a << 3) | b); }
+uint16_t ldi(int d, int k) { return uint16_t(0xE000 | ((k & 0xF0) << 4) | ((d - 16) << 4) | (k & 0x0F)); }
+uint16_t out(int a, int r) { return uint16_t(0xB800 | ((a & 0x30) << 5) | (r << 4) | (a & 0x0F)); }
+uint16_t dec(int d) { return uint16_t(0x940A | (d << 4)); }
+uint16_t sbrs(int r, int b) { return uint16_t(0xFE00 | (r << 4) | b); }
+// relative jumps from word address at to word address to
+uint16_t brne(int at, int to) { return uint16_t(0xF401 | (((to - at - 1) & 0x7F) << 3)); }
+uint16_t rjmp(int at, int to) { return uint16_t(0xC000 | ((to - at - 1) & 0xFFF)); }
+// two words each
+std::vector<uint16_t> sts(int k, int r) { return {uint16_t(0x9200 | (r << 4)), uint16_t(k)}; }
+std::vector<uint16_t> lds(int d, int k) { return {uint16_t(0x9000 | (d << 4)), uint16_t(k)}; }
+const uint16_t sei = 0x9478, cli = 0x94F8, sleep = 0x9588;
+
+// a program from words and lists of words, written as a binary file
+struct program {
+    std::vector<uint16_t> words;
+    program& operator<<(uint16_t w)
+    {
+        words.push_back(w);
+        return *this;
+    }
+    program& operator<<(const std::vector<uint16_t>& ws)
+    {
+        words.insert(words.end(), ws.begin(), ws.end());
+        return *this;
+    }
+    int here() const { return (int)words.size(); }
+    void write(const fs::path& p) const
+    {
+        std::ofstream o(p, std::ios::binary);
+        for (auto w : words) {
+            o.put(char(w & 0xFF));
+            o.put(char(w >> 8));
+        }
+    }
+};
+}
+
+// an atmega328p in a fixture, with the program in a temporary folder
+struct avr_fixture : fixture {
+    fs::path dir;
+    int mcu = -1;
+
+    explicit avr_fixture(const avr_asm::program& prog, const char* name = "avr")
+    {
+        dir = fs::temp_directory_path() / (std::string("logic_plugin_test_") + name);
+        fs::create_directories(dir);
+        prog.write(dir / "firmware.bin");
+        lib->dir = dir;
+        auto& c = model_cell("atmega328p", "logic_avr");
+        mcu = place(c.id, {0, 0}, {{"firmware", std::string("firmware.bin")}});
+    }
+    ~avr_fixture() { fs::remove_all(dir); }
+
+    // a top port on a pin of the mcu
+    int at(const std::string& pin, model::direction dir) { return port(dir, this->pin(mcu, pin)); }
+};
+
+static void test_avr_blink()
+{
+    using namespace avr_asm;
+    // sbi ddrb,5; ldi r24,0x20; loop: out pinb,r24; ldi r25,100; wait: dec r25; brne wait; rjmp loop
+    // 1 + 1 + 99 * 3 + 2 + 2 = 303 cycles per toggle
+    program p;
+    p << sbi(ddrb, 5) << ldi(24, 0x20);
+    int loop = p.here();
+    p << out(pinb, 24) << ldi(25, 100);
+    int wait = p.here();
+    p << dec(25) << brne(p.here(), wait);
+    p << rjmp(p.here(), loop);
+
+    avr_fixture f(p, "avr_blink");
+    int led = f.at("PB5", model::direction::output);
+    auto s = f.simulate();
+    CHECK(s.problems().empty());
+    CHECK(s.port_value(led) == sim::floating(1));
+
+    // the times it changes
+    std::vector<sim::time> edges;
+    auto last = s.port_value(led);
+    while (s.now() < 200 * sim::us && s.step()) {
+        auto v = s.port_value(led);
+        if (v != last) edges.push_back(s.now());
+        last = v;
+    }
+    CHECK(edges.size() > 5);
+    // sbi (2 cycles) makes it an output at 0, out (1 cycle) toggles it
+    if (edges.size() > 5) {
+        const sim::time cycle = 62500;
+        CHECK(edges[0] == 2 * cycle);
+        CHECK(edges[1] == 4 * cycle);
+        for (size_t k = 2; k + 1 < edges.size(); k++)
+            CHECK(edges[k + 1] - edges[k] == 303 * cycle);
+    }
+}
+
+static void test_avr_inputs()
+{
+    using namespace avr_asm;
+    // pb1 follows pb0, with pb0's pull-up on
+    program p;
+    p << sbi(ddrb, 1) << sbi(portb, 0);
+    int loop = p.here();
+    p << sbis(pinb, 0) << cbi(portb, 1) << sbic(pinb, 0) << sbi(portb, 1);
+    p << rjmp(p.here(), loop);
+
+    avr_fixture f(p, "avr_inputs");
+    int in = f.at("PB0", model::direction::input);
+    int outp = f.at("PB1", model::direction::output);
+    auto s = f.simulate();
+    CHECK(s.problems().empty());
+
+    s.set_input(in, sim::floating(1));
+    s.run_until(100 * sim::us);
+    CHECK(s.port_value(outp) == bit(true));
+    s.set_input(in, bit(false));
+    s.run_until(200 * sim::us);
+    CHECK(s.port_value(outp) == bit(false));
+    s.set_input(in, bit(true));
+    s.run_until(300 * sim::us);
+    CHECK(s.port_value(outp) == bit(true));
+    // seen within run ahead (10 us) and a few cycles
+    s.set_input(in, bit(false));
+    s.run_until(s.now() + 12 * sim::us);
+    CHECK(s.port_value(outp) == bit(false));
+}
+
+static void test_avr_serial()
+{
+    using namespace avr_asm;
+    // 9600 baud at 16 MHz (ubrr 103), sends "Hi", then echoes what comes in
+    program p;
+    p << ldi(24, 103) << sts(ubrr0l, 24) << ldi(24, 0x18) << sts(ucsr0b, 24);
+    p << ldi(24, 'H') << sts(udr0, 24);
+    int empty = p.here();
+    p << lds(25, ucsr0a) << sbrs(25, 5);
+    p << rjmp(p.here(), empty);
+    p << ldi(24, 'i') << sts(udr0, 24);
+    int echo = p.here();
+    p << lds(25, ucsr0a) << sbrs(25, 7);
+    p << rjmp(p.here(), echo);
+    p << lds(24, udr0) << sts(udr0, 24);
+    p << rjmp(p.here(), echo);
+
+    avr_fixture f(p, "avr_serial");
+    int rx = f.at("PD0", model::direction::input);
+    int t = f.place(model::builtin_cell_id("terminal"), {400, 600}, {{"baud", int64_t(9600)}});
+    auto txd = f.pin(f.mcu, "PD1"), term = f.pin(t, "rx");
+    f.sch().wires.push_back({f.top->new_id(), txd, {txd.x + 100, txd.y}});
+    f.sch().wires.push_back({f.top->new_id(), {txd.x + 100, txd.y}, {txd.x + 100, term.y}});
+    f.sch().wires.push_back({f.top->new_id(), {txd.x + 100, term.y}, term});
+    auto s = f.simulate();
+    CHECK(s.problems().empty());
+
+    s.set_input(rx, bit(true));
+    s.run_until(5 * sim::ms);
+    auto items = s.inspect(s.root(), t);
+    CHECK(items.size() == 1 && items[0].text == "Hi");
+
+    // a byte into rxd at 9600 baud comes back
+    const sim::time bit_time = sim::seconds / 9600;
+    uint16_t frame = uint16_t(('!' << 1) | (1 << 9));
+    for (int k = 0; k < 10; k++) {
+        s.set_input(rx, bit((frame >> k) & 1));
+        s.run_until(s.now() + bit_time);
+    }
+    s.run_until(s.now() + 3 * sim::ms);
+    items = s.inspect(s.root(), t);
+    CHECK(items.size() == 1 && items[0].text == "Hi!");
+}
+
+static void test_avr_debugger()
+{
+    using namespace avr_asm;
+    program p;
+    p << sbi(ddrb, 5) << ldi(24, 0x20);
+    int loop = p.here();
+    p << out(pinb, 24) << ldi(25, 100);
+    int wait = p.here();
+    p << dec(25) << brne(p.here(), wait);
+    p << rjmp(p.here(), loop);
+
+    avr_fixture f(p, "avr_debugger");
+    auto s = f.simulate();
+    auto dbg = s.component_of(s.root(), f.mcu)->debug();
+    CHECK(dbg != nullptr);
+    if (!dbg) return;
+
+    auto mems = dbg->memories();
+    CHECK(mems.size() == 3 && mems[0].size == 32768 && mems[1].size == 2304 && mems[2].size == 1024);
+    uint8_t first[2];
+    CHECK(dbg->read_memory(0, 0, first) && first[0] == 0x25 && first[1] == 0x9A);
+    std::string text;
+    CHECK(dbg->disassemble(0, text) == 2 && text == "sbi 0x04, 5");
+    CHECK(dbg->disassemble(4, text) == 2 && text == "out 0x03, r24");
+    CHECK(dbg->disassemble(10, text) == 2 && text == "brne 0x0008");
+
+    // byte addresses: the out is at 4
+    dbg->set_breakpoint(4, true);
+    CHECK(!s.run_until(sim::ms));
+    CHECK(s.paused().find("breakpoint") != std::string::npos);
+    CHECK(dbg->pc() == 4u);
+    dbg->step_instruction();
+    CHECK(!s.run_until(sim::ms));
+    CHECK(s.paused().find("step") != std::string::npos);
+    CHECK(dbg->pc() == 6u);
+    auto items = s.inspect(s.root(), f.mcu);
+    CHECK(items.size() == 5 && items[0].name == "pc" && items[0].v == sim::known(6, 16));
+    // the registers are the start of the data memory
+    uint8_t r24 = 0;
+    CHECK(dbg->read_memory(1, 24, std::span(&r24, 1)) && r24 == 0x20);
+
+    // on the simulation thread, running goes on after the breakpoint
+    sim::runner r(std::make_unique<sim::simulator>(f.ws, *f.top, f.factory));
+    r.set_speed(0.0);
+    int mcu = f.mcu;
+    r.post([mcu](sim::simulator& sim) { sim.component_of(sim.root(), mcu)->debug()->set_breakpoint(4, true); });
+    auto run_to_pause = [&] {
+        r.run(true);
+        for (int k = 0; k < 200 && r.running(); k++)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        r.post([](sim::simulator&) {});
+        r.wait_idle();
+        return r.view().now();
+    };
+    auto a = run_to_pause();
+    auto b = run_to_pause();
+    CHECK(r.view().paused().find("breakpoint") != std::string::npos);
+    CHECK(b > a);
+}
+
+static void test_avr_sleep()
+{
+    using namespace avr_asm;
+    // sleeping without timers: nothing to wake it, no busy waking
+    program p;
+    p << ldi(24, 1) << out(smcr, 24) << sei;
+    int again = p.here();
+    p << sleep << rjmp(p.here(), again);
+
+    avr_fixture f(p, "avr_sleep");
+    auto s = f.simulate();
+    s.run_until(sim::ms);
+    CHECK(s.next_event() == sim::never);
+    auto items = s.inspect(s.root(), f.mcu);
+    CHECK(items.size() > 4 && items[4].name == "sleeping" && items[4].v == bit(true));
+
+    // with interrupts off it stops for good
+    program q;
+    q << cli << sleep;
+    avr_fixture g(q, "avr_sleep_cli");
+    auto t = g.simulate();
+    t.run_until(sim::ms);
+    CHECK(t.next_event() == sim::never);
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 5) {
@@ -646,6 +910,7 @@ int main(int argc, char** argv)
     bad_path = fs::absolute(argv[2]);
     chips_path = fs::absolute(argv[3]);
     roms_path = fs::absolute(argv[4]);
+    if (argc > 5 && argv[5][0]) avr_path = fs::absolute(argv[5]);
 
     test_discovery();
     test_counter();
@@ -659,6 +924,15 @@ int main(int argc, char** argv)
     test_uart_to_terminal();
     test_m6502_functional();
     test_m6502_schematic();
+    if (avr_path.empty()) {
+        std::printf("  no avr plugin (simavr missing), avr tests skipped\n");
+    } else {
+        test_avr_blink();
+        test_avr_inputs();
+        test_avr_serial();
+        test_avr_debugger();
+        test_avr_sleep();
+    }
 
     if (failures) {
         std::printf("%d check(s) failed\n", failures);

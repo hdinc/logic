@@ -108,6 +108,25 @@ set_target_properties(logic_chips PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins)
 add_dependencies(logic logic_chips)
 
+# avr microcontrollers with the system's simavr, skipped without it
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(SIMAVR QUIET IMPORTED_TARGET simavr)
+endif()
+if(SIMAVR_FOUND)
+    logic_add_model(logic_avr plugins/avr/avr.cpp plugins/avr/mcu.cpp plugins/avr/disasm.cpp)
+    target_link_libraries(logic_avr PRIVATE PkgConfig::SIMAVR)
+    target_compile_options(logic_avr PRIVATE ${LOGIC_WARNINGS})
+    set_target_properties(logic_avr PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins)
+    add_dependencies(logic logic_avr)
+    set(LOGIC_AVR_PLUGIN $<TARGET_FILE:logic_avr>)
+else()
+    message(STATUS "simavr not found, the avr plugin is skipped")
+    set(LOGIC_AVR_PLUGIN "")
+endif()
+
 enable_testing()
 
 add_executable(model_test tests/model_test.cpp)
@@ -130,8 +149,11 @@ add_executable(plugin_test tests/plugin_test.cpp)
 target_link_libraries(plugin_test logic_core)
 target_compile_options(plugin_test PRIVATE ${LOGIC_WARNINGS})
 add_dependencies(plugin_test logic_examples logic_chips test_bad_plugin)
+if(SIMAVR_FOUND)
+    add_dependencies(plugin_test logic_avr)
+endif()
 add_test(NAME plugin_test COMMAND plugin_test $<TARGET_FILE:logic_examples> $<TARGET_FILE:test_bad_plugin> $<TARGET_FILE:logic_chips>
-    ${CMAKE_SOURCE_DIR}/tests/roms)
+    ${CMAKE_SOURCE_DIR}/tests/roms "${LOGIC_AVR_PLUGIN}")
 
 # needs verilator, skipped without it. builds are cached between runs.
 add_executable(hdl_test tests/hdl_test.cpp)
