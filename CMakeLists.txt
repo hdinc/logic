@@ -49,6 +49,7 @@ add_library(logic_core STATIC
     src/sim/value.cpp
     src/sim/simulator.cpp
     src/sim/runner.cpp
+    src/sim/waveform.cpp
     src/plugin/dynlib.cpp
     src/plugin/registry.cpp
     src/plugin/libraries.cpp
@@ -86,6 +87,7 @@ add_executable(logic
     src/editor/file_dialog.cpp
     src/editor/sim_session.cpp
     src/editor/sim_view.cpp
+    src/editor/waveform_view.cpp
 )
 
 include(Hd/cmake/resource.cmake)
@@ -145,6 +147,11 @@ add_executable(sim_test tests/sim_test.cpp)
 target_link_libraries(sim_test logic_core)
 target_compile_options(sim_test PRIVATE ${LOGIC_WARNINGS})
 add_test(NAME sim_test COMMAND sim_test)
+
+add_executable(waveform_test tests/waveform_test.cpp src/editor/waveform_view.cpp)
+target_link_libraries(waveform_test logic_core imgui)
+target_compile_options(waveform_test PRIVATE ${LOGIC_WARNINGS})
+add_test(NAME waveform_test COMMAND waveform_test)
 
 # a plugin that refuses every abi version, only for the tests
 logic_add_model(test_bad_plugin tests/plugins/bad_plugin.c)

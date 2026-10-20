@@ -1368,6 +1368,89 @@ static void test_rom_ram()
     std::filesystem::remove_all(dir);
 }
 
+static void test_waveforms()
+{
+    fixture f;
+    f.place("clock", {0, 0}, {{"frequency", int64_t(1000)}});
+    int out = f.port(model::direction::output, {10, 0});
+    int bus = f.port(model::direction::inout, {100, 100}, 70);
+    f.port(model::direction::output, {100, 100}, 70);
+    auto make = [&] { return std::make_unique<sim::simulator>(f.ws, *f.top, builtin::factory()); };
+    auto s = make();
+    int net = s->net_of_port(s->root(), out);
+    int bus_net = s->net_of_port(s->root(), bus);
+    s->waveforms.add(*s, net, "clk");
+    s->waveforms.add(*s, net, "alias");
+    s->waveforms.add(*s, bus_net, "bus");
+    s->waveforms.add(*s, -1, "unconnected");
+    CHECK(s->waveforms.read().signals.size() == 2);
+    if (s->waveforms.read().signals.size() != 2) return;
+
+    // Forty clock edges in one advance: display snapshots would miss these.
+    s->run_until(20 * sim::ms);
+    auto data = s->waveforms.read();
+    CHECK(data.now == 20 * sim::ms);
+    CHECK(data.signals[0].samples.size() == 41);
+    for (int k = 0; k <= 40; k++) {
+        CHECK(data.signals[0].samples[k].at == k * 500 * sim::us);
+        CHECK(data.signals[0].samples[k].v == bit(k % 2));
+    }
+    auto range = s->waveforms.read(750 * sim::us, 1250 * sim::us);
+    CHECK(range.signals[0].samples.size() == 2);
+    CHECK(range.signals[0].samples.front().at == 500 * sim::us);
+    CHECK(range.signals[0].samples.back().at == sim::ms);
+
+    // Wide buses, x/z, and multiple actions at the same simulated timestamp.
+    CHECK(data.signals[1].samples.front().v == sim::floating(70));
+    s->set_input(bus, sim::known(0xAB, 70));
+    s->set_input(bus, sim::unknown(70));
+    auto buses = s->waveforms.read().signals[1].samples;
+    CHECK(buses.size() == 2 && buses.back().v == sim::unknown(70));
+    s->run_until(21 * sim::ms);
+    s->set_input(bus, sim::floating(70));
+    CHECK(s->waveforms.read().signals[1].samples.back().v == sim::floating(70));
+
+    s->waveforms.clear(*s);
+    auto generation = s->waveforms.read().generation;
+    CHECK(s->waveforms.read().signals[0].samples.size() == 1);
+    s->reset();
+    data = s->waveforms.read();
+    CHECK(data.generation > generation && data.now == 0);
+    CHECK(data.signals[0].samples.size() == 1 && data.signals[0].samples[0].at == 0);
+    CHECK(data.signals[0].samples[0].v == bit(false));
+
+    // Retention remains bounded, with the earliest retained value usable.
+    s->run_until((sim::waveform_recorder::max_samples + 20) * 500 * sim::us);
+    data = s->waveforms.read();
+    CHECK(data.signals[0].samples.size() == sim::waveform_recorder::max_samples);
+    CHECK(data.signals[0].truncated);
+    CHECK(data.signals[0].first == data.signals[0].samples.front().at);
+    s->waveforms.remove(net);
+    CHECK(s->waveforms.read().signals.size() == 1);
+
+    // Recording lives on the worker, survives pausing, and resumes on step.
+    sim::runner r(make());
+    r.post([net](sim::simulator& sim) { sim.waveforms.add(sim, net, "clk"); });
+    r.wait_idle();
+    r.set_speed(0);
+    r.run(true);
+    CHECK(eventually(r, [&] { return r.view().now() >= 10 * sim::ms; }));
+    r.run(false);
+    r.post([](sim::simulator&) {});
+    r.wait_idle();
+    auto paused = r.sim().waveforms.read();
+    CHECK(paused.signals[0].samples.size() > 1);
+    auto last_time = paused.now;
+    // Readers can safely inspect the same history repeatedly while paused.
+    CHECK(r.sim().waveforms.read().now == last_time);
+    r.step();
+    r.wait_idle();
+    CHECK(r.sim().waveforms.read().now == last_time + 500 * sim::us);
+    r.reset();
+    r.wait_idle();
+    CHECK(r.sim().waveforms.read().signals[0].samples.size() == 1);
+}
+
 int main()
 {
     test_values();
@@ -1391,6 +1474,7 @@ int main()
     test_inout();
     test_inspect_state();
     test_runner();
+    test_waveforms();
     test_firmware();
     test_io_parts();
     test_rom_ram();

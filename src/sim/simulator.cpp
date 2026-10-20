@@ -497,6 +497,7 @@ bool simulator::run(time t, int max_events)
     }
 
     if (t > cur.now) cur.now = t;
+    waveforms.capture(*this);
     return true;
 }
 
@@ -519,6 +520,7 @@ bool simulator::step()
 void simulator::reset()
 {
     cur.now = 0;
+    waveforms.clear(*this);
     cur.oscillating = false;
     cur.paused.clear();
     events.clear();
@@ -656,6 +658,7 @@ void simulator::settle()
         for (int n : changed)
             update_net(n);
     }
+    waveforms.capture(*this);
 }
 
 }

@@ -55,6 +55,9 @@ private:
     void breadcrumb();
     void canvas_inputs(bool hovered, schematic_editor& e);
     void instance_menu();
+    void signals_menu();
+    void record_signal(int net, const std::string& name);
+    int pin_net(int instance, int port) const;
     // the state and the debugger of the selected instance
     void instance_panel();
     // selects an instance of the shown scope, -1 for none
@@ -74,6 +77,8 @@ private:
 
     // instance under the right click menu
     int menu_instance = -1;
+    int menu_net = -1;
+    std::string menu_signal_name;
 
     // selected in the shown scope, -1 for none
     int selected = -1;

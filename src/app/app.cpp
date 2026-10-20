@@ -238,6 +238,8 @@ void app::draw_gui()
     components_panel();
     library_panel();
     editor_panel();
+    for (auto& e : editors)
+        if (auto& s = e->simulation()) s->waveforms.gui(s->run, e->cell().name, e->cell().id);
     open_instance_tabs();
     properties_panel();
     hierarchy_panel();
@@ -371,6 +373,19 @@ void app::menu_bar()
 
         if (BeginMenu("View")) {
             if (MenuItem("Settings...")) show_settings = true;
+            if (BeginMenu("Waveforms")) {
+                bool any = false;
+                for (auto& e : editors) {
+                    if (auto& s = e->simulation()) {
+                        PushID((int)e->cell().id);
+                        MenuItem(e->cell().name.c_str(), nullptr, &s->waveforms.visible);
+                        PopID();
+                        any = true;
+                    }
+                }
+                if (!any) TextDisabled("Start a simulation with F5");
+                EndMenu();
+            }
             Separator();
             MenuItem("Grid", "G", &renderer.show_grid);
             if (BeginMenu("Grid style", renderer.show_grid)) {

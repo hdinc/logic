@@ -124,6 +124,12 @@ void sim_view::toolbar()
     auto& run = s->run;
     auto& sim = s->sim();
 
+    if (Button("Waveforms")) s->waveforms.visible = true;
+    SameLine();
+    if (Button("Signals...")) OpenPopup("signals");
+    signals_menu();
+    SameLine();
+
     if (Button("Reset")) {
         run.run(false);
         run.reset();
@@ -279,11 +285,111 @@ void sim_view::canvas_inputs(bool hovered, schematic_editor& e)
     if (IsMouseReleased(ImGuiMouseButton_Right)) {
         auto d = GetMouseDragDelta(ImGuiMouseButton_Right, 0.0f);
         int i = instance_at();
-        if (d.x * d.x + d.y * d.y < 9.0f && i >= 0 && sc.child(i)) {
+        if (d.x * d.x + d.y * d.y < 9.0f) {
             menu_instance = i;
-            OpenPopup("instance");
+            menu_net = -1;
+            float tol = std::max(3.0f, e.view.pixels(6));
+            for (int k = 0; k < (int)sc.cell->ports.size(); k++) {
+                auto& p = sc.cell->ports[k];
+                if (glm::length(m - glm::vec2(p.pos)) <= std::max(6.0f, tol) ||
+                    glm::length(m - glm::vec2(model::connection_point(p))) <= tol) {
+                    menu_net = sim.net_of_port(sc, k);
+                    menu_signal_name = p.name;
+                    break;
+                }
+            }
+            auto sch = sc.cell->get_schematic();
+            if (menu_net < 0 && sch) {
+                for (int j = (int)sch->instances.size() - 1; j >= 0 && menu_net < 0; j--) {
+                    auto& inst = sch->instances[j];
+                    auto iface = ws.interface_of(inst);
+                    if (!iface) continue;
+                    for (auto& pin : iface.symbol->pins) {
+                        if (glm::length(m - glm::vec2(model::pin_position(inst, pin))) > tol) continue;
+                        for (int k = 0; k < (int)iface.ports->size(); k++) {
+                            if ((*iface.ports)[k].id != pin.port) continue;
+                            menu_net = pin_net(j, k);
+                            menu_signal_name = inst.name + "." + (*iface.ports)[k].name;
+                        }
+                    }
+                }
+            }
+            if (menu_net < 0) {
+                auto wire = e.wire_at(m);
+                if (wire != model::no_id) {
+                    menu_net = sim.net_of_wire(sc, wire);
+                    menu_signal_name = "wire " + std::to_string(wire);
+                }
+            }
+            if (menu_net >= 0 || menu_instance >= 0) OpenPopup("instance");
         }
     }
+}
+
+int sim_view::pin_net(int instance, int port) const
+{
+    auto& sc = current();
+    auto& nets = sc.nets->instance_nets;
+    int local = instance >= 0 && instance < (int)nets.size() && port >= 0 && port < (int)nets[instance].size() ? nets[instance][port] : -1;
+    return local >= 0 ? sc.flat_net[local] : -1;
+}
+
+void sim_view::record_signal(int net, const std::string& name)
+{
+    if (net < 0 || s->sim().net_width(net) == 0) return;
+    auto& sc = current();
+    auto label = s->sim().root().cell->name + "/" + (sc.path.empty() ? "" : sc.path + "/") + name;
+    s->run.post([net, label](sim::simulator& sim) { sim.waveforms.add(sim, net, label); });
+    s->waveforms.visible = true;
+}
+
+void sim_view::signals_menu()
+{
+    using namespace ImGui;
+    if (!BeginPopup("signals")) return;
+    auto& sc = current();
+    auto recorded = s->run.sim().waveforms.read(0, 0);
+    TextDisabled("Add signals in %s", scope_label(sc).c_str());
+    TextDisabled("%zu / %zu signals (connected aliases share a trace)", recorded.signals.size(), sim::waveform_recorder::max_signals);
+    auto item = [&](int net, const std::string& name) {
+        bool exists = std::any_of(recorded.signals.begin(), recorded.signals.end(), [net](auto& signal) { return signal.net == net; });
+        bool enabled = net >= 0 && s->sim().net_width(net) > 0 && !exists && recorded.signals.size() < sim::waveform_recorder::max_signals;
+        PushID(net);
+        if (MenuItem(name.c_str(), nullptr, exists, enabled)) record_signal(net, name);
+        PopID();
+    };
+    if (BeginMenu("Cell ports")) {
+        for (int k = 0; k < (int)sc.cell->ports.size(); k++) item(s->sim().net_of_port(sc, k), sc.cell->ports[k].name);
+        EndMenu();
+    }
+    if (auto sch = sc.cell->get_schematic()) {
+        if (BeginMenu("Instance pins")) {
+            for (int i = 0; i < (int)sch->instances.size(); i++) {
+                auto& inst = sch->instances[i];
+                PushID(i);
+                if (BeginMenu(inst.name.c_str())) {
+                    auto iface = ws.interface_of(inst);
+                    if (iface)
+                        for (int k = 0; k < (int)iface.ports->size(); k++) item(pin_net(i, k), inst.name + "." + (*iface.ports)[k].name);
+                    EndMenu();
+                }
+                PopID();
+            }
+            EndMenu();
+        }
+        if (BeginMenu("Wires")) {
+            // Wire segments of the same electrical net need only one entry.
+            std::vector<int> seen;
+            for (auto& wire : sch->wires) {
+                int net = s->sim().net_of_wire(sc, wire.id);
+                if (std::find(seen.begin(), seen.end(), net) != seen.end()) continue;
+                seen.push_back(net);
+                item(net, "wire " + std::to_string(wire.id));
+            }
+            EndMenu();
+        }
+    }
+    EndPopup();
 }
 
 void sim_view::select(int instance)
@@ -304,9 +410,31 @@ void sim_view::instance_menu()
 
     auto& sc = current();
     auto child = menu_instance >= 0 ? sc.child(menu_instance) : nullptr;
-    if (!child) {
-        CloseCurrentPopup();
-    } else {
+    auto recorded = s->run.sim().waveforms.read(0, 0);
+    auto add_item = [&](int net, const std::string& name, const char* label) {
+        bool exists = std::any_of(recorded.signals.begin(), recorded.signals.end(), [net](auto& signal) { return signal.net == net; });
+        bool enabled = net >= 0 && s->sim().net_width(net) > 0 && !exists && recorded.signals.size() < sim::waveform_recorder::max_signals;
+        if (MenuItem(label, nullptr, exists, enabled)) record_signal(net, name);
+    };
+    if (recorded.signals.size() >= sim::waveform_recorder::max_signals)
+        TextDisabled("Signal limit reached; remove a waveform to add another.");
+    if (menu_net >= 0) {
+        TextDisabled("%s", menu_signal_name.c_str());
+        add_item(menu_net, menu_signal_name, "Add to waveforms");
+    }
+    if (menu_instance >= 0 && BeginMenu("Add pins to waveforms")) {
+        auto& inst = sc.cell->get_schematic()->instances[menu_instance];
+        auto iface = ws.interface_of(inst);
+        if (iface) {
+            for (int k = 0; k < (int)iface.ports->size(); k++) {
+                int net = pin_net(menu_instance, k);
+                auto& name = (*iface.ports)[k].name;
+                add_item(net, inst.name + "." + name, name.c_str());
+            }
+        }
+        EndMenu();
+    }
+    if (child) {
         TextDisabled("%s", scope_label(*child).c_str());
         if (Selectable("Open")) path.push_back(menu_instance);
         if (Selectable("Open in new tab")) {

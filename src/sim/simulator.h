@@ -2,6 +2,7 @@
 
 #include "../netlist/netlist.h"
 #include "component.h"
+#include "waveform.h"
 
 #include <map>
 #include <memory>
@@ -66,6 +67,8 @@ struct state {
 // values of their nets.
 class simulator {
 public:
+    waveform_recorder waveforms;
+
     // max steps at one point in time before the circuit counts as oscillating
     static constexpr int max_steps = 10000;
     // max nesting of schematic cells

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../sim/runner.h"
+#include "waveform_view.h"
 
 #include <algorithm>
 #include <chrono>
@@ -68,6 +69,7 @@ public:
     const sim::snapshot& sim() const { return run.view(); }
 
     sim::runner run;
+    waveform_view waveforms;
     model::id top;
 
     // set when any view stops the simulation, the owner then drops it
