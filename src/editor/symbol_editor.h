@@ -45,6 +45,8 @@ public:
     void draw();
 
     void property_panel();
+    // the common properties of several selected shapes and pins
+    void selection_properties();
 
     tool_kind current_tool() const { return kind; }
     // ignored while the current tool is busy
@@ -96,6 +98,8 @@ public:
     void finish_move() {}
     // pins live on the schematic grid, shapes on single units
     int drag_step() const;
+    // see transform_shortcut, about the middle of the selection
+    void transform_selection(int turns, bool mirror);
     void delete_selection();
     void validate_selection();
 

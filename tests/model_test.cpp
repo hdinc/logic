@@ -115,6 +115,28 @@ static void test_generate_symbol()
     CHECK(ys.size() == 2 && ys[0] - ys[1] == model::grid);
 }
 
+static void test_transform_then()
+{
+    // turning or mirroring a placed thing as a whole: its pins end up where
+    // the same change takes their positions
+    glm::ivec2 pos{30, -20}, pivot{10, 40}, pin{20, 10};
+    for (int r = 0; r < 4; r++) {
+        for (bool m : {false, true}) {
+            for (int turns : {0, 1, -1, 2}) {
+                for (bool mirror : {false, true}) {
+                    model::transform xf{r, m};
+                    model::transform change{turns, mirror};
+                    auto before = pos + xf.apply(pin);
+                    auto want = pivot + change.apply(before - pivot);
+                    auto moved = pivot + change.apply(pos - pivot);
+                    auto got = moved + xf.then(turns, mirror).apply(pin);
+                    CHECK(got == want);
+                }
+            }
+        }
+    }
+}
+
 static void test_cycles()
 {
     model::workspace ws;
@@ -605,6 +627,7 @@ int main(int argc, char** argv)
     test_transform();
     test_ports_and_check();
     test_generate_symbol();
+    test_transform_then();
     test_cycles();
     test_history();
     test_params();

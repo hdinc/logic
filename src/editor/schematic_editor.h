@@ -118,7 +118,11 @@ public:
     void finish_move() { normalize(); }
     int drag_step() const { return model::grid; }
     void delete_selection();
-    void rotate_selection();
+    // see transform_shortcut. a single instance turns about its origin,
+    // more elements about the middle of the selection.
+    // the common properties of several selected instances and ports
+    void selection_properties(const std::vector<handle>& elements);
+    void transform_selection(int turns, bool mirror);
 
     // merges and splits wires so every junction is an endpoint
     void normalize();

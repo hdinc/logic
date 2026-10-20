@@ -1,6 +1,7 @@
 #include "symbol_editor.h"
 
 #include <algorithm>
+#include <set>
 
 namespace logic::editor {
 
@@ -272,6 +273,10 @@ void symbol_editor::process_inputs(bool hovered)
             set_tool(tool_kind::text);
     }
 
+    int turns;
+    bool mirror;
+    if (hovered && !busy() && kind == tool_kind::select && transform_shortcut(turns, mirror)) transform_selection(turns, mirror);
+
     active->update(*this, hovered);
     if (active->done) set_tool(tool_kind::select);
 }
@@ -381,6 +386,25 @@ void symbol_editor::move_selection(glm::ivec2 d)
     ctx.modified();
 }
 
+void symbol_editor::transform_selection(int turns, bool mirror)
+{
+    auto b = selection_bounds();
+    if (!b) return;
+    auto pivot = pivot_of(*b);
+    for (auto& h : selection) {
+        if (h.kind == handle::pin) {
+            if (auto p = sym.find_pin(h.id)) p->pos = turn_about(p->pos, pivot, turns, mirror);
+            continue;
+        }
+        auto s = sym.find_shape(h.id);
+        if (!s) continue;
+        // a circle turns with its center, the radius stays
+        if (std::holds_alternative<model::circle>(s->geom) && h.index == 1) continue;
+        model::set_point(*s, h.index, turn_about(model::get_point(*s, h.index), pivot, turns, mirror));
+    }
+    ctx.modified();
+}
+
 void symbol_editor::delete_selection()
 {
     if (selection.empty()) return;
@@ -445,6 +469,50 @@ void symbol_editor::draw_pin(const model::pin& p, glm::vec4 color)
     r.text(port ? port->name : "?", pos + glm::vec2{0, 4}, 6.0f, port ? c.pin : c.error, render::align::center);
 }
 
+void symbol_editor::selection_properties()
+{
+    using namespace ImGui;
+
+    // the selected shapes once each, split in strokes and texts
+    std::vector<model::shape*> strokes, texts;
+    std::set<model::id> seen;
+    size_t pins = 0;
+    for (auto& h : selection) {
+        if (h.kind == handle::pin) {
+            pins++;
+            continue;
+        }
+        if (!seen.insert(h.id).second) continue;
+        if (auto s = sym.find_shape(h.id)) (std::holds_alternative<model::text>(s->geom) ? texts : strokes).push_back(s);
+    }
+
+    SeparatorText("Selection");
+    Text("%zu shapes, %zu pins", strokes.size() + texts.size(), pins);
+    if (!strokes.empty() || !texts.empty()) TextDisabled("changes apply to all of them");
+
+    if (!strokes.empty()) {
+        bool same = std::all_of(strokes.begin(), strokes.end(), [&](auto s) { return s->width == strokes[0]->width; });
+        float w = strokes[0]->width;
+        if (DragFloat("Width", &w, 0.05f, 0.0f, 10.0f, !same ? "mixed" : w == 0.0f ? "normal" : "%.2f", ImGuiSliderFlags_AlwaysClamp)) {
+            for (auto s : strokes)
+                s->width = w;
+            ctx.modified();
+        }
+        SetItemTooltip("stroke width of the lines, beziers, arcs and circles, 0 is the normal width. %.1f is as thick as a bus.", model::bus_stroke);
+    }
+
+    if (!texts.empty()) {
+        auto size_of = [](model::shape* s) { return std::get<model::text>(s->geom).size; };
+        bool same = std::all_of(texts.begin(), texts.end(), [&](auto s) { return size_of(s) == size_of(texts[0]); });
+        float size = size_of(texts[0]);
+        if (SliderFloat("Text size", &size, 1.0f, 40.0f, same ? "%.1f" : "mixed")) {
+            for (auto s : texts)
+                std::get<model::text>(s->geom).size = size;
+            ctx.modified();
+        }
+    }
+}
+
 void symbol_editor::property_panel()
 {
     using namespace ImGui;
@@ -501,6 +569,11 @@ void symbol_editor::property_panel()
             if (DragFloat("Width", &s->width, 0.05f, 0.0f, 10.0f, s->width == 0.0f ? "normal" : "%.2f", ImGuiSliderFlags_AlwaysClamp)) ctx.modified();
             SetItemTooltip("stroke width, 0 is the normal width. %.1f is as thick as a bus.", model::bus_stroke);
         }
+        return;
+    }
+
+    if (!selection.empty()) {
+        selection_properties();
         return;
     }
 

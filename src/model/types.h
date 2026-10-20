@@ -29,6 +29,10 @@ struct transform {
 
     glm::ivec2 apply(glm::ivec2 p) const;
     glm::vec2 apply(glm::vec2 p) const;
+
+    // this transform followed by mirroring (if set) and then turns quarter
+    // turns counter clockwise, as one transform
+    transform then(int turns, bool mirror) const;
     bool operator==(const transform&) const = default;
 };
 

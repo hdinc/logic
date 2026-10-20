@@ -2,6 +2,8 @@
 #include "../render/live.h"
 #include "param_editor.h"
 
+#include <imgui_internal.h>
+
 #include <algorithm>
 #include <cctype>
 #include <map>
@@ -325,9 +327,11 @@ void schematic_editor::process_inputs(bool hovered)
             set_tool(tool_kind::input_port);
         else if (IsKeyPressed(ImGuiKey_O))
             set_tool(tool_kind::output_port);
-        else if (kind == tool_kind::select && IsKeyPressed(ImGuiKey_R))
-            rotate_selection();
     }
+
+    int turns;
+    bool mirror;
+    if (hovered && !busy() && kind == tool_kind::select && transform_shortcut(turns, mirror)) transform_selection(turns, mirror);
 
     active->update(*this, hovered);
     if (active->done) set_tool(tool_kind::select);
@@ -585,20 +589,42 @@ void schematic_editor::delete_selection()
     normalize();
 }
 
-void schematic_editor::rotate_selection()
+void schematic_editor::transform_selection(int turns, bool mirror)
 {
-    bool changed = false;
+    if (selection.empty()) return;
+    glm::ivec2 pivot;
+    if (selection.size() == 1 && selection[0].kind == handle::instance) {
+        auto i = sch.find_instance(selection[0].id);
+        if (!i) return;
+        pivot = i->pos;
+    } else if (auto b = selection_bounds()) {
+        pivot = pivot_of(*b);
+    } else {
+        return;
+    }
+
+    auto turn = [&](glm::ivec2 p) { return turn_about(p, pivot, turns, mirror); };
     for (auto& h : selection) {
-        if (h.kind != handle::instance) continue;
-        if (auto i = sch.find_instance(h.id)) {
-            i->xf.rotation = (i->xf.rotation + 1) % 4;
-            changed = true;
+        switch (h.kind) {
+        case handle::port:
+            if (auto p = ctx.cell.find_port(h.id)) p->pos = turn(p->pos);
+            break;
+        case handle::instance:
+            if (auto i = sch.find_instance(h.id)) {
+                i->pos = turn(i->pos);
+                i->xf = i->xf.then(turns, mirror);
+            }
+            break;
+        case handle::wire_a:
+            if (auto w = sch.find_wire(h.id)) w->a = turn(w->a);
+            break;
+        case handle::wire_b:
+            if (auto w = sch.find_wire(h.id)) w->b = turn(w->b);
+            break;
         }
     }
-    if (changed) {
-        ctx.modified();
-        normalize();
-    }
+    ctx.modified();
+    normalize();
 }
 
 void schematic_editor::normalize()
@@ -752,6 +778,119 @@ void schematic_editor::draw()
     r.end();
 }
 
+void schematic_editor::selection_properties(const std::vector<handle>& elements)
+{
+    using namespace ImGui;
+
+    std::vector<model::instance*> insts;
+    std::vector<model::port*> ports;
+    for (auto& h : elements) {
+        if (h.kind == handle::instance) {
+            if (auto i = sch.find_instance(h.id)) insts.push_back(i);
+        } else if (auto p = ctx.cell.find_port(h.id)) {
+            ports.push_back(p);
+        }
+    }
+
+    SeparatorText("Selection");
+    Text("%zu instances, %zu ports", insts.size(), ports.size());
+    TextDisabled("changes apply to all of them");
+
+    if (!insts.empty()) {
+        SeparatorText("Instances");
+
+        static const char* const angles[] = {"0", "90", "180", "270"};
+        bool same_rot = std::all_of(insts.begin(), insts.end(), [&](auto i) { return i->xf.rotation == insts[0]->xf.rotation; });
+        if (BeginCombo("Rotation", same_rot ? angles[insts[0]->xf.rotation & 3] : "mixed")) {
+            for (int r = 0; r < 4; r++) {
+                if (Selectable(angles[r], same_rot && insts[0]->xf.rotation == r)) {
+                    for (auto i : insts)
+                        i->xf.rotation = r;
+                    ctx.modified();
+                    normalize();
+                }
+            }
+            EndCombo();
+        }
+
+        bool same_mirror = std::all_of(insts.begin(), insts.end(), [&](auto i) { return i->xf.mirror == insts[0]->xf.mirror; });
+        bool m = same_mirror && insts[0]->xf.mirror;
+        PushItemFlag(ImGuiItemFlags_MixedValue, !same_mirror);
+        if (Checkbox("Mirror", &m)) {
+            for (auto i : insts)
+                i->xf.mirror = m;
+            ctx.modified();
+            normalize();
+        }
+        PopItemFlag();
+
+        // the parameters every instance has, with the same definition
+        auto defs = ctx.ws.params_of(*insts[0]);
+        for (size_t k = 1; k < insts.size(); k++) {
+            auto other = ctx.ws.params_of(*insts[k]);
+            std::erase_if(defs, [&](auto& d) { return std::find(other.begin(), other.end(), d) == other.end(); });
+        }
+        if (!defs.empty()) SeparatorText("Common parameters");
+        for (auto& d : defs) {
+            auto value_of = [&](const model::instance* i) {
+                auto it = i->params.find(d.name);
+                return it != i->params.end() ? it->second : d.def;
+            };
+            bool same = std::all_of(insts.begin(), insts.end(), [&](auto i) { return value_of(i) == value_of(insts[0]); });
+            // edited as the first instance's value
+            model::param_values one;
+            if (auto it = insts[0]->params.find(d.name); it != insts[0]->params.end()) one[d.name] = it->second;
+            PushID(d.name.c_str());
+            PushItemFlag(ImGuiItemFlags_MixedValue, !same);
+            bool changed = edit_params({d}, one);
+            PopItemFlag();
+            if (!same) {
+                SameLine();
+                TextDisabled("(mixed)");
+            }
+            PopID();
+            if (changed) {
+                for (auto i : insts) {
+                    if (auto it = one.find(d.name); it != one.end()) i->params[d.name] = it->second;
+                    else i->params.erase(d.name);
+                }
+                ctx.modified();
+                normalize();
+            }
+        }
+    }
+
+    if (!ports.empty()) {
+        SeparatorText("Ports");
+        static const char* const dirs[] = {"input", "output", "inout"};
+        bool same_dir = std::all_of(ports.begin(), ports.end(), [&](auto p) { return p->dir == ports[0]->dir; });
+        if (BeginCombo("Direction", same_dir ? dirs[(int)ports[0]->dir] : "mixed")) {
+            for (int d = 0; d < 3; d++) {
+                if (Selectable(dirs[d], same_dir && (int)ports[0]->dir == d)) {
+                    for (auto p : ports)
+                        p->dir = (model::direction)d;
+                    ctx.modified();
+                    normalize();
+                }
+            }
+            EndCombo();
+        }
+
+        bool same_width = std::all_of(ports.begin(), ports.end(), [&](auto p) { return p->width == ports[0]->width; });
+        int w = ports[0]->width;
+        if (InputInt("Width", &w)) {
+            w = glm::clamp(w, 1, model::max_width);
+            for (auto p : ports)
+                p->width = w;
+            ctx.modified();
+        }
+        if (!same_width) {
+            SameLine();
+            TextDisabled("(mixed)");
+        }
+    }
+}
+
 void schematic_editor::property_panel()
 {
     using namespace ImGui;
@@ -824,6 +963,11 @@ void schematic_editor::property_panel()
         TextUnformatted("Description");
         if (input_multiline("##description", p->description, {-FLT_MIN, GetTextLineHeight() * 4})) ctx.modified();
         SetItemTooltip("shown when hovering the pin of an instance of this cell");
+        return;
+    }
+
+    if (elements.size() > 1) {
+        selection_properties(elements);
         return;
     }
 

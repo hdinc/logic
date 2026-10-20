@@ -26,6 +26,18 @@ glm::vec2 transform::apply(glm::vec2 p) const
     }
 }
 
+transform transform::then(int turns, bool m) const
+{
+    transform t = *this;
+    // mirroring after a rotation r is a rotation -r after mirroring
+    if (m) {
+        t.mirror = !t.mirror;
+        t.rotation = -t.rotation;
+    }
+    t.rotation = ((t.rotation + turns) % 4 + 4) % 4;
+    return t;
+}
+
 bool rect::contains(glm::vec2 p) const
 {
     return p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y;

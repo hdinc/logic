@@ -6,6 +6,32 @@
 
 namespace logic::editor {
 
+// turning and mirroring a selection as a whole: ctrl+r a quarter turn
+// counter clockwise, ctrl+shift+r clockwise, ctrl+m mirrors left and right.
+// false if none of them was pressed.
+inline bool transform_shortcut(int& turns, bool& mirror)
+{
+    auto& io = ImGui::GetIO();
+    if (!io.KeyCtrl) return false;
+    turns = 0;
+    mirror = false;
+    if (ImGui::IsKeyPressed(ImGuiKey_R, false)) turns = io.KeyShift ? -1 : 1;
+    else if (ImGui::IsKeyPressed(ImGuiKey_M, false)) mirror = true;
+    else return false;
+    return true;
+}
+
+// a point of the selection after transform_shortcut's change: mirrored
+// first, then turned, about the pivot
+inline glm::ivec2 turn_about(glm::ivec2 p, glm::ivec2 pivot, int turns, bool mirror)
+{
+    return pivot + model::transform{turns, mirror}.apply(p - pivot);
+}
+
+// the pivot for a selection: the grid point nearest to its middle, so
+// points on the grid stay on it
+inline glm::ivec2 pivot_of(const model::rect& r) { return model::snap((r.min + r.max) * 0.5f, model::grid); }
+
 // what the mouse does in an editor: select, draw wires, place a port, ... the
 // editor has one active tool and goes back to its select tool when a tool is
 // done.
