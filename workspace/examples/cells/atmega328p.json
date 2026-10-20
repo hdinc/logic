@@ -1,0 +1,965 @@
+{
+  "format": 1,
+  "id": "cf1bc47f775b808c",
+  "impl": {
+    "model": "atmega328p",
+    "params": [
+      {
+        "default": "",
+        "description": "program: elf or intel hex from avr-gcc, s-records or binary",
+        "label": "Firmware",
+        "name": "firmware",
+        "type": "text"
+      },
+      {
+        "default": 16000000,
+        "description": "the cpu clock",
+        "label": "Clock (Hz)",
+        "max": 1000000000,
+        "min": 1,
+        "name": "frequency",
+        "type": "integer"
+      },
+      {
+        "default": 10,
+        "description": "how far the chip may run in front of the simulation: inputs are seen up to this late, larger is faster",
+        "label": "Run ahead (us)",
+        "max": 1000000,
+        "min": 0,
+        "name": "run_ahead",
+        "type": "integer"
+      }
+    ],
+    "plugin": "logic_avr",
+    "type": "c_model"
+  },
+  "name": "atmega328p",
+  "next_id": 90,
+  "ports": [
+    {
+      "description": "PB0: ICP1, CLKO, Arduino D8",
+      "dir": "inout",
+      "id": 1,
+      "name": "PB0",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PB1: OC1A, Arduino D9",
+      "dir": "inout",
+      "id": 2,
+      "name": "PB1",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PB2: SS, OC1B, Arduino D10",
+      "dir": "inout",
+      "id": 3,
+      "name": "PB2",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PB3: MOSI, OC2A, Arduino D11",
+      "dir": "inout",
+      "id": 4,
+      "name": "PB3",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PB4: MISO, Arduino D12",
+      "dir": "inout",
+      "id": 5,
+      "name": "PB4",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PB5: SCK, Arduino D13 (the board's led)",
+      "dir": "inout",
+      "id": 6,
+      "name": "PB5",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PC0: ADC0 (digital only), Arduino A0",
+      "dir": "inout",
+      "id": 7,
+      "name": "PC0",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PC1: ADC1 (digital only), Arduino A1",
+      "dir": "inout",
+      "id": 8,
+      "name": "PC1",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PC2: ADC2 (digital only), Arduino A2",
+      "dir": "inout",
+      "id": 9,
+      "name": "PC2",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PC3: ADC3 (digital only), Arduino A3",
+      "dir": "inout",
+      "id": 10,
+      "name": "PC3",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PC4: SDA, Arduino A4",
+      "dir": "inout",
+      "id": 11,
+      "name": "PC4",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PC5: SCL, Arduino A5",
+      "dir": "inout",
+      "id": 12,
+      "name": "PC5",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PD0: RXD, Arduino D0",
+      "dir": "inout",
+      "id": 13,
+      "name": "PD0",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PD1: TXD, Arduino D1",
+      "dir": "inout",
+      "id": 14,
+      "name": "PD1",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PD2: INT0, Arduino D2",
+      "dir": "inout",
+      "id": 15,
+      "name": "PD2",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PD3: INT1, OC2B, Arduino D3",
+      "dir": "inout",
+      "id": 16,
+      "name": "PD3",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PD4: T0, Arduino D4",
+      "dir": "inout",
+      "id": 17,
+      "name": "PD4",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PD5: OC0B, Arduino D5",
+      "dir": "inout",
+      "id": 18,
+      "name": "PD5",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PD6: OC0A, Arduino D6",
+      "dir": "inout",
+      "id": 19,
+      "name": "PD6",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "PD7: Arduino D7",
+      "dir": "inout",
+      "id": 20,
+      "name": "PD7",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "0 holds the chip in reset, it starts like after power on when let go",
+      "dir": "input",
+      "id": 21,
+      "name": "reset_n",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    }
+  ],
+  "symbol": {
+    "pins": [
+      {
+        "id": 27,
+        "port": 21,
+        "pos": [
+          -40,
+          0
+        ]
+      },
+      {
+        "id": 30,
+        "port": 1,
+        "pos": [
+          40,
+          190
+        ]
+      },
+      {
+        "id": 33,
+        "port": 2,
+        "pos": [
+          40,
+          170
+        ]
+      },
+      {
+        "id": 36,
+        "port": 3,
+        "pos": [
+          40,
+          150
+        ]
+      },
+      {
+        "id": 39,
+        "port": 4,
+        "pos": [
+          40,
+          130
+        ]
+      },
+      {
+        "id": 42,
+        "port": 5,
+        "pos": [
+          40,
+          110
+        ]
+      },
+      {
+        "id": 45,
+        "port": 6,
+        "pos": [
+          40,
+          90
+        ]
+      },
+      {
+        "id": 48,
+        "port": 7,
+        "pos": [
+          40,
+          70
+        ]
+      },
+      {
+        "id": 51,
+        "port": 8,
+        "pos": [
+          40,
+          50
+        ]
+      },
+      {
+        "id": 54,
+        "port": 9,
+        "pos": [
+          40,
+          30
+        ]
+      },
+      {
+        "id": 57,
+        "port": 10,
+        "pos": [
+          40,
+          10
+        ]
+      },
+      {
+        "id": 60,
+        "port": 11,
+        "pos": [
+          40,
+          -10
+        ]
+      },
+      {
+        "id": 63,
+        "port": 12,
+        "pos": [
+          40,
+          -30
+        ]
+      },
+      {
+        "id": 66,
+        "port": 13,
+        "pos": [
+          40,
+          -50
+        ]
+      },
+      {
+        "id": 69,
+        "port": 14,
+        "pos": [
+          40,
+          -70
+        ]
+      },
+      {
+        "id": 72,
+        "port": 15,
+        "pos": [
+          40,
+          -90
+        ]
+      },
+      {
+        "id": 75,
+        "port": 16,
+        "pos": [
+          40,
+          -110
+        ]
+      },
+      {
+        "id": 78,
+        "port": 17,
+        "pos": [
+          40,
+          -130
+        ]
+      },
+      {
+        "id": 81,
+        "port": 18,
+        "pos": [
+          40,
+          -150
+        ]
+      },
+      {
+        "id": 84,
+        "port": 19,
+        "pos": [
+          40,
+          -170
+        ]
+      },
+      {
+        "id": 87,
+        "port": 20,
+        "pos": [
+          40,
+          -190
+        ]
+      }
+    ],
+    "shapes": [
+      {
+        "a": [
+          -30,
+          200
+        ],
+        "b": [
+          30,
+          200
+        ],
+        "id": 22,
+        "type": "line"
+      },
+      {
+        "a": [
+          30,
+          200
+        ],
+        "b": [
+          30,
+          -200
+        ],
+        "id": 23,
+        "type": "line"
+      },
+      {
+        "a": [
+          30,
+          -200
+        ],
+        "b": [
+          -30,
+          -200
+        ],
+        "id": 24,
+        "type": "line"
+      },
+      {
+        "a": [
+          -30,
+          -200
+        ],
+        "b": [
+          -30,
+          200
+        ],
+        "id": 25,
+        "type": "line"
+      },
+      {
+        "a": [
+          -30,
+          0
+        ],
+        "b": [
+          -40,
+          0
+        ],
+        "id": 26,
+        "type": "line"
+      },
+      {
+        "id": 28,
+        "pos": [
+          -27,
+          -2
+        ],
+        "size": 6.0,
+        "text": "reset_n",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          190
+        ],
+        "b": [
+          40,
+          190
+        ],
+        "id": 29,
+        "type": "line"
+      },
+      {
+        "id": 31,
+        "pos": [
+          16,
+          188
+        ],
+        "size": 6.0,
+        "text": "PB0",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          170
+        ],
+        "b": [
+          40,
+          170
+        ],
+        "id": 32,
+        "type": "line"
+      },
+      {
+        "id": 34,
+        "pos": [
+          16,
+          168
+        ],
+        "size": 6.0,
+        "text": "PB1",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          150
+        ],
+        "b": [
+          40,
+          150
+        ],
+        "id": 35,
+        "type": "line"
+      },
+      {
+        "id": 37,
+        "pos": [
+          16,
+          148
+        ],
+        "size": 6.0,
+        "text": "PB2",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          130
+        ],
+        "b": [
+          40,
+          130
+        ],
+        "id": 38,
+        "type": "line"
+      },
+      {
+        "id": 40,
+        "pos": [
+          16,
+          128
+        ],
+        "size": 6.0,
+        "text": "PB3",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          110
+        ],
+        "b": [
+          40,
+          110
+        ],
+        "id": 41,
+        "type": "line"
+      },
+      {
+        "id": 43,
+        "pos": [
+          16,
+          108
+        ],
+        "size": 6.0,
+        "text": "PB4",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          90
+        ],
+        "b": [
+          40,
+          90
+        ],
+        "id": 44,
+        "type": "line"
+      },
+      {
+        "id": 46,
+        "pos": [
+          16,
+          88
+        ],
+        "size": 6.0,
+        "text": "PB5",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          70
+        ],
+        "b": [
+          40,
+          70
+        ],
+        "id": 47,
+        "type": "line"
+      },
+      {
+        "id": 49,
+        "pos": [
+          16,
+          68
+        ],
+        "size": 6.0,
+        "text": "PC0",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          50
+        ],
+        "b": [
+          40,
+          50
+        ],
+        "id": 50,
+        "type": "line"
+      },
+      {
+        "id": 52,
+        "pos": [
+          16,
+          48
+        ],
+        "size": 6.0,
+        "text": "PC1",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          30
+        ],
+        "b": [
+          40,
+          30
+        ],
+        "id": 53,
+        "type": "line"
+      },
+      {
+        "id": 55,
+        "pos": [
+          16,
+          28
+        ],
+        "size": 6.0,
+        "text": "PC2",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          10
+        ],
+        "b": [
+          40,
+          10
+        ],
+        "id": 56,
+        "type": "line"
+      },
+      {
+        "id": 58,
+        "pos": [
+          16,
+          8
+        ],
+        "size": 6.0,
+        "text": "PC3",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          -10
+        ],
+        "b": [
+          40,
+          -10
+        ],
+        "id": 59,
+        "type": "line"
+      },
+      {
+        "id": 61,
+        "pos": [
+          16,
+          -12
+        ],
+        "size": 6.0,
+        "text": "PC4",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          -30
+        ],
+        "b": [
+          40,
+          -30
+        ],
+        "id": 62,
+        "type": "line"
+      },
+      {
+        "id": 64,
+        "pos": [
+          16,
+          -32
+        ],
+        "size": 6.0,
+        "text": "PC5",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          -50
+        ],
+        "b": [
+          40,
+          -50
+        ],
+        "id": 65,
+        "type": "line"
+      },
+      {
+        "id": 67,
+        "pos": [
+          16,
+          -52
+        ],
+        "size": 6.0,
+        "text": "PD0",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          -70
+        ],
+        "b": [
+          40,
+          -70
+        ],
+        "id": 68,
+        "type": "line"
+      },
+      {
+        "id": 70,
+        "pos": [
+          16,
+          -72
+        ],
+        "size": 6.0,
+        "text": "PD1",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          -90
+        ],
+        "b": [
+          40,
+          -90
+        ],
+        "id": 71,
+        "type": "line"
+      },
+      {
+        "id": 73,
+        "pos": [
+          16,
+          -92
+        ],
+        "size": 6.0,
+        "text": "PD2",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          -110
+        ],
+        "b": [
+          40,
+          -110
+        ],
+        "id": 74,
+        "type": "line"
+      },
+      {
+        "id": 76,
+        "pos": [
+          16,
+          -112
+        ],
+        "size": 6.0,
+        "text": "PD3",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          -130
+        ],
+        "b": [
+          40,
+          -130
+        ],
+        "id": 77,
+        "type": "line"
+      },
+      {
+        "id": 79,
+        "pos": [
+          16,
+          -132
+        ],
+        "size": 6.0,
+        "text": "PD4",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          -150
+        ],
+        "b": [
+          40,
+          -150
+        ],
+        "id": 80,
+        "type": "line"
+      },
+      {
+        "id": 82,
+        "pos": [
+          16,
+          -152
+        ],
+        "size": 6.0,
+        "text": "PD5",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          -170
+        ],
+        "b": [
+          40,
+          -170
+        ],
+        "id": 83,
+        "type": "line"
+      },
+      {
+        "id": 85,
+        "pos": [
+          16,
+          -172
+        ],
+        "size": 6.0,
+        "text": "PD6",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          -190
+        ],
+        "b": [
+          40,
+          -190
+        ],
+        "id": 86,
+        "type": "line"
+      },
+      {
+        "id": 88,
+        "pos": [
+          16,
+          -192
+        ],
+        "size": 6.0,
+        "text": "PD7",
+        "type": "text"
+      },
+      {
+        "id": 89,
+        "pos": [
+          -30,
+          203
+        ],
+        "size": 8.0,
+        "text": "atmega328p",
+        "type": "text"
+      }
+    ]
+  }
+}
