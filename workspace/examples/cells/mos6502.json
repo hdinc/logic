@@ -1,0 +1,502 @@
+{
+  "format": 1,
+  "id": "9dbe3a2dba0de553",
+  "impl": {
+    "model": "mos6502",
+    "params": [
+      {
+        "choices": [
+          "6502",
+          "2A03"
+        ],
+        "default": "6502",
+        "description": "2A03: the nes cpu, without decimal mode",
+        "label": "Variant",
+        "name": "variant",
+        "type": "choice"
+      }
+    ],
+    "plugin": "logic_chips",
+    "type": "c_model"
+  },
+  "name": "mos6502",
+  "next_id": 46,
+  "ports": [
+    {
+      "description": "phi2: one bus cycle per period, a cycle ends on the falling edge",
+      "dir": "input",
+      "id": 1,
+      "name": "clk",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "0 holds the cpu in reset, it starts at the reset vector (fffc) when let go",
+      "dir": "input",
+      "id": 2,
+      "name": "res_n",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "0 requests an interrupt (vector fffe) unless the i flag is set",
+      "dir": "input",
+      "id": 3,
+      "name": "irq_n",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "a falling edge requests a non-maskable interrupt (vector fffa)",
+      "dir": "input",
+      "id": 4,
+      "name": "nmi_n",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "0 stops the cpu at the next read cycle",
+      "dir": "input",
+      "id": 5,
+      "name": "rdy",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "address bus",
+      "dir": "output",
+      "id": 6,
+      "name": "a",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 16
+    },
+    {
+      "description": "data bus, driven by the cpu in a write cycle",
+      "dir": "inout",
+      "id": 7,
+      "name": "d",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 8
+    },
+    {
+      "description": "1 read, 0 write",
+      "dir": "output",
+      "id": 8,
+      "name": "rw",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "1 in a write cycle while the address and data are valid, for a ram's we",
+      "dir": "output",
+      "id": 9,
+      "name": "we",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    },
+    {
+      "description": "1 while fetching an opcode",
+      "dir": "output",
+      "id": 10,
+      "name": "sync",
+      "pos": [
+        0,
+        0
+      ],
+      "width": 1
+    }
+  ],
+  "symbol": {
+    "pins": [
+      {
+        "id": 16,
+        "port": 1,
+        "pos": [
+          -40,
+          40
+        ]
+      },
+      {
+        "id": 19,
+        "port": 2,
+        "pos": [
+          -40,
+          20
+        ]
+      },
+      {
+        "id": 22,
+        "port": 3,
+        "pos": [
+          -40,
+          0
+        ]
+      },
+      {
+        "id": 25,
+        "port": 4,
+        "pos": [
+          -40,
+          -20
+        ]
+      },
+      {
+        "id": 28,
+        "port": 5,
+        "pos": [
+          -40,
+          -40
+        ]
+      },
+      {
+        "id": 31,
+        "port": 6,
+        "pos": [
+          40,
+          40
+        ]
+      },
+      {
+        "id": 34,
+        "port": 7,
+        "pos": [
+          40,
+          20
+        ]
+      },
+      {
+        "id": 37,
+        "port": 8,
+        "pos": [
+          40,
+          0
+        ]
+      },
+      {
+        "id": 40,
+        "port": 9,
+        "pos": [
+          40,
+          -20
+        ]
+      },
+      {
+        "id": 43,
+        "port": 10,
+        "pos": [
+          40,
+          -40
+        ]
+      }
+    ],
+    "shapes": [
+      {
+        "a": [
+          -30,
+          50
+        ],
+        "b": [
+          30,
+          50
+        ],
+        "id": 11,
+        "type": "line"
+      },
+      {
+        "a": [
+          30,
+          50
+        ],
+        "b": [
+          30,
+          -50
+        ],
+        "id": 12,
+        "type": "line"
+      },
+      {
+        "a": [
+          30,
+          -50
+        ],
+        "b": [
+          -30,
+          -50
+        ],
+        "id": 13,
+        "type": "line"
+      },
+      {
+        "a": [
+          -30,
+          -50
+        ],
+        "b": [
+          -30,
+          50
+        ],
+        "id": 14,
+        "type": "line"
+      },
+      {
+        "a": [
+          -30,
+          40
+        ],
+        "b": [
+          -40,
+          40
+        ],
+        "id": 15,
+        "type": "line"
+      },
+      {
+        "id": 17,
+        "pos": [
+          -27,
+          38
+        ],
+        "size": 6.0,
+        "text": "clk",
+        "type": "text"
+      },
+      {
+        "a": [
+          -30,
+          20
+        ],
+        "b": [
+          -40,
+          20
+        ],
+        "id": 18,
+        "type": "line"
+      },
+      {
+        "id": 20,
+        "pos": [
+          -27,
+          18
+        ],
+        "size": 6.0,
+        "text": "res_n",
+        "type": "text"
+      },
+      {
+        "a": [
+          -30,
+          0
+        ],
+        "b": [
+          -40,
+          0
+        ],
+        "id": 21,
+        "type": "line"
+      },
+      {
+        "id": 23,
+        "pos": [
+          -27,
+          -2
+        ],
+        "size": 6.0,
+        "text": "irq_n",
+        "type": "text"
+      },
+      {
+        "a": [
+          -30,
+          -20
+        ],
+        "b": [
+          -40,
+          -20
+        ],
+        "id": 24,
+        "type": "line"
+      },
+      {
+        "id": 26,
+        "pos": [
+          -27,
+          -22
+        ],
+        "size": 6.0,
+        "text": "nmi_n",
+        "type": "text"
+      },
+      {
+        "a": [
+          -30,
+          -40
+        ],
+        "b": [
+          -40,
+          -40
+        ],
+        "id": 27,
+        "type": "line"
+      },
+      {
+        "id": 29,
+        "pos": [
+          -27,
+          -42
+        ],
+        "size": 6.0,
+        "text": "rdy",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          40
+        ],
+        "b": [
+          40,
+          40
+        ],
+        "id": 30,
+        "type": "line",
+        "width": 2.5
+      },
+      {
+        "id": 32,
+        "pos": [
+          23,
+          38
+        ],
+        "size": 6.0,
+        "text": "a",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          20
+        ],
+        "b": [
+          40,
+          20
+        ],
+        "id": 33,
+        "type": "line",
+        "width": 2.5
+      },
+      {
+        "id": 35,
+        "pos": [
+          23,
+          18
+        ],
+        "size": 6.0,
+        "text": "d",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          0
+        ],
+        "b": [
+          40,
+          0
+        ],
+        "id": 36,
+        "type": "line"
+      },
+      {
+        "id": 38,
+        "pos": [
+          19,
+          -2
+        ],
+        "size": 6.0,
+        "text": "rw",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          -20
+        ],
+        "b": [
+          40,
+          -20
+        ],
+        "id": 39,
+        "type": "line"
+      },
+      {
+        "id": 41,
+        "pos": [
+          19,
+          -22
+        ],
+        "size": 6.0,
+        "text": "we",
+        "type": "text"
+      },
+      {
+        "a": [
+          30,
+          -40
+        ],
+        "b": [
+          40,
+          -40
+        ],
+        "id": 42,
+        "type": "line"
+      },
+      {
+        "id": 44,
+        "pos": [
+          12,
+          -42
+        ],
+        "size": 6.0,
+        "text": "sync",
+        "type": "text"
+      },
+      {
+        "id": 45,
+        "pos": [
+          -30,
+          53
+        ],
+        "size": 8.0,
+        "text": "mos6502",
+        "type": "text"
+      }
+    ]
+  }
+}
