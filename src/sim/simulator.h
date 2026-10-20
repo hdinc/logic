@@ -133,6 +133,9 @@ public:
     bool interact(const scope& s, int instance, const std::string& action, int64_t value);
     // the reason a component paused the simulation, see state::paused
     const std::string& paused() const { return cur.paused; }
+    // forgets the pause, so that running loops that stop at a pause go on.
+    // run_until and step do this themselves.
+    void resume() { cur.paused.clear(); }
 
 private:
     enum class port_kind : uint8_t {

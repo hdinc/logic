@@ -80,6 +80,8 @@ void runner::query(std::function<void(simulator&)> f)
 
 void runner::run(bool on)
 {
+    // going on after a breakpoint
+    if (on) push([](simulator& sim) { sim.resume(); });
     {
         std::lock_guard lk(m);
         m_running = on;
