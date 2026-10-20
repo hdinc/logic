@@ -101,6 +101,13 @@ set_target_properties(logic_examples PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins)
 add_dependencies(logic logic_examples)
 
+# processors and chips with the cores of floooh/chips
+logic_add_model(logic_chips plugins/chips/chips.cpp plugins/chips/m6502.cpp)
+set_target_properties(logic_chips PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins)
+add_dependencies(logic logic_chips)
+
 enable_testing()
 
 add_executable(model_test tests/model_test.cpp)
@@ -122,8 +129,9 @@ set_target_properties(test_bad_plugin PROPERTIES
 add_executable(plugin_test tests/plugin_test.cpp)
 target_link_libraries(plugin_test logic_core)
 target_compile_options(plugin_test PRIVATE ${LOGIC_WARNINGS})
-add_dependencies(plugin_test logic_examples test_bad_plugin)
-add_test(NAME plugin_test COMMAND plugin_test $<TARGET_FILE:logic_examples> $<TARGET_FILE:test_bad_plugin>)
+add_dependencies(plugin_test logic_examples logic_chips test_bad_plugin)
+add_test(NAME plugin_test COMMAND plugin_test $<TARGET_FILE:logic_examples> $<TARGET_FILE:test_bad_plugin> $<TARGET_FILE:logic_chips>
+    ${CMAKE_SOURCE_DIR}/tests/roms)
 
 # needs verilator, skipped without it. builds are cached between runs.
 add_executable(hdl_test tests/hdl_test.cpp)

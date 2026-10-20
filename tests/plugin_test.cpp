@@ -1,7 +1,9 @@
 // tests for the c model plugins with the example plugin of the sdk.
-// usage: plugin_test <logic_examples plugin> <bad plugin>
+// usage: plugin_test <logic_examples plugin> <bad plugin> <logic_chips plugin> <test rom folder>
 
+#include "../sdk/include/logic_model.h"
 #include "../src/builtin/builtin.h"
+#include "../src/plugin/dynlib.h"
 #include "../src/plugin/registry.h"
 #include "../src/sim/runner.h"
 #include "../src/sim/simulator.h"
@@ -25,7 +27,7 @@ static int failures = 0;
         }                                                                        \
     } while (0)
 
-static fs::path examples_path, bad_path;
+static fs::path examples_path, bad_path, chips_path, roms_path;
 
 static value bit(bool b) { return sim::known(b, 1); }
 
@@ -50,9 +52,9 @@ struct fixture {
     model::schematic& sch() { return *top->get_schematic(); }
 
     // a refreshed c model cell of the example plugin
-    model::cell& model_cell(const std::string& model)
+    model::cell& model_cell(const std::string& model, const std::string& plugin = "logic_examples")
     {
-        auto& c = ws.create_cell(*lib, model, model::c_model_impl{"logic_examples", model, {}});
+        auto& c = ws.create_cell(*lib, model, model::c_model_impl{plugin, model, {}});
         std::string error;
         if (!ws.refresh_interface(c, error)) {
             std::printf("refresh of %s failed: %s\n", model.c_str(), error.c_str());
@@ -439,14 +441,211 @@ static void test_uart_to_terminal()
     CHECK(items.size() == 1 && items[0].text == "ok");
 }
 
+// a model of a plugin used through the c abi only, with ports of up to 64
+// bits, to run long programs fast
+struct direct_model {
+    std::unique_ptr<plugin::dynlib> lib;
+    const logic_model_desc* desc = nullptr;
+    void* inst = nullptr;
+    std::vector<uint64_t> bits, x, z;
+    std::vector<logic_value> ports;
+    logic_context ctx{0, 0, LOGIC_NEVER, nullptr};
+
+    direct_model(const fs::path& path, const char* name, std::vector<uint32_t> widths)
+        : bits(widths.size())
+        , x(widths.size())
+        , z(widths.size(), ~uint64_t(0))
+    {
+        std::string error;
+        lib = plugin::dynlib::open(path, error);
+        auto entry = lib ? (logic_plugin_entry_fn)lib->symbol(LOGIC_PLUGIN_ENTRY_NAME) : nullptr;
+        auto p = entry ? entry(LOGIC_MODEL_ABI_VERSION) : nullptr;
+        for (uint32_t k = 0; p && k < p->model_count; k++)
+            if (std::string(p->models[k].name) == name) desc = &p->models[k];
+        CHECK(desc != nullptr);
+        if (!desc) return;
+        logic_params params{nullptr, 0};
+        static const logic_host host{nullptr, nullptr, ""};
+        inst = desc->create(&params, &host);
+        CHECK(inst != nullptr);
+        for (size_t k = 0; k < widths.size(); k++)
+            ports.push_back({&bits[k], &x[k], &z[k], widths[k]});
+    }
+
+    ~direct_model()
+    {
+        if (inst) desc->destroy(inst);
+    }
+
+    void set(int port, uint64_t v)
+    {
+        bits[port] = v;
+        x[port] = z[port] = 0;
+    }
+
+    // evals at now, then at the wake time it asks for if that comes before
+    // until
+    void eval_at(uint64_t now, uint64_t until)
+    {
+        ctx.now = now;
+        ctx.woken = 0;
+        desc->eval(inst, ports.data(), &ctx);
+        if (ctx.wake != LOGIC_NEVER && ctx.wake < until) {
+            ctx.now = ctx.wake;
+            ctx.woken = 1;
+            desc->eval(inst, ports.data(), &ctx);
+        }
+    }
+};
+
+static void test_m6502_functional()
+{
+    // klaus dormann's test through the pins, memory in the test
+    std::vector<uint8_t> mem(0x10000);
+    {
+        std::ifstream in(roms_path / "6502_functional_test.bin", std::ios::binary);
+        in.read((char*)mem.data(), (std::streamsize)mem.size());
+        CHECK(in.gcount() == 0x10000);
+    }
+    // the reset vector to the start of the test
+    mem[0xFFFC] = 0x00;
+    mem[0xFFFD] = 0x04;
+
+    // clk, res_n, irq_n, nmi_n, rdy, a, d, rw, we, sync
+    direct_model m(chips_path, "mos6502", {1, 1, 1, 1, 1, 16, 8, 1, 1, 1});
+    if (!m.inst) return;
+    m.desc->reset(m.inst);
+
+    const uint64_t period = LOGIC_US;
+    uint64_t t = 0;
+    uint16_t last = 0;
+    int same = 0;
+    uint64_t cycles = 0;
+    for (; cycles < 200000000 && same < 3; cycles++) {
+        m.set(0, 1);
+        m.eval_at(t, t + period / 2);
+
+        // falling edge: the cpu takes the data of a read, the next address
+        // and a write's data come after the hold time
+        m.set(0, 0);
+        if (m.bits[7]) m.set(6, mem[m.bits[5]]);
+        else m.z[6] = ~uint64_t(0);
+        m.eval_at(t + period / 2, t + period);
+        if (m.bits[8]) mem[m.bits[5]] = (uint8_t)m.bits[6];
+        t += period;
+
+        if (m.bits[9]) {
+            // jmp * is a trap: success or a failed test
+            auto pc = (uint16_t)m.bits[5];
+            same = pc == last ? same + 1 : 0;
+            last = pc;
+        }
+    }
+    std::printf("  6502 functional test: %llu cycles, stopped at %04X\n", (unsigned long long)cycles, last);
+    CHECK(last == 0x3469);
+}
+
+static void test_m6502_schematic()
+{
+    // ldx #3; loop: txa; sta $0200,x; dex; bne loop; lda #$42; sta $0300; jmp *
+    // in a 64k ram from a file, at f000 with the reset vector
+    auto dir = fs::temp_directory_path() / "logic_plugin_test_6502";
+    fs::create_directories(dir);
+    std::vector<uint8_t> image(0x10000);
+    std::vector<uint8_t> program{0xA2, 0x03, 0x8A, 0x9D, 0x00, 0x02, 0xCA, 0xD0, 0xF9, 0xA9, 0x42, 0x8D, 0x00, 0x03, 0x4C, 0x0E, 0xF0};
+    std::copy(program.begin(), program.end(), image.begin() + 0xF000);
+    image[0xFFFC] = 0x00;
+    image[0xFFFD] = 0xF0;
+    {
+        std::ofstream out(dir / "program.bin", std::ios::binary);
+        out.write((const char*)image.data(), (std::streamsize)image.size());
+    }
+
+    fixture f;
+    f.lib->dir = dir;
+    auto& c = f.model_cell("mos6502", "logic_chips");
+    CHECK(c.ports.size() == 10);
+    int cpu = f.place(c.id, {0, 0});
+    int ram = f.place(model::builtin_cell_id("ram"), {600, 600},
+        {{"addr_width", int64_t(16)}, {"file", std::string("program.bin")}});
+    f.place(model::builtin_cell_id("clock"), f.pin(cpu, "clk") - glm::ivec2{10, 0}, {{"frequency", int64_t(1000000)}});
+    // through a vertical lane at x, so wires only meet at their ends
+    auto connect = [&](glm::ivec2 p, glm::ivec2 q, int x) {
+        f.sch().wires.push_back({f.top->new_id(), p, {x, p.y}});
+        f.sch().wires.push_back({f.top->new_id(), {x, p.y}, {x, q.y}});
+        f.sch().wires.push_back({f.top->new_id(), {x, q.y}, q});
+    };
+    connect(f.pin(cpu, "a"), f.pin(ram, "addr"), 300);
+    connect(f.pin(cpu, "we"), f.pin(ram, "we"), 320);
+    connect(f.pin(cpu, "d"), f.pin(ram, "data"), 900);
+    int sync = f.port(model::direction::output, f.pin(cpu, "sync"));
+
+    auto s = f.simulate();
+    CHECK(s.problems().empty());
+    auto ram_dbg = s.component_of(s.root(), ram)->debug();
+    auto comp = s.component_of(s.root(), cpu);
+    auto dbg = comp ? comp->debug() : nullptr;
+    CHECK(dbg != nullptr && ram_dbg != nullptr);
+    if (!dbg || !ram_dbg) return;
+
+    // stops at the opcode fetch of dex, before it runs
+    dbg->set_breakpoint(0xF006, true);
+    CHECK(!s.run_until(sim::ms));
+    CHECK(s.paused().find("breakpoint") != std::string::npos);
+    CHECK(dbg->pc() == 0xF006u);
+    CHECK(s.port_value(sync) == bit(true));
+    std::string text;
+    CHECK(dbg->disassemble(0xF003, text) == 3 && text.find("STA") != std::string::npos);
+    CHECK(dbg->disassemble(0xF000, text) == 2);
+    auto items = s.inspect(s.root(), cpu);
+    CHECK(items.size() == 7 && items[1].name == "x" && items[1].v == sim::known(3, 8));
+
+    dbg->step_instruction();
+    CHECK(!s.run_until(sim::ms));
+    CHECK(s.paused().find("step") != std::string::npos);
+    CHECK(dbg->pc() == 0xF007u);
+    items = s.inspect(s.root(), cpu);
+    CHECK(items[1].v == sim::known(2, 8));
+
+    dbg->set_breakpoint(0xF006, false);
+    CHECK(s.run_until(sim::ms));
+    CHECK(dbg->pc() == 0xF00Eu);
+    uint8_t written[4] = {};
+    CHECK(ram_dbg->read_memory(0, 0x0201, written) && written[0] == 1 && written[1] == 2 && written[2] == 3);
+    // nothing written at 0200 (x is never 0 there) or outside
+    CHECK(ram_dbg->read_memory(0, 0x01FF, std::span(written, 2)) && written[0] == 0 && written[1] == 0);
+    CHECK(ram_dbg->read_memory(0, 0x0300, std::span(written, 1)) && written[0] == 0x42);
+
+    // on the simulation thread: running again goes on after a breakpoint
+    sim::runner r(std::make_unique<sim::simulator>(f.ws, *f.top, f.factory));
+    r.set_speed(0.0);
+    r.post([cpu](sim::simulator& sim) { sim.component_of(sim.root(), cpu)->debug()->set_breakpoint(0xF006, true); });
+    auto run_to_pause = [&] {
+        r.run(true);
+        for (int k = 0; k < 200 && r.running(); k++)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        r.post([](sim::simulator&) {});
+        r.wait_idle();
+        return r.view().now();
+    };
+    auto first = run_to_pause();
+    CHECK(r.view().paused().find("breakpoint") != std::string::npos);
+    auto second = run_to_pause();
+    CHECK(r.view().paused().find("breakpoint") != std::string::npos);
+    CHECK(second > first);
+    fs::remove_all(dir);
+}
+
 int main(int argc, char** argv)
 {
-    if (argc < 3) {
-        std::printf("usage: plugin_test <examples plugin> <bad plugin>\n");
+    if (argc < 5) {
+        std::printf("usage: plugin_test <examples plugin> <bad plugin> <chips plugin> <test rom folder>\n");
         return 2;
     }
     examples_path = fs::absolute(argv[1]);
     bad_path = fs::absolute(argv[2]);
+    chips_path = fs::absolute(argv[3]);
+    roms_path = fs::absolute(argv[4]);
 
     test_discovery();
     test_counter();
@@ -458,6 +657,8 @@ int main(int argc, char** argv)
     test_runner();
     test_toy_cpu();
     test_uart_to_terminal();
+    test_m6502_functional();
+    test_m6502_schematic();
 
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
