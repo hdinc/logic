@@ -21,6 +21,14 @@ inline bool transform_shortcut(int& turns, bool& mirror)
     return true;
 }
 
+// the right button released without dragging: a right drag pans the view,
+// a right click can cancel
+inline bool right_clicked()
+{
+    auto& io = ImGui::GetIO();
+    return ImGui::IsMouseReleased(ImGuiMouseButton_Right) && io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right] < io.MouseDragThreshold * io.MouseDragThreshold;
+}
+
 // a point of the selection after transform_shortcut's change: mirrored
 // first, then turned, about the pivot
 inline glm::ivec2 turn_about(glm::ivec2 p, glm::ivec2 pivot, int turns, bool mirror)
