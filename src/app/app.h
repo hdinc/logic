@@ -48,6 +48,7 @@ private:
     // theme and canvas options, kept in imgui.ini
     void add_settings_handler();
     void apply_theme();
+    void update_font();
 
     void open_editor(model::cell& c);
     void close_editor(model::id cell);
@@ -113,8 +114,11 @@ private:
     bool show_settings = false;
 
     bool light_theme = false;
+    int font_size = 20;
+    // Settings changes queue a rebuild for the next frame boundary.
+    bool font_update_pending = true;
     // settings at the last check, a change marks imgui.ini for saving
-    std::tuple<bool, bool, render::grid_style, component_bar::orientation> saved_settings;
+    std::tuple<bool, bool, render::grid_style, component_bar::orientation, int> saved_settings;
 
     std::vector<std::string> messages;
 };

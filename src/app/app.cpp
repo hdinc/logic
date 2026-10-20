@@ -6,6 +6,7 @@
 #include <Hd/Resource.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <imgui_impl_opengl3.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -45,12 +46,6 @@ void app::reload_plugins()
 
 void app::run()
 {
-    auto f = Hd::Resource::getExeRes("res/fonts/Roboto.ttf");
-    // imgui takes ownership of the font data
-    void* font_data = IM_ALLOC(f.second);
-    std::memcpy(font_data, f.first, f.second);
-    ImGui::GetIO().Fonts->AddFontFromMemoryTTF(font_data, f.second, 20);
-
     apply_theme();
     // read with the rest of imgui.ini on the first frame
     add_settings_handler();
@@ -73,10 +68,26 @@ void app::run()
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glClear(GL_COLOR_BUFFER_BIT);
 
+        if (font_update_pending) update_font();
         gui.Draw();
 
         window.SwapBuffers();
     }
+}
+
+void app::update_font()
+{
+    // Rebuild between frames, while the font atlas is unlocked.
+    ImGui_ImplOpenGL3_DestroyFontsTexture();
+    auto& io = ImGui::GetIO();
+    io.FontDefault = nullptr;
+    io.Fonts->Clear();
+    auto f = Hd::Resource::getExeRes("res/fonts/Roboto.ttf");
+    // imgui takes ownership of the font data
+    void* font_data = IM_ALLOC(f.second);
+    std::memcpy(font_data, f.first, f.second);
+    io.Fonts->AddFontFromMemoryTTF(font_data, f.second, (float)font_size);
+    font_update_pending = false;
 }
 
 void app::add_settings_handler()
@@ -100,19 +111,26 @@ void app::add_settings_handler()
             a->renderer.grid = std::strcmp(str, "lines") == 0 ? render::grid_style::lines : render::grid_style::dots;
         else if (std::sscanf(line, "ComponentBar=%31s", str) == 1)
             a->components.dir = std::strcmp(str, "horizontal") == 0 ? component_bar::orientation::horizontal : component_bar::orientation::vertical;
+        else if (std::sscanf(line, "FontSize=%d", &i) == 1) {
+            int size = std::clamp(i, 12, 40);
+            if (a->font_size != size) {
+                a->font_size = size;
+                a->font_update_pending = true;
+            }
+        }
     };
     h.ApplyAllFn = [](ImGuiContext*, ImGuiSettingsHandler* h) {
         auto a = (app*)h->UserData;
         a->apply_theme();
-        a->saved_settings = {a->light_theme, a->renderer.show_grid, a->renderer.grid, a->components.dir};
+        a->saved_settings = {a->light_theme, a->renderer.show_grid, a->renderer.grid, a->components.dir, a->font_size};
     };
     h.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* h, ImGuiTextBuffer* buf) {
         auto a = (app*)h->UserData;
-        buf->appendf("[Logic][Settings]\nTheme=%s\nGrid=%d\nGridStyle=%s\nComponentBar=%s\n\n", a->light_theme ? "light" : "dark", a->renderer.show_grid ? 1 : 0,
-            a->renderer.grid == render::grid_style::lines ? "lines" : "dots", a->components.dir == component_bar::orientation::horizontal ? "horizontal" : "vertical");
+        buf->appendf("[Logic][Settings]\nTheme=%s\nGrid=%d\nGridStyle=%s\nComponentBar=%s\nFontSize=%d\n\n", a->light_theme ? "light" : "dark", a->renderer.show_grid ? 1 : 0,
+            a->renderer.grid == render::grid_style::lines ? "lines" : "dots", a->components.dir == component_bar::orientation::horizontal ? "horizontal" : "vertical", a->font_size);
     };
     ImGui::AddSettingsHandler(&h);
-    saved_settings = {light_theme, renderer.show_grid, renderer.grid, components.dir};
+    saved_settings = {light_theme, renderer.show_grid, renderer.grid, components.dir, font_size};
 }
 
 void app::apply_theme()
@@ -136,7 +154,7 @@ void app::settings_window()
     using namespace ImGui;
 
     // also changed from the view menu and with G in the editors
-    std::tuple current{light_theme, renderer.show_grid, renderer.grid, components.dir};
+    std::tuple current{light_theme, renderer.show_grid, renderer.grid, components.dir, font_size};
     if (current != saved_settings) {
         saved_settings = current;
         MarkIniSettingsDirty();
@@ -152,6 +170,15 @@ void app::settings_window()
         if (Combo("Theme", &theme, "Dark\0Light\0")) {
             light_theme = theme == 1;
             apply_theme();
+        }
+        int size = font_size;
+        SliderInt("Font size", &size, 12, 40, "%d px", ImGuiSliderFlags_AlwaysClamp);
+        SameLine();
+        if (Button("Reset")) size = 20;
+        if (size != font_size) {
+            font_size = size;
+            font_update_pending = true;
+            MarkIniSettingsDirty();
         }
 
         SeparatorText("Canvas");
