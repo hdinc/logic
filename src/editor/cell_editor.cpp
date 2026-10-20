@@ -135,7 +135,9 @@ void cell_editor::toolbar()
 {
     using namespace ImGui;
 
-    BeginDisabled(busy() || !schematic);
+    // not greyed out while dragging: the buttons can't be clicked then
+    // anyway, and what they do checks busy() itself
+    BeginDisabled(!schematic);
     if (!building.empty()) {
         if (tool_button("Cancel", "Don't wait for the builds, they go on in the background (F5)", true)) building.clear();
         TextColored({0.4f, 0.7f, 1, 1}, "building %zu HDL model(s)...", building.size());
@@ -177,7 +179,7 @@ void cell_editor::edit_toolbar()
     SeparatorEx(ImGuiSeparatorFlags_Vertical);
     SameLine();
 
-    BeginDisabled(busy() || locked());
+    BeginDisabled(locked());
     if (!schematic && !show_symbol) {
         // the model page has its own buttons
     } else if (show_symbol) {
@@ -267,22 +269,22 @@ void cell_editor::open_place_popup()
 
 bool cell_editor::can_undo() const
 {
-    return !busy() && !session && !locked() && hist.can_undo();
+    return !session && !locked() && hist.can_undo();
 }
 
 bool cell_editor::can_redo() const
 {
-    return !busy() && !session && !locked() && hist.can_redo();
+    return !session && !locked() && hist.can_redo();
 }
 
 void cell_editor::undo()
 {
-    if (can_undo() && hist.undo(ctx.cell)) after_undo();
+    if (!busy() && can_undo() && hist.undo(ctx.cell)) after_undo();
 }
 
 void cell_editor::redo()
 {
-    if (can_redo() && hist.redo(ctx.cell)) after_undo();
+    if (!busy() && can_redo() && hist.redo(ctx.cell)) after_undo();
 }
 
 bool cell_editor::can_copy() const
@@ -327,12 +329,12 @@ void cell_editor::paste()
 
 bool cell_editor::can_place(model::id cell) const
 {
-    return schematic && !busy() && !session && !locked() && !ctx.ws.would_create_cycle(ctx.cell.id, cell);
+    return schematic && !session && !locked() && !ctx.ws.would_create_cycle(ctx.cell.id, cell);
 }
 
 void cell_editor::place(model::id cell)
 {
-    if (!can_place(cell)) return;
+    if (busy() || !can_place(cell)) return;
     show_symbol = false;
     schematic->begin_place(cell);
 }

@@ -45,7 +45,8 @@ public:
     void set_locked_by(std::string top) { locked_by = std::move(top); }
     bool locked() const { return !locked_by.empty(); }
 
-    // ignored while a tool is busy (e.g. during a drag), simulating or locked
+    // not while simulating or locked. undo and redo are also ignored while
+    // a tool is busy (e.g. during a drag).
     bool can_undo() const;
     bool can_redo() const;
     void undo();
@@ -60,8 +61,8 @@ public:
     void paste();
 
     // placing instances from outside, e.g. the component bar. switches to
-    // the schematic. can't while simulating, locked or busy, or if the cell
-    // would contain itself.
+    // the schematic. can't while simulating, locked, or if the cell would
+    // contain itself. place is also ignored while a tool is busy.
     bool can_place(model::id cell) const;
     void place(model::id cell);
     // the cell being placed in the schematic, no_id if none
