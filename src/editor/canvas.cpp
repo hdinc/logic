@@ -55,12 +55,12 @@ void canvas::handle_view_input()
         }
     }
 
-    // middle drag: up zooms in, down out, about where the drag started
+    // middle drag: up zooms in, down out, about the center of the view
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
         drag_zooming = true;
         zoom_last_y = mouse.y;
-        zoom_ndc = mouse;
-        zoom_world = mouse_world();
+        zoom_ndc = glm::vec2{0.0f, 0.0f};
+        zoom_world = to_world(zoom_ndc);
     }
     if (drag_zooming) {
         if (ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
