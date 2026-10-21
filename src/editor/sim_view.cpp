@@ -124,7 +124,7 @@ void sim_view::toolbar()
     auto& run = s->run;
     auto& sim = s->sim();
 
-    if (Button("Waveforms")) s->waveforms.visible = true;
+    if (Button("Waveforms")) s->waveforms_visible = true;
     SameLine();
     if (Button("Signals...")) OpenPopup("signals");
     signals_menu();
@@ -341,7 +341,7 @@ void sim_view::record_signal(int net, const std::string& name)
     auto label = s->sim().root().cell->name + "/" + (sc.path.empty() ? "" : sc.path + "/") + name;
     // only the recorder changes, real time running goes on undisturbed
     s->run.query([net, label](sim::simulator& sim) { sim.waveforms.add(sim, net, label); });
-    s->waveforms.visible = true;
+    s->waveforms_visible = true;
 }
 
 void sim_view::signals_menu()
@@ -349,12 +349,13 @@ void sim_view::signals_menu()
     using namespace ImGui;
     if (!BeginPopup("signals")) return;
     auto& sc = current();
-    auto recorded = s->run.sim().waveforms.read(0, 0);
+    auto& recorder = s->run.sim().waveforms;
+    size_t recorded = recorder.size();
     TextDisabled("Add signals in %s", scope_label(sc).c_str());
-    TextDisabled("%zu / %zu signals (connected aliases share a trace)", recorded.signals.size(), sim::waveform_recorder::max_signals);
+    TextDisabled("%zu / %zu signals (connected aliases share a trace)", recorded, sim::waveform_recorder::max_signals);
     auto item = [&](int net, const std::string& name) {
-        bool exists = std::any_of(recorded.signals.begin(), recorded.signals.end(), [net](auto& signal) { return signal.net == net; });
-        bool enabled = net >= 0 && s->sim().net_width(net) > 0 && !exists && recorded.signals.size() < sim::waveform_recorder::max_signals;
+        bool exists = recorder.contains(net);
+        bool enabled = net >= 0 && s->sim().net_width(net) > 0 && !exists && recorded < sim::waveform_recorder::max_signals;
         PushID(net);
         if (MenuItem(name.c_str(), nullptr, exists, enabled)) record_signal(net, name);
         PopID();
@@ -411,13 +412,14 @@ void sim_view::instance_menu()
 
     auto& sc = current();
     auto child = menu_instance >= 0 ? sc.child(menu_instance) : nullptr;
-    auto recorded = s->run.sim().waveforms.read(0, 0);
+    auto& recorder = s->run.sim().waveforms;
+    size_t recorded = recorder.size();
     auto add_item = [&](int net, const std::string& name, const char* label) {
-        bool exists = std::any_of(recorded.signals.begin(), recorded.signals.end(), [net](auto& signal) { return signal.net == net; });
-        bool enabled = net >= 0 && s->sim().net_width(net) > 0 && !exists && recorded.signals.size() < sim::waveform_recorder::max_signals;
+        bool exists = recorder.contains(net);
+        bool enabled = net >= 0 && s->sim().net_width(net) > 0 && !exists && recorded < sim::waveform_recorder::max_signals;
         if (MenuItem(label, nullptr, exists, enabled)) record_signal(net, name);
     };
-    if (recorded.signals.size() >= sim::waveform_recorder::max_signals)
+    if (recorded >= sim::waveform_recorder::max_signals)
         TextDisabled("Signal limit reached; remove a waveform to add another.");
     if (menu_net >= 0) {
         TextDisabled("%s", menu_signal_name.c_str());

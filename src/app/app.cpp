@@ -2,6 +2,7 @@
 #include "../builtin/builtin.h"
 #include "../io/storage.h"
 #include "../plugin/libraries.h"
+#include "../ui/style.h"
 
 #include <Hd/Resource.h>
 #include <imgui.h>
@@ -136,17 +137,7 @@ void app::add_settings_handler()
 void app::apply_theme()
 {
     render::set_theme(light_theme ? render::light_theme() : render::dark_theme());
-
-    auto& s = ImGui::GetStyle();
-    if (light_theme)
-        ImGui::StyleColorsLight(&s);
-    else
-        ImGui::StyleColorsDark(&s);
-    s.FrameRounding = 4.0f;
-    s.GrabRounding = 4.0f;
-    s.WindowRounding = 6.0f;
-    s.PopupRounding = 4.0f;
-    s.TabRounding = 4.0f;
+    ui::apply_style(light_theme);
 }
 
 void app::settings_window()
@@ -238,7 +229,7 @@ void app::draw_gui()
     library_panel();
     editor_panel();
     for (auto& e : editors)
-        if (auto& s = e->simulation()) s->waveforms.gui(s->run, e->cell().name, e->cell().id);
+        if (auto& s = e->simulation()) s->waveforms_gui(e->cell().name);
     open_instance_tabs();
     properties_panel();
     hierarchy_panel();
@@ -377,7 +368,7 @@ void app::menu_bar()
                 for (auto& e : editors) {
                     if (auto& s = e->simulation()) {
                         PushID((int)e->cell().id);
-                        MenuItem(e->cell().name.c_str(), nullptr, &s->waveforms.visible);
+                        MenuItem(e->cell().name.c_str(), nullptr, &s->waveforms_visible);
                         PopID();
                         any = true;
                     }

@@ -1,4 +1,10 @@
 #include "sim_session.h"
+#include "../ui/file_dialog.h"
+#include "../wave/vcd.h"
+
+#include <imgui.h>
+
+#include <fstream>
 
 namespace logic::editor {
 
@@ -85,6 +91,87 @@ bool sim_session::uses(model::id cell) const
 {
     auto& c = run.sim().cells();
     return std::find(c.begin(), c.end(), cell) != c.end();
+}
+
+
+namespace {
+
+// run controls and export in the view's toolbar, rows for every recorded
+// signal
+class recording_host : public wave::view_host {
+public:
+    recording_host(sim::runner& run, std::string dialog, std::string name)
+        : run(run)
+        , dialog(std::move(dialog))
+        , name(std::move(name))
+    {
+    }
+
+    void toolbar() override
+    {
+        using namespace ImGui;
+        if (Button(run.running() ? "Pause" : "Run")) run.run(!run.running());
+        SameLine(0, 2);
+        if (Button("Step")) run.step();
+        SameLine(0, 2);
+        if (Button("Clear")) run.query([](sim::simulator& s) { s.waveforms.clear(s); });
+        SetItemTooltip("Start the history over from now");
+        SameLine(0, 2);
+        if (Button("Export VCD...")) ui::open_dialog(dialog.c_str(), "Export waveforms", ui::waveform_files, std::filesystem::current_path() / (name + ".vcd"), true);
+        SameLine(0, 16);
+    }
+    void removed(int64_t key) override
+    {
+        int net = (int)key;
+        run.query([net](sim::simulator& s) { s.waveforms.remove(net); });
+    }
+    bool rows_follow_signals() const override { return true; }
+    bool live() const override { return true; }
+    bool running() const override { return run.running(); }
+
+private:
+    sim::runner& run;
+    std::string dialog;
+    std::string name;
+};
+
+}
+
+void sim_session::waveforms_gui(const std::string& title)
+{
+    using namespace ImGui;
+    if (!waveforms_visible) return;
+    run.sim().waveforms.sync(wave_data, wave_sync);
+
+    SetNextWindowSize({1000, 460}, ImGuiCond_FirstUseEver);
+    auto id = std::to_string(top);
+    auto label = "Waveforms: " + title + "###waveforms" + id;
+    if (!Begin(label.c_str(), &waveforms_visible)) {
+        End();
+        return;
+    }
+    auto dialog = "export_vcd_" + id;
+    recording_host host(run, dialog, title);
+    if (!wave_message.empty()) {
+        TextDisabled("%s", wave_message.c_str());
+        SameLine();
+        if (SmallButton("OK")) wave_message.clear();
+    }
+    waves.draw(wave_data, host);
+
+    std::filesystem::path file;
+    if (ui::dialog_result(dialog.c_str(), file)) {
+        std::ofstream out(file);
+        wave::write_vcd(out, wave_data);
+        bool truncated = false;
+        for (auto& t : wave_data.traces)
+            truncated |= !t.empty() && t.at(0) > wave_data.begin;
+        if (!out) wave_message = "Couldn't write " + file.string();
+        else
+            wave_message = "Exported to " + file.string() +
+                (truncated ? ". Only the newest " + std::to_string(sim::waveform_recorder::max_samples) + " changes of each signal are kept." : "");
+    }
+    End();
 }
 
 }

@@ -23,6 +23,20 @@ file(READ src/cosim/cosim_protocol.h COSIM_PROTOCOL_H)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/cosim/logic_vpi.c src/cosim/cosim_protocol.h)
 configure_file(src/cosim/bridge_source.cpp.in ${CMAKE_BINARY_DIR}/generated/bridge_source.cpp @ONLY)
 
+# values and recorded waveforms: traces, vcd files, search and sessions.
+# shared by the simulator and the waveform viewer, no gui.
+add_library(logic_wave STATIC
+    src/sim/value.cpp
+    src/wave/trace.cpp
+    src/wave/format.cpp
+    src/wave/search.cpp
+    src/wave/vcd.cpp
+    src/wave/session.cpp
+)
+target_include_directories(logic_wave PUBLIC src)
+target_link_libraries(logic_wave PUBLIC nlohmann_json::nlohmann_json)
+target_compile_options(logic_wave PRIVATE ${LOGIC_WARNINGS})
+
 # data model, file io, builtin primitives, netlist and simulator. no gui or
 # opengl dependencies
 add_library(logic_core STATIC
@@ -46,7 +60,6 @@ add_library(logic_core STATIC
     src/builtin/wiring.cpp
     src/builtin/io.cpp
     src/netlist/netlist.cpp
-    src/sim/value.cpp
     src/sim/simulator.cpp
     src/sim/runner.cpp
     src/sim/waveform.cpp
@@ -66,11 +79,26 @@ add_library(logic_core STATIC
     ${CMAKE_BINARY_DIR}/generated/bridge_source.cpp
 )
 target_include_directories(logic_core PUBLIC src sdk/include)
-target_link_libraries(logic_core PUBLIC glm::glm nlohmann_json::nlohmann_json Threads::Threads ${CMAKE_DL_LIBS})
+target_link_libraries(logic_core PUBLIC logic_wave glm::glm nlohmann_json::nlohmann_json Threads::Threads ${CMAKE_DL_LIBS})
 if(WIN32)
     target_link_libraries(logic_core PUBLIC ws2_32)
 endif()
 target_compile_options(logic_core PRIVATE ${LOGIC_WARNINGS})
+
+# file dialogs
+add_subdirectory(deps/ImGuiFileDialog)
+target_link_libraries(ImGuiFileDialog PUBLIC imgui)
+target_compile_definitions(ImGuiFileDialog PUBLIC USE_STD_FILESYSTEM)
+
+# gui parts shared by the apps: the waveform view, file dialogs and style
+add_library(logic_ui STATIC
+    src/ui/file_dialog.cpp
+    src/ui/style.cpp
+    src/wave/ui/timeline.cpp
+    src/wave/ui/view.cpp
+)
+target_link_libraries(logic_ui PUBLIC logic_wave imgui ImGuiFileDialog)
+target_compile_options(logic_ui PRIVATE ${LOGIC_WARNINGS})
 
 add_executable(logic
     src/main.cpp
@@ -84,23 +112,19 @@ add_executable(logic
     src/editor/cell_editor.cpp
     src/editor/model_editor.cpp
     src/editor/param_editor.cpp
-    src/editor/file_dialog.cpp
     src/editor/sim_session.cpp
     src/editor/sim_view.cpp
-    src/editor/waveform_view.cpp
 )
 
 include(Hd/cmake/resource.cmake)
 add_resource_dir(logic res)
 
-# file dialogs
-add_subdirectory(deps/ImGuiFileDialog)
-target_link_libraries(ImGuiFileDialog PUBLIC imgui)
-target_compile_definitions(ImGuiFileDialog PUBLIC USE_STD_FILESYSTEM)
-
-target_link_libraries(logic logic_core Hd ImGuiFileDialog)
+target_link_libraries(logic logic_core logic_ui Hd)
 target_compile_options(logic PRIVATE ${LOGIC_WARNINGS})
 target_compile_definitions(logic PRIVATE LOGIC_DEFAULT_WORKSPACE="${CMAKE_SOURCE_DIR}/workspace")
+
+# the standalone waveform viewer, in its own directory for its resources
+add_subdirectory(src/viewer)
 
 # c model sdk and the example plugin, built into plugins/ next to the program
 include(sdk/cmake/LogicModel.cmake)
@@ -148,8 +172,13 @@ target_link_libraries(sim_test logic_core)
 target_compile_options(sim_test PRIVATE ${LOGIC_WARNINGS})
 add_test(NAME sim_test COMMAND sim_test)
 
-add_executable(waveform_test tests/waveform_test.cpp src/editor/waveform_view.cpp)
-target_link_libraries(waveform_test logic_core imgui)
+add_executable(vcd_test tests/vcd_test.cpp)
+target_link_libraries(vcd_test logic_wave)
+target_compile_options(vcd_test PRIVATE ${LOGIC_WARNINGS})
+add_test(NAME vcd_test COMMAND vcd_test)
+
+add_executable(waveform_test tests/waveform_test.cpp)
+target_link_libraries(waveform_test logic_core logic_ui)
 target_compile_options(waveform_test PRIVATE ${LOGIC_WARNINGS})
 add_test(NAME waveform_test COMMAND waveform_test)
 

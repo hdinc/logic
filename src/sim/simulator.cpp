@@ -7,29 +7,7 @@ namespace logic::sim {
 
 std::string format_time(time t)
 {
-    if (t == 0) return "0 s";
-
-    struct unit {
-        time size;
-        int digits;
-        const char* name;
-    };
-    static const unit units[] = {{seconds, 12, "s"}, {ms, 9, "ms"}, {us, 6, "us"}, {ns, 3, "ns"}, {ps, 0, "ps"}};
-
-    for (auto& u : units) {
-        if (t < u.size && u.size != ps) continue;
-        auto s = std::to_string(t / u.size);
-        if (u.digits > 0) {
-            // the remainder with leading zeros
-            auto frac = std::to_string(t % u.size);
-            frac.insert(0, u.digits - frac.size(), '0');
-            while (!frac.empty() && frac.back() == '0')
-                frac.pop_back();
-            if (!frac.empty()) s += "." + frac;
-        }
-        return s + " " + u.name;
-    }
-    return {};
+    return wave::format_time(t, {-12});
 }
 
 const scope* scope::child(int instance) const

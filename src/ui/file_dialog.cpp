@@ -3,7 +3,7 @@
 #include <ImGuiFileDialog.h>
 #include <imgui.h>
 
-namespace logic::editor {
+namespace logic::ui {
 
 namespace fs = std::filesystem;
 
@@ -14,6 +14,8 @@ const char* const plugin_files = "Plugins{.dll},.*";
 #else
 const char* const plugin_files = "Plugins{.so},.*";
 #endif
+const char* const waveform_files = "Value change dumps{.vcd},.*";
+const char* const session_files = "Waveform sessions{.json},.*";
 
 namespace {
 
@@ -25,6 +27,20 @@ std::string relative_if_inside(const fs::path& p, const fs::path& base)
     auto rel = fs::relative(p, base, ec);
     if (ec || rel.empty() || *rel.begin() == "..") return p.generic_string();
     return rel.generic_string();
+}
+
+bool display(const std::string& key, fs::path& file)
+{
+    bool chosen = false;
+    auto& vp = *ImGui::GetMainViewport();
+    if (ImGuiFileDialog::Instance()->Display(key, ImGuiWindowFlags_NoCollapse, {vp.Size.x * 0.5f, vp.Size.y * 0.5f})) {
+        if (ImGuiFileDialog::Instance()->IsOk()) {
+            file = ImGuiFileDialog::Instance()->GetFilePathName();
+            chosen = true;
+        }
+        ImGuiFileDialog::Instance()->Close();
+    }
+    return chosen;
 }
 
 }
@@ -51,17 +67,29 @@ bool browse_button(const char* id, std::string& path, const fs::path& base, cons
     }
     SetItemTooltip("Choose a file");
 
-    bool chosen = false;
-    auto& vp = *GetMainViewport();
-    if (ImGuiFileDialog::Instance()->Display(key, ImGuiWindowFlags_NoCollapse, {vp.Size.x * 0.5f, vp.Size.y * 0.5f})) {
-        if (ImGuiFileDialog::Instance()->IsOk()) {
-            path = relative_if_inside(ImGuiFileDialog::Instance()->GetFilePathName(), base);
-            chosen = true;
-        }
-        ImGuiFileDialog::Instance()->Close();
-    }
+    fs::path file;
+    bool chosen = display(key, file);
+    if (chosen) path = relative_if_inside(file, base);
     PopID();
     return chosen;
+}
+
+void open_dialog(const char* id, const char* title, const char* filters, const fs::path& start, bool save)
+{
+    IGFD::FileDialogConfig config;
+    std::error_code ec;
+    fs::path dir = fs::is_directory(start, ec) ? start : start.parent_path();
+    if (dir.empty() || !fs::is_directory(dir, ec)) dir = fs::current_path(ec);
+    config.path = dir.string();
+    if (!fs::is_directory(start, ec) && start.has_filename()) config.fileName = start.filename().string();
+    config.flags = ImGuiFileDialogFlags_Modal;
+    if (save) config.flags |= ImGuiFileDialogFlags_ConfirmOverwrite;
+    ImGuiFileDialog::Instance()->OpenDialog(id, title, filters, config);
+}
+
+bool dialog_result(const char* id, fs::path& file)
+{
+    return display(id, file);
 }
 
 }

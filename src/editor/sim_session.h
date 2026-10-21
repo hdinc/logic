@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../sim/runner.h"
-#include "waveform_view.h"
+#include "../wave/ui/view.h"
 
 #include <algorithm>
 #include <chrono>
@@ -68,14 +68,23 @@ public:
     // the values to draw
     const sim::snapshot& sim() const { return run.view(); }
 
+    // the waveform window of the recorded signals, see waveform_recorder
+    void waveforms_gui(const std::string& title);
+
     sim::runner run;
-    waveform_view waveforms;
     model::id top;
+    bool waveforms_visible = false;
 
     // set when any view stops the simulation, the owner then drops it
     bool stopped = false;
 
 private:
+    // the recording as of this frame, updated by waveforms_gui
+    wave::trace_set wave_data;
+    sim::waveform_recorder::sync_state wave_sync;
+    wave::view waves;
+    std::string wave_message;
+
     const sim::scope* watch_scope = nullptr;
     int watch_instance = -1;
     // shared with the simulation thread

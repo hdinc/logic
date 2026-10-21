@@ -1383,72 +1383,102 @@ static void test_waveforms()
     s->waveforms.add(*s, net, "alias");
     s->waveforms.add(*s, bus_net, "bus");
     s->waveforms.add(*s, -1, "unconnected");
-    CHECK(s->waveforms.read().signals.size() == 2);
-    if (s->waveforms.read().signals.size() != 2) return;
+    CHECK(s->waveforms.size() == 2 && s->waveforms.contains(net) && !s->waveforms.contains(-1));
+    if (s->waveforms.size() != 2) return;
+
+    // a mirror kept up to date incrementally, like the waveform window's
+    wave::trace_set mirror;
+    sim::waveform_recorder::sync_state state;
+    auto same_as_snapshot = [&] {
+        s->waveforms.sync(mirror, state);
+        auto data = s->waveforms.snapshot();
+        if (mirror.traces.size() != data.traces.size() || mirror.end != data.end) return false;
+        for (size_t k = 0; k < data.traces.size(); k++) {
+            auto &a = mirror.traces[k], &b = data.traces[k];
+            if (a.size() != b.size()) return false;
+            for (size_t i = 0; i < a.size(); i++)
+                if (a.at(i) != b.at(i) || a.value(i) != b.value(i)) return false;
+        }
+        return true;
+    };
+    CHECK(same_as_snapshot());
 
     // Forty clock edges in one advance: display snapshots would miss these.
     s->run_until(20 * sim::ms);
-    auto data = s->waveforms.read();
-    CHECK(data.now == 20 * sim::ms);
-    CHECK(data.signals[0].samples.size() == 41);
+    auto data = s->waveforms.snapshot();
+    CHECK(data.end == 20 * sim::ms);
+    CHECK(data.traces[0].size() == 41);
     for (int k = 0; k <= 40; k++) {
-        CHECK(data.signals[0].samples[k].at == k * 500 * sim::us);
-        CHECK(data.signals[0].samples[k].v == bit(k % 2));
+        CHECK(data.traces[0].at(k) == k * 500 * sim::us);
+        CHECK(data.traces[0].value(k) == bit(k % 2));
     }
-    auto range = s->waveforms.read(750 * sim::us, 1250 * sim::us);
-    CHECK(range.signals[0].samples.size() == 2);
-    CHECK(range.signals[0].samples.front().at == 500 * sim::us);
-    CHECK(range.signals[0].samples.back().at == sim::ms);
+    CHECK(same_as_snapshot());
+    CHECK(data.traces[0].index_at(750 * sim::us) == 1);
+    CHECK(data.traces[0].first_after(750 * sim::us) == 2);
 
     // Wide buses, x/z, and multiple actions at the same simulated timestamp.
-    CHECK(data.signals[1].samples.front().v == sim::floating(70));
+    CHECK(data.traces[1].value(0) == sim::floating(70));
     s->set_input(bus, sim::known(0xAB, 70));
+    CHECK(same_as_snapshot());
     s->set_input(bus, sim::unknown(70));
-    auto buses = s->waveforms.read().signals[1].samples;
-    CHECK(buses.size() == 2 && buses.back().v == sim::unknown(70));
-    s->run_until(21 * sim::ms);
+    auto buses = s->waveforms.snapshot().traces[1];
+    CHECK(buses.size() == 2 && buses.value(1) == sim::unknown(70));
+    CHECK(same_as_snapshot());
+    // back to the value before at the same time: no change is left
     s->set_input(bus, sim::floating(70));
-    CHECK(s->waveforms.read().signals[1].samples.back().v == sim::floating(70));
+    CHECK(s->waveforms.snapshot().traces[1].size() == 1);
+    CHECK(same_as_snapshot());
+    s->run_until(21 * sim::ms);
+    s->set_input(bus, sim::known(1, 70));
+    CHECK(s->waveforms.snapshot().traces[1].value(1) == sim::known(1, 70));
+    CHECK(same_as_snapshot());
 
     s->waveforms.clear(*s);
-    auto generation = s->waveforms.read().generation;
-    CHECK(s->waveforms.read().signals[0].samples.size() == 1);
+    auto generation = s->waveforms.snapshot().generation;
+    CHECK(s->waveforms.snapshot().traces[0].size() == 1);
     s->reset();
-    data = s->waveforms.read();
-    CHECK(data.generation > generation && data.now == 0);
-    CHECK(data.signals[0].samples.size() == 1 && data.signals[0].samples[0].at == 0);
-    CHECK(data.signals[0].samples[0].v == bit(false));
+    data = s->waveforms.snapshot();
+    CHECK(data.generation > generation && data.end == 0);
+    CHECK(data.traces[0].size() == 1 && data.traces[0].at(0) == 0);
+    CHECK(data.traces[0].value(0) == bit(false));
+    CHECK(same_as_snapshot());
 
     // Retention remains bounded, with the earliest retained value usable.
     s->run_until((sim::waveform_recorder::max_samples + 20) * 500 * sim::us);
-    data = s->waveforms.read();
-    CHECK(data.signals[0].samples.size() == sim::waveform_recorder::max_samples);
-    CHECK(data.signals[0].truncated);
-    CHECK(data.signals[0].first == data.signals[0].samples.front().at);
+    data = s->waveforms.snapshot();
+    CHECK(data.traces[0].size() == sim::waveform_recorder::max_samples);
+    CHECK(data.traces[0].at(0) == 21 * 500 * sim::us);
+    // the bus hasn't changed since, it still knows the start
+    CHECK(data.begin == 0);
+    CHECK(same_as_snapshot());
+    // a mirror that falls behind further than the retention still catches up
+    s->run_until((2 * sim::waveform_recorder::max_samples + 100) * 500 * sim::us);
+    CHECK(same_as_snapshot());
     s->waveforms.remove(net);
-    CHECK(s->waveforms.read().signals.size() == 1);
+    CHECK(s->waveforms.size() == 1);
+    CHECK(same_as_snapshot());
 
     // Recording lives on the worker, survives pausing, and resumes on step.
     sim::runner r(make());
-    r.post([net](sim::simulator& sim) { sim.waveforms.add(sim, net, "clk"); });
+    r.query([net](sim::simulator& sim) { sim.waveforms.add(sim, net, "clk"); });
     r.wait_idle();
     r.set_speed(0);
     r.run(true);
     CHECK(eventually(r, [&] { return r.view().now() >= 10 * sim::ms; }));
     r.run(false);
-    r.post([](sim::simulator&) {});
+    r.query([](sim::simulator&) {});
     r.wait_idle();
-    auto paused = r.sim().waveforms.read();
-    CHECK(paused.signals[0].samples.size() > 1);
-    auto last_time = paused.now;
+    auto paused = r.sim().waveforms.snapshot();
+    CHECK(paused.traces[0].size() > 1);
+    auto last_time = paused.end;
     // Readers can safely inspect the same history repeatedly while paused.
-    CHECK(r.sim().waveforms.read().now == last_time);
+    CHECK(r.sim().waveforms.snapshot().end == last_time);
     r.step();
     r.wait_idle();
-    CHECK(r.sim().waveforms.read().now == last_time + 500 * sim::us);
+    CHECK(r.sim().waveforms.snapshot().end == last_time + 500 * sim::us);
     r.reset();
     r.wait_idle();
-    CHECK(r.sim().waveforms.read().signals[0].samples.size() == 1);
+    CHECK(r.sim().waveforms.snapshot().traces[0].size() == 1);
 }
 
 int main()

@@ -1,5 +1,10 @@
+// the waveform view, drawn by imgui without a native window or gl context.
+// catches invalid draw coordinates and widget or frame lifecycle errors.
+
 #include "../src/builtin/builtin.h"
-#include "../src/editor/waveform_view.h"
+#include "../src/sim/runner.h"
+#include "../src/wave/search.h"
+#include "../src/wave/ui/view.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -12,34 +17,9 @@ using namespace logic;
 static int failures = 0;
 #define CHECK(cond) do { if (!(cond)) { std::printf("line %d: %s failed\n", __LINE__, #cond); failures++; } } while (0)
 
-static void test_formats()
-{
-    using editor::waveform_format;
-    auto v = sim::known(255, 8);
-    CHECK(editor::format_waveform_value(v, waveform_format::hex) == "0xFF");
-    CHECK(editor::format_waveform_value(v, waveform_format::uint) == "255");
-    CHECK(editor::format_waveform_value(v, waveform_format::sint) == "-1");
-    CHECK(editor::format_waveform_value(sim::known(128, 8), waveform_format::sint) == "-128");
-    CHECK(editor::format_waveform_value(v, waveform_format::binary) == "0b11111111");
-    CHECK(editor::format_waveform_value(v, waveform_format::octal) == "0o377");
-    CHECK(editor::format_waveform_value(sim::floating(8), waveform_format::hex) == "0xzz");
-    CHECK(editor::format_waveform_value(sim::unknown(8), waveform_format::uint) == "xxxxxxxx");
-    auto wide = sim::known(0, 70);
-    wide.set(69, sim::bit_state::one);
-    CHECK(editor::format_waveform_value(wide, waveform_format::uint) == "590295810358705651712");
-    CHECK(editor::format_waveform_value(wide, waveform_format::sint) == "-590295810358705651712");
-    wide.set_word(0, UINT64_MAX, 0, 0);
-    wide.set_word(1, 0x3F, 0, 0);
-    CHECK(editor::format_waveform_value(wide, waveform_format::uint) == "1180591620717411303423");
-    CHECK(editor::format_waveform_value(wide, waveform_format::sint) == "-1");
-    CHECK(editor::waveform_signal_name("top/U1.Q", true) == "top/U1.Q");
-    CHECK(editor::waveform_signal_name("top/U1.Q", false) == "Q");
-    CHECK(editor::waveform_signal_name("top/clock", false) == "clock");
-}
-
 static void test_timeline()
 {
-    editor::waveform_timeline timeline;
+    wave::timeline timeline;
     timeline.fit(10 * sim::ms, 20 * sim::ms);
     auto span = timeline.span();
     auto anchor = timeline.start() + span * 0.25;
@@ -70,14 +50,68 @@ static void test_timeline()
     CHECK(timeline.start() == start);
     timeline.update(1.0 / 60, 50 * sim::ms, false);
     CHECK(std::abs((50 * sim::ms - timeline.start()) / timeline.span() - 0.95) < 1e-9);
+
+    timeline.zoom_to(300, 100);
+    CHECK(timeline.start() == 100 && timeline.span() == 200 && !timeline.follow);
+    timeline.reveal(250);
+    CHECK(timeline.start() == 100);
+    timeline.reveal(1000);
+    CHECK(timeline.start() == 900);
 }
 
-// Exercise the real ImGui window without a native window or GL context.
-// This catches invalid draw coordinates and widget/frame lifecycle errors.
-int main()
+struct test_host : wave::view_host {
+    bool recording = false;
+    std::vector<int64_t> removed_keys;
+
+    void removed(int64_t key) override { removed_keys.push_back(key); }
+    bool rows_follow_signals() const override { return recording; }
+    bool live() const override { return recording; }
+};
+
+// draws frames of a view in a window and checks what they draw
+struct frames {
+    ImGuiIO& io = ImGui::GetIO();
+    bool drew = false, filled_bus = false;
+    int vertices = 0;
+
+    void operator()(wave::view& view, const wave::trace_set& data, wave::view_host& host, ImVec2 size = {1000, 460})
+    {
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos({20, 20});
+        ImGui::SetNextWindowSize(size);
+        ImGui::Begin("waves");
+        view.draw(data, host);
+        ImGui::End();
+        ImGui::Render();
+        auto d = ImGui::GetDrawData();
+        drew |= d->TotalVtxCount > 0;
+        vertices = d->TotalVtxCount;
+        for (auto list : d->CmdLists)
+            for (auto& vertex : list->VtxBuffer) {
+                filled_bus |= vertex.col == ImGui::GetColorU32(ImVec4{80.0f / 255, 200.0f / 255, 130.0f / 255, 0.18f});
+                CHECK(std::isfinite(vertex.pos.x) && std::isfinite(vertex.pos.y));
+            }
+    }
+
+    ImGuiWindow* plot()
+    {
+        auto parent = ImGui::FindWindowByName("waves");
+        if (!parent) return nullptr;
+        for (auto child : parent->DC.ChildWindows)
+            if (std::string(child->Name).find("plot") != std::string::npos) return child;
+        return nullptr;
+    }
+
+    void click(float x, float y, int button = 0)
+    {
+        io.AddMousePosEvent(x, y);
+        io.AddMouseButtonEvent(button, true);
+    }
+};
+
+// the simulator's recording, mirrored like the waveform window does
+static void test_recording(frames& frame)
 {
-    test_formats();
-    test_timeline();
     model::workspace ws;
     ws.add_builtin_library(builtin::registry());
     auto& cell = ws.create_cell(ws.add_library("work"), "top");
@@ -89,7 +123,7 @@ int main()
     }
     sim::runner run(std::make_unique<sim::simulator>(ws, cell, builtin::factory()));
     int net = run.sim().net_of_port(run.sim().root(), 0);
-    run.post([net](sim::simulator& s) {
+    run.query([net](sim::simulator& s) {
         s.waveforms.add(s, net, "top/input");
         for (int k = 1; k <= 10; k++)
             s.waveforms.add(s, s.net_of_port(s.root(), 2 * k), "top/input" + std::to_string(k));
@@ -102,6 +136,224 @@ int main()
     });
     run.wait_idle();
 
+    wave::trace_set data;
+    sim::waveform_recorder::sync_state state;
+    wave::view view;
+    test_host host;
+    host.recording = true;
+    auto& io = frame.io;
+    auto draw = [&](ImVec2 size = {1000, 460}) {
+        run.sim().waveforms.sync(data, state);
+        frame(view, data, host, size);
+    };
+
+    for (int f = 0; f < 16; f++) {
+        // zoom, scrub and pan, then shrink the window and reset the history
+        io.AddMousePosEvent(650, 300);
+        if (f == 2) io.AddMouseWheelEvent(0, 2);
+        if (f == 4) io.AddMouseButtonEvent(0, true);
+        if (f == 5) io.AddMouseButtonEvent(0, false);
+        if (f == 6) io.AddMouseButtonEvent(2, true);
+        if (f == 7) io.AddMousePosEvent(600, 300);
+        if (f == 8) io.AddMouseButtonEvent(2, false);
+        if (f == 9) {
+            io.AddMousePosEvent(70, 300);
+            io.AddMouseWheelEvent(0, -3);
+        }
+        if (f == 12) {
+            run.reset();
+            run.wait_idle();
+        }
+        draw(f < 10 ? ImVec2{1000, 460} : ImVec2{240, 300});
+    }
+    CHECK(view.rows() == 11);
+    CHECK(!view.cursor_a); // reset clears the cursors
+
+    // bus expansion and the divider through real mouse events
+    draw();
+    auto plot = frame.plot();
+    CHECK(plot);
+    if (!plot) return;
+    ImGui::SetScrollY(plot, 0);
+    draw();
+    float x = plot->Pos.x + plot->WindowPadding.x;
+    float y = plot->Pos.y + plot->WindowPadding.y;
+    float axis_height = ImGui::GetTextLineHeightWithSpacing() * 2;
+    float arrow_center = x + 2 + ImGui::CalcTextSize("x").x + 4 + 2 + (ImGui::GetFontSize() + 2) / 2;
+    io.AddMousePosEvent(arrow_center, y + axis_height + 3 + (ImGui::GetFontSize() + 2) / 2);
+    draw();
+    float scroll_before = plot->ScrollMax.y;
+    io.AddMouseButtonEvent(0, true);
+    draw();
+    io.AddMouseButtonEvent(0, false);
+    draw();
+    draw();
+    draw();
+    CHECK(plot->ScrollMax.y > scroll_before + 200); // eight new bit rows
+
+    io.AddMousePosEvent(x + 253, y + 10);
+    draw();
+    CHECK(ImGui::GetMouseCursor() == ImGuiMouseCursor_ResizeEW);
+    io.AddMouseButtonEvent(0, true);
+    draw();
+    io.AddMousePosEvent(x + 303, y + 10);
+    draw();
+    bool moved_divider = false;
+    for (auto& vertex : plot->DrawList->VtxBuffer)
+        moved_divider |= vertex.col == ImGui::GetColorU32(ImGuiCol_SeparatorActive) && std::abs(vertex.pos.x - (x + 300)) < 1;
+    CHECK(moved_divider);
+    io.AddMouseButtonEvent(0, false);
+    draw();
+
+    // the row menu, then removing a row
+    io.AddMousePosEvent(x + 100, y + axis_height + 10);
+    draw();
+    io.AddMouseButtonEvent(1, true);
+    draw();
+    io.AddMouseButtonEvent(1, false);
+    draw();
+    CHECK(ImGui::GetCurrentContext()->OpenPopupStack.Size > 0);
+    // the first click closes the menu, the second removes the row
+    io.AddMousePosEvent(x + 2 + 4, y + axis_height + 3 + 6);
+    for (int k = 0; k < 2; k++) {
+        io.AddMouseButtonEvent(0, true);
+        draw();
+        io.AddMouseButtonEvent(0, false);
+        draw();
+    }
+    CHECK(host.removed_keys.size() == 1 && host.removed_keys[0] == net);
+    CHECK(view.rows() == 10);
+    // the signal is still recorded until the simulation thread removes it,
+    // the row doesn't come back meanwhile
+    draw();
+    CHECK(view.rows() == 10);
+}
+
+// a file with a million changes, an analog signal and text
+static void test_file(frames& frame)
+{
+    wave::trace_set data;
+    data.tb = {-12};
+    auto add = [&](std::string name, wave::kind k, int width) {
+        data.signals.push_back({(int64_t)data.signals.size(), name, width, k, (int)data.traces.size()});
+        data.traces.emplace_back(k, width);
+        return &data.traces.back();
+    };
+    auto clk = add("top.clk", wave::kind::digital, 1);
+    for (int k = 0; k < 1000000; k++)
+        clk->push(wave::time(k) * 10, sim::known(k % 2, 1));
+    auto count = add("top.count[15:0]", wave::kind::digital, 16);
+    for (int k = 0; k < 500000; k++)
+        count->push(wave::time(k) * 20 + 5, sim::known(k & 0xFFFF, 16));
+    auto level = add("top.level", wave::kind::real, 64);
+    for (int k = 0; k < 100000; k++)
+        level->push(wave::time(k) * 100, std::sin(k * 0.01));
+    auto state = add("top.state", wave::kind::text, 1);
+    state->push(0, std::string("IDLE"));
+    state->push(3000000, std::string("RUN"));
+    data.end = 10000000;
+
+    // rows from a session: modes and formats by name
+    wave::session s;
+    s.rows = {{"top.clk", std::nullopt, wave::display::digital, 1, false, 0},
+        {"top.count[15:0]", wave::format::uint, wave::display::analog_step, 2, false, 0},
+        {"top.level", std::nullopt, wave::display::analog_linear, 2, false, 0xFF0000FF},
+        {"top.state", std::nullopt, wave::display::digital, 1, false, 0},
+        {"top.gone", std::nullopt, wave::display::digital, 1, false, 0}};
+    wave::view view;
+    auto missing = view.restore(data, s);
+    CHECK(missing.size() == 1 && missing[0] == "top.gone");
+    CHECK(view.rows() == 4);
+    test_host host;
+    auto& io = frame.io;
+    auto draw = [&] { frame(view, data, host); };
+
+    draw();
+    draw();
+    // everything in view: drawing doesn't grow with the number of changes
+    CHECK(frame.vertices < 100000);
+    CHECK(view.timeline.start() == 0 && view.timeline.span() >= 10000000);
+
+    auto plot = frame.plot();
+    CHECK(plot);
+    if (!plot) return;
+    float x = plot->Pos.x + plot->WindowPadding.x;
+    float y = plot->Pos.y + plot->WindowPadding.y;
+    float axis_height = ImGui::GetTextLineHeightWithSpacing() * 2;
+    float left = x + 250 + 6;
+    float clk_y = y + axis_height + 15;
+
+    // clicking on the clock snaps cursor A to one of its transitions
+    frame.click(left + 300, clk_y);
+    draw();
+    io.AddMouseButtonEvent(0, false);
+    draw();
+    CHECK(view.cursor_a && *view.cursor_a % 10 == 0 && *view.cursor_a > 0);
+    // shift+click sets cursor B
+    io.AddKeyEvent(ImGuiMod_Shift, true);
+    frame.click(left + 500, clk_y);
+    draw();
+    io.AddMouseButtonEvent(0, false);
+    io.AddKeyEvent(ImGuiMod_Shift, false);
+    draw();
+    CHECK(view.cursor_b && *view.cursor_b > *view.cursor_a);
+
+    // right arrow: the next transition of any row
+    auto a = *view.cursor_a;
+    io.AddKeyEvent(ImGuiKey_RightArrow, true);
+    draw();
+    io.AddKeyEvent(ImGuiKey_RightArrow, false);
+    draw();
+    CHECK(view.cursor_a && *view.cursor_a > a && *view.cursor_a <= a + 10);
+    io.AddKeyEvent(ImGuiKey_LeftArrow, true);
+    draw();
+    io.AddKeyEvent(ImGuiKey_LeftArrow, false);
+    draw();
+    CHECK(view.cursor_a && *view.cursor_a == a);
+
+    // a marker at cursor A
+    io.AddKeyEvent(ImGuiKey_M, true);
+    draw();
+    io.AddKeyEvent(ImGuiKey_M, false);
+    draw();
+    CHECK(view.markers.size() == 1 && view.markers[0].t == a);
+
+    // dragging over the ruler zooms to that range
+    double span = view.timeline.span();
+    frame.click(left + 100, y + 5);
+    draw();
+    io.AddMousePosEvent(left + 200, y + 5);
+    draw();
+    io.AddMouseButtonEvent(0, false);
+    draw();
+    CHECK(view.timeline.span() < span / 5);
+    draw();
+    CHECK(frame.vertices < 100000);
+
+    // the overview moves the view
+    double start = view.timeline.start();
+    auto parent = ImGui::FindWindowByName("waves");
+    float bar_y = parent->Pos.y + parent->Size.y - parent->WindowPadding.y - 6;
+    frame.click(parent->Pos.x + parent->Size.x * 0.8f, bar_y);
+    draw();
+    io.AddMouseButtonEvent(0, false);
+    draw();
+    CHECK(view.timeline.start() > start);
+
+    // the session keeps it all
+    auto saved = view.save(data);
+    CHECK(saved.rows.size() == 4 && saved.rows[1].mode == wave::display::analog_step && saved.rows[1].fmt == wave::format::uint);
+    CHECK(saved.rows[2].color == 0xFF0000FF);
+    CHECK(saved.markers.size() == 1 && saved.cursor_a == view.cursor_a && saved.cursor_b == view.cursor_b);
+    wave::view other;
+    CHECK(other.restore(data, saved).empty());
+    CHECK(other.rows() == 4 && other.timeline.start() == view.timeline.start());
+}
+
+int main()
+{
+    test_timeline();
+
     ImGui::CreateContext();
     auto& io = ImGui::GetIO();
     io.IniFilename = nullptr;
@@ -111,91 +363,13 @@ int main()
     int width, height;
     io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
 
-    editor::waveform_view view;
-    view.visible = true;
-    bool drew = false, filled_bus = false;
-    auto draw_frame = [&](ImVec2 size = {1000, 420}) {
-        ImGui::NewFrame();
-        ImGui::SetNextWindowPos({20, 20});
-        ImGui::SetNextWindowSize(size);
-        view.gui(run, "top", cell.id);
-        ImGui::Render();
-        auto data = ImGui::GetDrawData();
-        drew |= data->TotalVtxCount > 0;
-        for (auto list : data->CmdLists)
-            for (auto& vertex : list->VtxBuffer) {
-                filled_bus |= vertex.col == ImGui::GetColorU32(ImVec4{80.0f / 255, 200.0f / 255, 130.0f / 255, 0.18f});
-                CHECK(std::isfinite(vertex.pos.x) && std::isfinite(vertex.pos.y));
-            }
-    };
-    for (int frame = 0; frame < 16; frame++) {
-        // Zoom, scrub, and pan, then shrink the window and reset history.
-        io.AddMousePosEvent(650, 240);
-        if (frame == 2) io.AddMouseWheelEvent(0, 2);
-        if (frame == 4) io.AddMouseButtonEvent(0, true);
-        if (frame == 5) io.AddMouseButtonEvent(0, false);
-        if (frame == 6) io.AddMouseButtonEvent(2, true);
-        if (frame == 7) io.AddMousePosEvent(600, 240);
-        if (frame == 8) io.AddMouseButtonEvent(2, false);
-        if (frame == 9) {
-            io.AddMousePosEvent(70, 240);
-            io.AddMouseWheelEvent(0, -3);
-        }
-        if (frame == 12) {
-            run.reset();
-            run.wait_idle();
-        }
-        draw_frame(frame < 10 ? ImVec2{1000, 420} : ImVec2{240, 260});
-    }
-
-    // Exercise bus expansion and the divider through real mouse events.
-    draw_frame();
-    auto label = "Waveforms: top###waveforms" + std::to_string(cell.id);
-    auto parent = ImGui::FindWindowByName(label.c_str());
-    CHECK(parent && parent->DC.ChildWindows.Size == 1);
-    if (!parent || parent->DC.ChildWindows.Size != 1) return 1;
-    auto plot = parent->DC.ChildWindows[0];
-    ImGui::SetScrollY(plot, 0);
-    draw_frame();
-    float x = plot->Pos.x + plot->WindowPadding.x;
-    float y = plot->Pos.y + plot->WindowPadding.y;
-    float axis_height = ImGui::GetTextLineHeightWithSpacing() * 2;
-    float arrow_center = x + ImGui::CalcTextSize("x").x + 4 + 2 + (ImGui::GetFontSize() + 2) / 2;
-    io.AddMousePosEvent(arrow_center, y + axis_height + 3 + (ImGui::GetFontSize() + 2) / 2);
-    draw_frame();
-    float scroll_before = plot->ScrollMax.y;
-    io.AddMouseButtonEvent(0, true);
-    draw_frame();
-    io.AddMouseButtonEvent(0, false);
-    draw_frame();
-    draw_frame();
-    draw_frame();
-    CHECK(plot->ScrollMax.y > scroll_before + 200); // eight new bit rows
-
-    io.AddMousePosEvent(x + 253, y + 10);
-    draw_frame();
-    CHECK(ImGui::GetMouseCursor() == ImGuiMouseCursor_ResizeEW);
-    io.AddMouseButtonEvent(0, true);
-    draw_frame();
-    io.AddMousePosEvent(x + 303, y + 10);
-    draw_frame();
-    bool moved_divider = false;
-    for (auto& vertex : plot->DrawList->VtxBuffer)
-        moved_divider |= vertex.col == ImGui::GetColorU32(ImGuiCol_SeparatorActive) && std::abs(vertex.pos.x - (x + 300)) < 1;
-    CHECK(moved_divider);
-    io.AddMouseButtonEvent(0, false);
-    draw_frame();
-
-    io.AddMousePosEvent(x + 100, y + axis_height + 10);
-    draw_frame();
-    io.AddMouseButtonEvent(1, true);
-    draw_frame();
-    io.AddMouseButtonEvent(1, false);
-    draw_frame();
-    CHECK(ImGui::GetCurrentContext()->OpenPopupStack.Size > 0); // per-signal format menu
+    frames frame;
+    test_recording(frame);
+    test_file(frame);
+    CHECK(frame.drew && frame.filled_bus);
     ImGui::DestroyContext();
-    CHECK(drew && filled_bus);
+
     if (failures) return 1;
-    std::puts("waveform window frames passed");
+    std::puts("waveform view frames passed");
     return 0;
 }
