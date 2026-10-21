@@ -1,4 +1,5 @@
-#version 450 core
+#version 330 core
+#extension GL_ARB_explicit_uniform_location : require
 
 // dots or lines every u_spacing world units, and every 5 * u_spacing. the
 // finer ones fade with u_fine while zooming out.
