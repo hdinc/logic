@@ -14,7 +14,8 @@ std::string format_waveform_value(const sim::value& v, waveform_format format);
 std::string waveform_signal_name(std::string_view name, bool full_path);
 
 // Time navigation is independent of rendering, so zoom animation also works
-// while the simulator is paused. Only manual panning turns off Follow.
+// while the simulator is paused. Follow keeps up with running and stepping,
+// only manual panning turns it off.
 class waveform_timeline {
 public:
     void zoom(double wheel, double fraction);
@@ -31,6 +32,8 @@ private:
     double target_span = m_span;
     double anchor = 0;
     double anchor_fraction = 0;
+    // time at the last update, never before the first one
+    sim::time last_now = sim::never;
 };
 
 // One timeline per simulation session, shared by all its hierarchy views.

@@ -71,6 +71,17 @@ void draw_trace(ImDrawList& draw, const sim::waveform_signal& signal, int bit,
     float low = top + row_height - 7;
     float mid = (high + low) / 2;
     draw.PushClipRect({left, top}, {left + width, top + row_height}, true);
+    // changes closer than a pixel are drawn as one block, the cost stays
+    // bounded by the width instead of the number of samples
+    float dense_a = 0, dense_b = -1;
+    bool dense_known = true;
+    auto flush_dense = [&] {
+        if (dense_b <= dense_a) return;
+        auto color = dense_known ? IM_COL32(80, 200, 130, 255) : IM_COL32(245, 130, 80, 255);
+        draw.AddRectFilled({dense_a, high}, {std::max(dense_b, dense_a + 1), low}, color);
+        dense_b = -1;
+        dense_known = true;
+    };
     for (size_t k = 0; k < samples.size(); k++) {
         auto& sample = samples[k];
         sim::time end = k + 1 < samples.size() ? samples[k + 1].at : now;
@@ -78,6 +89,13 @@ void draw_trace(ImDrawList& draw, const sim::waveform_signal& signal, int bit,
         float a = std::clamp(raw_a, left, left + width);
         float b = std::clamp(raw_b, left, left + width);
         if (b <= a) continue;
+        if (b - a < 1.5f) {
+            if (dense_b < dense_a) dense_a = a;
+            dense_b = b;
+            dense_known &= sample.v.fully_known();
+            continue;
+        }
+        flush_dense();
         auto color = signal_color(sample.v);
         bool sample_hovered = hovered && GetIO().MousePos.y >= top && GetIO().MousePos.y < top + row_height &&
             GetIO().MousePos.x >= a && GetIO().MousePos.x < b;
@@ -114,6 +132,7 @@ void draw_trace(ImDrawList& draw, const sim::waveform_signal& signal, int bit,
             SetTooltip("%s\n%s: %s", name.c_str(), sim::format_time(sample.at).c_str(), label().c_str());
         }
     }
+    flush_dense();
     draw.PopClipRect();
 }
 
@@ -191,7 +210,9 @@ void waveform_timeline::update(double dt, sim::time now, bool running)
         m_span = std::abs(k) < 0.001 ? target_span : m_span * std::exp(k * t);
         if (!follow || !running) m_start = anchor - m_span * anchor_fraction;
     }
-    if (follow && running) {
+    bool advanced = last_now != sim::never && now != last_now;
+    last_now = now;
+    if (follow && (running || advanced)) {
         m_start = double(now) - m_span * 0.95;
         anchor = std::max(0.0, m_start) + m_span * anchor_fraction;
     }
@@ -217,7 +238,7 @@ void waveform_view::gui(sim::runner& run, const std::string& title, model::id id
     SameLine();
     Checkbox("Follow", &timeline.follow);
     SameLine();
-    if (Button("Clear history")) run.post([](sim::simulator& s) { s.waveforms.clear(s); });
+    if (Button("Clear history")) run.query([](sim::simulator& s) { s.waveforms.clear(s); });
     SameLine();
     TextDisabled("%s", run.running() ? "Recording" : "Paused");
 
@@ -403,7 +424,7 @@ void waveform_view::gui(sim::runner& run, const std::string& title, model::id id
     EndChild();
     if (remove_net >= 0) {
         options.erase(remove_net);
-        run.post([remove_net](sim::simulator& s) { s.waveforms.remove(remove_net); });
+        run.query([remove_net](sim::simulator& s) { s.waveforms.remove(remove_net); });
     }
     End();
 }

@@ -83,10 +83,10 @@ void app::update_font()
     io.FontDefault = nullptr;
     io.Fonts->Clear();
     auto f = Hd::Resource::getExeRes("res/fonts/Roboto.ttf");
-    // imgui takes ownership of the font data
-    void* font_data = IM_ALLOC(f.second);
-    std::memcpy(font_data, f.first, f.second);
-    io.Fonts->AddFontFromMemoryTTF(font_data, f.second, (float)font_size);
+    // embedded in the executable, no copy for the atlas to own
+    ImFontConfig config;
+    config.FontDataOwnedByAtlas = false;
+    io.Fonts->AddFontFromMemoryTTF((void*)f.first, (int)f.second, (float)font_size, &config);
     font_update_pending = false;
 }
 
@@ -178,7 +178,6 @@ void app::settings_window()
         if (size != font_size) {
             font_size = size;
             font_update_pending = true;
-            MarkIniSettingsDirty();
         }
 
         SeparatorText("Canvas");

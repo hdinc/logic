@@ -61,6 +61,15 @@ static void test_timeline()
     CHECK(!timeline.follow);
     timeline.update(1, 31 * sim::ms, false);
     CHECK(timeline.span() == span); // panning cancels an outstanding animation
+
+    // stepping while paused moves a following view to the new time
+    timeline.follow = true;
+    timeline.update(1.0 / 60, 31 * sim::ms, false);
+    auto start = timeline.start();
+    timeline.update(1.0 / 60, 31 * sim::ms, false);
+    CHECK(timeline.start() == start);
+    timeline.update(1.0 / 60, 50 * sim::ms, false);
+    CHECK(std::abs((50 * sim::ms - timeline.start()) / timeline.span() - 0.95) < 1e-9);
 }
 
 // Exercise the real ImGui window without a native window or GL context.

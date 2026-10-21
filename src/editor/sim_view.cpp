@@ -339,7 +339,8 @@ void sim_view::record_signal(int net, const std::string& name)
     if (net < 0 || s->sim().net_width(net) == 0) return;
     auto& sc = current();
     auto label = s->sim().root().cell->name + "/" + (sc.path.empty() ? "" : sc.path + "/") + name;
-    s->run.post([net, label](sim::simulator& sim) { sim.waveforms.add(sim, net, label); });
+    // only the recorder changes, real time running goes on undisturbed
+    s->run.query([net, label](sim::simulator& sim) { sim.waveforms.add(sim, net, label); });
     s->waveforms.visible = true;
 }
 
