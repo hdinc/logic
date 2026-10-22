@@ -50,6 +50,8 @@ Optional:
 
 - simavr for the AVR plugin, which is skipped without it
 - Verilator, Icarus Verilog and GHDL for HDL cells
+- FreeType for hinted, cleaner interface text. Without it Dear ImGui draws
+  text with stb_truetype
 - fontconfig to list the installed fonts. Without it (or with
   `-DLOGIC_USE_FONTCONFIG=OFF`) the usual font folders are scanned instead
 

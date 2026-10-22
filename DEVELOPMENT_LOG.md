@@ -345,3 +345,79 @@ tested. No code changed.
 ### Next steps
 
 - None beyond the earlier entries.
+
+## 2026-10-22 23:14 +0300
+
+### Changes made
+
+- **Interface text is drawn with FreeType** when CMake finds it, instead of
+  stb_truetype. The spacing between letters is even and stems are
+  consistently sharp. The problem was reported with Noto Serif Medium at
+  20 px: in "Lines" there was a gap after the `L` while `i` and `n` nearly
+  touched, and in "Libraries" `b`, `r` and `a` crowded each other.
+- README: FreeType is listed as an optional dependency.
+
+### Features implemented
+
+- Hinted interface text in both apps (`logic` and `logic-wave`), with
+  light hinting.
+
+### How it works
+
+- **Cause:** stb_truetype doesn't hint. ImGui places glyphs at fractional
+  positions with a 2× horizontal oversample, so stems and edges land at
+  different places within a pixel from letter to letter: some look sharp,
+  others light and wide. Small serif text makes it obvious; Roboto hides it
+  better. It isn't a regression of the 1.92 update: the same text rendered
+  by 1.91.95 is pixel-for-pixel identical.
+- **Fix:** `Hd/deps/imgui/misc/freetype/imgui_freetype.{h,cpp}` from the same
+  1.92.9b release. Hd's `imgui` target looks for FreeType
+  (`find_package(Freetype QUIET)`); when found it compiles the loader, links
+  `Freetype::Freetype` and defines `IMGUI_ENABLE_FREETYPE` publicly, so ImGui
+  picks the FreeType loader for every atlas. Without FreeType nothing
+  changes.
+- `ui::load_fonts` sets `ImGuiFreeTypeLoaderFlags_LightHinting` on the atlas
+  when FreeType is in use. Light hinting aligns only vertical metrics
+  (baseline, x-height) to the pixel grid and keeps the font's own advances.
+  That's what most Linux desktops use (fontconfig `hintslight`), so the
+  text matches other applications.
+- **Decisions:**
+  - Light hinting rather than FreeType's default full hinting. Both fix the
+    spacing; full hinting also changes glyph widths, while light hinting
+    keeps them as designed.
+  - Optional rather than required: Windows (MinGW) builds don't have to
+    provide FreeType, and they still get stb_truetype.
+  - The canvas keeps its stb_truetype signed-distance-field font. It's drawn
+    at any zoom, where hinting to a fixed pixel size doesn't apply.
+- FreeType is already on Linux systems with fontconfig, which depends on it.
+
+### Testing
+
+- Before and after screenshots of the same text in the same font, enlarged
+  4×: stb_truetype (both ImGui versions identical), FreeType with full
+  hinting, and FreeType with light hinting. Both FreeType versions fix the
+  uneven spacing.
+- The app with the reported settings (Noto Serif Medium, Noto Sans Mono Thin,
+  Noto Sans Condensed Bold Italic): the Settings window's "Grid style /
+  Dots / Lines" row, which was in the report, now has even spacing.
+- `nm` confirms `ImGuiFreeType::GetFontLoader` is defined in Hd's imgui
+  library, and CMake found `/usr/lib/libfreetype.so` (FreeType 26.7.20).
+- All 6 ctest suites pass.
+
+### Recommended features
+
+- A hinting choice in Settings (none, light, full) for people who prefer
+  another look.
+- Color emoji through FreeType's color glyphs (`LoadColor`), now that the
+  loader is available.
+
+### Outstanding issues
+
+- Without FreeType (e.g. a Windows build without it) interface text keeps
+  the uneven spacing of stb_truetype.
+- `build/Hd/deps/imgui/libimgui.a` is a stale file from Oct 17. The build
+  uses `libimgui-0.1.0.a`; the stale one can be deleted.
+
+### Next steps
+
+- Check the Windows build with and without FreeType.

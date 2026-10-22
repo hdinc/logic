@@ -3,6 +3,10 @@
 #include <imgui.h>
 #include <stb/stb_truetype.h>
 
+#ifdef IMGUI_ENABLE_FREETYPE
+#include <imgui_freetype.h>
+#endif
+
 #ifdef LOGIC_HAVE_FONTCONFIG
 #include <fontconfig/fontconfig.h>
 #endif
@@ -522,6 +526,9 @@ void load_fonts(const font_ref& ui, const font_ref& mono, std::string_view built
     io.FontDefault = nullptr;
     io.Fonts->ClearFonts();
     g_mono = nullptr;
+#ifdef IMGUI_ENABLE_FREETYPE
+    io.Fonts->FontLoaderFlags = ImGuiFreeTypeLoaderFlags_LightHinting;
+#endif
 
     auto add = [&](const font_ref& f, const char* what) -> ImFont* {
         std::string error;
