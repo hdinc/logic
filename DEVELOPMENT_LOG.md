@@ -222,3 +222,126 @@ Entries in chronological order, the newest last.
 ### Next steps
 
 - Plan the 1.93 update with a visual check of the waveform view.
+
+## 2026-10-22 23:02 +0300
+
+This entry covers the font settings and the ImGui 1.92 update of the two
+previous entries in the newer log format: how they work and how they were
+tested. No code changed.
+
+### Changes made
+
+- `CLAUDE.md`: log entries also cover how features work and how they were
+  tested, keep everything the final summary says, and are written before
+  committing. Commits and submodule bumps aren't listed as next steps.
+
+### How it works
+
+- **Font choice (`ui::font_ref`)**: a file and a face index. No file means
+  the built-in font. It's stored in imgui.ini as `index:path`; the path is
+  the rest of the line, so it may hold colons and spaces. `UiFont`,
+  `MonoFont` and `CanvasFont` are read by the app's settings handler.
+- **Font discovery (`ui::system_fonts`, `src/ui/fonts.cpp`)**:
+  - fontconfig (`FcFontList` with outline fonts): keeps TrueType and CFF
+    formats, drops color fonts, named instances of variable fonts
+    (`index >> 16`) and fonts whose charset lacks `A`.
+  - Without fontconfig, `sfnt_reader` reads the files in the system and
+    user font folders with seeks: the table directory (and the `ttcf`
+    header of collections), `name` (typographic names 16/17 before 1/2;
+    English Windows names, then other Windows ones, then Mac Roman),
+    `post`, `cmap` (formats 4 and 12), `hhea` and `hmtx`. Fonts without
+    `glyf` or `CFF ` (bitmap-only, CFF2) are skipped.
+  - Monospace: fontconfig spacing ≥ `FC_MONO`, or the `post`
+    isFixedPitch flag, or equal advances of `i`, `W`, `M` and `0`. Both
+    paths use the advance check, which neither of the other two replaces:
+    fontconfig and the flag both call Noto Sans Mono proportional.
+  - The default monospace font is fontconfig's match for `monospace`.
+    Without fontconfig it's Consolas, Courier New, Menlo, Monaco, DejaVu
+    Sans Mono or Liberation Mono by file name, else the first regular
+    monospace face in the scan.
+  - The list is made when the Settings window first opens, and again on
+    "Rescan fonts".
+- **Validation (`ui::read_font`)**: reads the whole file, then checks it with
+  stb_truetype (valid face index, `stbtt_InitFont`, has `A`) before handing
+  it to ImGui or Hd, so a bad file gives a message rather than a crash.
+- **Interface and monospace fonts (`ui::load_fonts`)**: between frames,
+  `ClearFonts()`, then the interface font first (the default), then the
+  monospace one, all without a size. `ui::set_font_size` sets
+  `style.FontSizeBase` and `_NextFrameFontSizeBase`. ImGui 1.92 rasterizes
+  glyphs on demand and the OpenGL backend updates the texture.
+  `ui::mono_scope` pushes the monospace font at the current size around
+  the disassembly, memory dump, terminal screen and messages.
+- **Canvas font**: `Hd::Renderer2D::setFont()` builds a new SDF atlas
+  (`Hd::Font`, 48 px glyphs) from the bytes. `Hd::Font` copies only up to
+  the end of its last table, so the file buffer can be freed. A font that
+  fails keeps its setting and draws with Roboto, like the other two.
+- **Font picker (`ui::font_picker`)**: a combo with the built-in choice, a
+  filter, a "Monospace only" switch and a clipped list (`ImGuiListClipper`)
+  of the faces, with the file as a tooltip. The Settings window fits its
+  contents on opening (`SetNextWindowSize` height 0 with
+  `ImGuiCond_Appearing`).
+- **Settings saved in the destructor**: `Hd::Gui` is constructed first, so
+  it's destroyed last and `ImGui::DestroyContext()` saved imgui.ini after
+  the members the handler reads were gone. `app::~app` and
+  `viewer_app::~viewer_app` save the file and clear `io.IniFilename`.
+- **Decisions:**
+  - Fontconfig on Linux, because it follows the user's configuration and
+    aliases. The scanner is for Windows and macOS and needs no library.
+  - Fonts are stored by path rather than by family name: simple and exact,
+    at the cost of breaking if the file moves.
+  - The built-in monospace font comes from the system rather than a font
+    bundled in `res/`, so no font file or license is added to the
+    repository.
+  - ImGui 1.92.9b rather than 1.93.0, see the earlier entry: 1.93 changes
+    stroke placement in `ImDrawList`, which the waveform view relies on.
+  - Fonts without Latin letters are hidden: they can't show the interface,
+    and they were 1896 of the 2353 faces on the dev machine.
+
+### Testing
+
+- **Unit tests**: all 6 ctest suites pass after each step.
+- **Font discovery**: a scratch program built from `src/ui/fonts.cpp`, once
+  with fontconfig and once with the scanner, on the dev machine:
+  - fontconfig: 457 faces, 54 families, 60 ms. Scanner: 454 faces,
+    54 families, 230 ms.
+  - Both find the same 12 monospace families. Default monospace font:
+    Noto Sans Mono (fontconfig), Liberation Mono (scanner).
+  - All listed faces load with `read_font`.
+  - `parse_font_ref` / `to_string` round-trip a path containing `:` and
+    spaces.
+- **Obsolete API**: a separate build of `logic` and `logic-wave` with
+  `IMGUI_DISABLE_OBSOLETE_FUNCTIONS` found the two old `AddPolyline` calls.
+  After the fix it builds cleanly.
+- **GUI** (VNC display, XTest):
+  - Picked Noto Serif for the interface and Liberation Serif for the canvas
+    through the filter. Both applied right away; the canvas changed alone.
+  - Debugger disassembly and memory dump in Noto Sans Mono while running
+    `counter_6502`.
+  - Fonts restored after quitting and starting again.
+  - Pasted "Ağaç şişe ıIİ öÖ ç Ω µ → …" into a text field: everything
+    shows except `→`, which Roboto lacks.
+  - The font size slider resizes the interface live, sharp at 32 px.
+  - Waveform window after the update: hexagons, labels and tooltips are
+    drawn as before.
+  - `logic-wave`: the file dialog opens and lists files; missing files
+    show the error popup.
+- **Errors**: imgui.ini with a missing interface font, a monospace font with
+  a face index the file doesn't have, and a text file as the canvas font
+  gave three messages ("can't open the file", "the file has no font number
+  3", "not a truetype or opentype font") and the default fonts.
+- **Crash on exit**: reproduced under gdb (SIGSEGV in the settings handler
+  from `Hd::Gui::~Gui`). After the fix, two runs that simulate and quit
+  exit normally and imgui.ini keeps the fonts.
+- **Not tested**: font discovery on Windows and macOS.
+
+### Recommended features
+
+- None beyond the earlier entries.
+
+### Outstanding issues
+
+- None beyond the earlier entries.
+
+### Next steps
+
+- None beyond the earlier entries.
