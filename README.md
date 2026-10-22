@@ -50,6 +50,8 @@ Optional:
 
 - simavr for the AVR plugin, which is skipped without it
 - Verilator, Icarus Verilog and GHDL for HDL cells
+- fontconfig to list the installed fonts. Without it (or with
+  `-DLOGIC_USE_FONTCONFIG=OFF`) the usual font folders are scanned instead
 
 ```sh
 git clone --recursive git@github.com:hdinc/logic.git
@@ -70,6 +72,11 @@ Without an argument, the program opens the `workspace` folder of the
 repository. It has two examples: `counter_6502`, a 6502 counting on a hex
 display, and `blink_328p`, an ATmega328P blinking an LED. Open a cell from
 the library panel and press F5 to simulate it.
+
+**View > Settings** sets the fonts: one for the interface, a monospace one
+for the debugger, terminal and messages, and one for the text in schematics
+and symbols. Any installed TrueType or OpenType font with Latin letters can
+be chosen.
 
 To record signals, use **Signals...** in the simulation toolbar, or
 right-click a wire, port or pin and choose **Add to waveforms**.

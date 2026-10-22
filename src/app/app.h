@@ -6,6 +6,7 @@
 #include "../hdl/manager.h"
 #include "../plugin/registry.h"
 #include "../render/renderer.h"
+#include "../ui/fonts.h"
 
 #include <Hd/FrameBuffer.h>
 #include <Hd/Gui.h>
@@ -14,6 +15,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -24,6 +26,7 @@ class app {
 public:
     // loads the workspace from root, libraries are saved back there
     app(Hd::Window& window, std::filesystem::path root);
+    ~app();
 
     void run();
 
@@ -48,7 +51,9 @@ private:
     // theme and canvas options, kept in imgui.ini
     void add_settings_handler();
     void apply_theme();
+    // imgui's fonts, between frames
     void update_font();
+    void update_canvas_font();
 
     void open_editor(model::cell& c);
     void close_editor(model::id cell);
@@ -115,10 +120,23 @@ private:
 
     bool light_theme = false;
     int font_size = 20;
-    // Settings changes queue a rebuild for the next frame boundary.
+    // interface, monospace (debugger, terminal, messages) and canvas fonts,
+    // the built-in ones if they have no file
+    ui::font_ref ui_font;
+    ui::font_ref mono_font;
+    ui::font_ref canvas_font;
+    // a new choice of fonts is loaded at the next frame boundary
     bool font_update_pending = true;
+    bool canvas_font_pending = false;
+    // installed fonts, found when the settings window opens
+    std::optional<std::vector<ui::font_face>> system_fonts;
+    ui::font_picker ui_font_picker;
+    ui::font_picker mono_font_picker{true};
+    ui::font_picker canvas_font_picker;
     // settings at the last check, a change marks imgui.ini for saving
-    std::tuple<bool, bool, render::grid_style, component_bar::orientation, int> saved_settings;
+    using settings = std::tuple<bool, bool, render::grid_style, component_bar::orientation, int, ui::font_ref, ui::font_ref, ui::font_ref>;
+    settings current_settings() const;
+    settings saved_settings;
 
     std::vector<std::string> messages;
 };

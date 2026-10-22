@@ -7,11 +7,11 @@
 #include <Hd/Resource.h>
 #include <imgui.h>
 #include <imgui_internal.h>
-#include <imgui_impl_opengl3.h>
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <stdexcept>
 
 namespace logic::app {
 
@@ -36,6 +36,15 @@ app::app(Hd::Window& w, std::filesystem::path r)
     reload_plugins();
 }
 
+app::~app()
+{
+    // imgui saves imgui.ini when gui is destroyed, after the members the
+    // settings handler reads
+    auto& io = ImGui::GetIO();
+    if (io.IniFilename) ImGui::SaveIniSettingsToDisk(io.IniFilename);
+    io.IniFilename = nullptr;
+}
+
 void app::reload_plugins()
 {
     for (auto& m : plugin::sync_libraries(ws, plugins, root / "plugins"))
@@ -48,6 +57,7 @@ void app::reload_plugins()
 void app::run()
 {
     apply_theme();
+    ui::set_font_size((float)font_size);
     // read with the rest of imgui.ini on the first frame
     add_settings_handler();
 
@@ -70,6 +80,7 @@ void app::run()
         glClear(GL_COLOR_BUFFER_BIT);
 
         if (font_update_pending) update_font();
+        if (canvas_font_pending) update_canvas_font();
         gui.Draw();
 
         window.SwapBuffers();
@@ -78,17 +89,33 @@ void app::run()
 
 void app::update_font()
 {
-    // Rebuild between frames, while the font atlas is unlocked.
-    ImGui_ImplOpenGL3_DestroyFontsTexture();
-    auto& io = ImGui::GetIO();
-    io.FontDefault = nullptr;
-    io.Fonts->Clear();
+    // between frames, nothing is drawing with the old fonts
     auto f = Hd::Resource::getExeRes("res/fonts/Roboto.ttf");
-    // embedded in the executable, no copy for the atlas to own
-    ImFontConfig config;
-    config.FontDataOwnedByAtlas = false;
-    io.Fonts->AddFontFromMemoryTTF((void*)f.first, (int)f.second, (float)font_size, &config);
+    std::vector<std::string> errors;
+    ui::load_fonts(ui_font, mono_font, {(const char*)f.first, (size_t)f.second}, errors);
+    for (auto& e : errors)
+        message(e);
     font_update_pending = false;
+}
+
+void app::update_canvas_font()
+{
+    canvas_font_pending = false;
+    auto builtin = (const unsigned char*)Hd::Resource::getExeRes("res/fonts/Roboto.ttf").first;
+    if (canvas_font.builtin()) {
+        renderer.g.setFont(builtin);
+        return;
+    }
+    std::string error;
+    auto data = ui::read_font(canvas_font, error);
+    try {
+        if (data.empty()) throw std::runtime_error(error);
+        // the font keeps a copy
+        renderer.g.setFont(data.data(), canvas_font.index);
+    } catch (std::exception& e) {
+        message("canvas font " + canvas_font.file.string() + ": " + e.what() + ", using the default font");
+        renderer.g.setFont(builtin);
+    }
 }
 
 void app::add_settings_handler()
@@ -114,24 +141,39 @@ void app::add_settings_handler()
             a->components.dir = std::strcmp(str, "horizontal") == 0 ? component_bar::orientation::horizontal : component_bar::orientation::vertical;
         else if (std::sscanf(line, "FontSize=%d", &i) == 1) {
             int size = std::clamp(i, 12, 40);
-            if (a->font_size != size) {
-                a->font_size = size;
-                a->font_update_pending = true;
-            }
+            a->font_size = size;
+            ui::set_font_size((float)size);
+        } else if (std::strncmp(line, "UiFont=", 7) == 0) {
+            a->ui_font = ui::parse_font_ref(line + 7);
+            a->font_update_pending = true;
+        } else if (std::strncmp(line, "MonoFont=", 9) == 0) {
+            a->mono_font = ui::parse_font_ref(line + 9);
+            a->font_update_pending = true;
+        } else if (std::strncmp(line, "CanvasFont=", 11) == 0) {
+            a->canvas_font = ui::parse_font_ref(line + 11);
+            // the renderer starts with the built-in one
+            a->canvas_font_pending = !a->canvas_font.builtin();
         }
     };
     h.ApplyAllFn = [](ImGuiContext*, ImGuiSettingsHandler* h) {
         auto a = (app*)h->UserData;
         a->apply_theme();
-        a->saved_settings = {a->light_theme, a->renderer.show_grid, a->renderer.grid, a->components.dir, a->font_size};
+        a->saved_settings = a->current_settings();
     };
     h.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* h, ImGuiTextBuffer* buf) {
         auto a = (app*)h->UserData;
-        buf->appendf("[Logic][Settings]\nTheme=%s\nGrid=%d\nGridStyle=%s\nComponentBar=%s\nFontSize=%d\n\n", a->light_theme ? "light" : "dark", a->renderer.show_grid ? 1 : 0,
+        buf->appendf("[Logic][Settings]\nTheme=%s\nGrid=%d\nGridStyle=%s\nComponentBar=%s\nFontSize=%d\n", a->light_theme ? "light" : "dark", a->renderer.show_grid ? 1 : 0,
             a->renderer.grid == render::grid_style::lines ? "lines" : "dots", a->components.dir == component_bar::orientation::horizontal ? "horizontal" : "vertical", a->font_size);
+        // the file's path is the rest of the line
+        buf->appendf("UiFont=%s\nMonoFont=%s\nCanvasFont=%s\n\n", ui::to_string(a->ui_font).c_str(), ui::to_string(a->mono_font).c_str(), ui::to_string(a->canvas_font).c_str());
     };
     ImGui::AddSettingsHandler(&h);
-    saved_settings = {light_theme, renderer.show_grid, renderer.grid, components.dir, font_size};
+    saved_settings = current_settings();
+}
+
+app::settings app::current_settings() const
+{
+    return {light_theme, renderer.show_grid, renderer.grid, components.dir, font_size, ui_font, mono_font, canvas_font};
 }
 
 void app::apply_theme()
@@ -145,7 +187,7 @@ void app::settings_window()
     using namespace ImGui;
 
     // also changed from the view menu and with G in the editors
-    std::tuple current{light_theme, renderer.show_grid, renderer.grid, components.dir, font_size};
+    auto current = current_settings();
     if (current != saved_settings) {
         saved_settings = current;
         MarkIniSettingsDirty();
@@ -153,7 +195,8 @@ void app::settings_window()
 
     if (!show_settings) return;
 
-    SetNextWindowSize({380, 0}, ImGuiCond_FirstUseEver);
+    // fits the contents when opened, imgui.ini may have an older height
+    SetNextWindowSize({GetFontSize() * 27, 0}, ImGuiCond_Appearing);
     SetNextWindowPos(GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, {0.5f, 0.5f});
     if (Begin("Settings", &show_settings, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
         SeparatorText("Appearance");
@@ -168,8 +211,25 @@ void app::settings_window()
         if (Button("Reset")) size = 20;
         if (size != font_size) {
             font_size = size;
-            font_update_pending = true;
+            ui::set_font_size((float)size);
         }
+
+        SeparatorText("Fonts");
+        if (!system_fonts) system_fonts = ui::system_fonts();
+        if (ui_font_picker.gui("Interface", ui_font, *system_fonts, "Roboto (built-in)")) font_update_pending = true;
+        std::string system_mono = "System monospace";
+        auto default_mono = ui::default_mono_font();
+        for (auto& f : *system_fonts) {
+            if (default_mono.builtin() || f.ref != default_mono) continue;
+            system_mono += " (" + f.family + ")";
+            break;
+        }
+        if (mono_font_picker.gui("Monospace", mono_font, *system_fonts, system_mono.c_str())) font_update_pending = true;
+        SetItemTooltip("Disassembly, memory, terminal and messages");
+        if (canvas_font_picker.gui("Canvas", canvas_font, *system_fonts, "Roboto (built-in)")) canvas_font_pending = true;
+        SetItemTooltip("Texts in schematics and symbols");
+        if (Button("Rescan fonts")) system_fonts = ui::system_fonts();
+        SetItemTooltip("Finds fonts installed since the program started");
 
         SeparatorText("Canvas");
         Checkbox("Show grid", &renderer.show_grid);
@@ -706,8 +766,12 @@ void app::messages_panel()
 
     Begin("Messages");
     if (Button("Clear")) messages.clear();
-    for (auto& m : messages)
-        TextWrapped("%s", m.c_str());
+    {
+        // compiler output lines up its markers by columns
+        ui::mono_scope mono;
+        for (auto& m : messages)
+            TextWrapped("%s", m.c_str());
+    }
     End();
 }
 

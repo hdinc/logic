@@ -2,6 +2,7 @@
 
 #include "viewer_app.h"
 #include "../ui/file_dialog.h"
+#include "../ui/fonts.h"
 #include "../ui/style.h"
 
 #include <Hd/Resource.h>
@@ -47,10 +48,9 @@ viewer_app::viewer_app(Hd::Window& w)
     io.IniFilename = "logic-wave.ini";
 
     auto f = Hd::Resource::getExeRes("res/fonts/Roboto.ttf");
-    // embedded in the executable, no copy for the atlas to own
-    ImFontConfig config;
-    config.FontDataOwnedByAtlas = false;
-    io.Fonts->AddFontFromMemoryTTF((void*)f.first, (int)f.second, 20.0f, &config);
+    std::vector<std::string> errors;
+    ui::load_fonts({}, {}, {(const char*)f.first, (size_t)f.second}, errors);
+    ui::set_font_size(20.0f);
 
     add_settings_handler();
     apply_theme();
@@ -65,6 +65,11 @@ viewer_app::viewer_app(Hd::Window& w)
 
 viewer_app::~viewer_app()
 {
+    // imgui saves the settings when gui is destroyed, after the members
+    // the settings handler reads
+    auto& io = ImGui::GetIO();
+    if (io.IniFilename) ImGui::SaveIniSettingsToDisk(io.IniFilename);
+    io.IniFilename = nullptr;
     drop_target = nullptr;
     if (job) {
         job->progress.cancel = true;

@@ -90,15 +90,28 @@ add_subdirectory(deps/ImGuiFileDialog)
 target_link_libraries(ImGuiFileDialog PUBLIC imgui)
 target_compile_definitions(ImGuiFileDialog PUBLIC USE_STD_FILESYSTEM)
 
-# gui parts shared by the apps: the waveform view, file dialogs and style
+# gui parts shared by the apps: the waveform view, file dialogs, fonts and
+# style
 add_library(logic_ui STATIC
     src/ui/file_dialog.cpp
+    src/ui/fonts.cpp
     src/ui/style.cpp
     src/wave/ui/timeline.cpp
     src/wave/ui/view.cpp
 )
-target_link_libraries(logic_ui PUBLIC logic_wave imgui ImGuiFileDialog)
+target_link_libraries(logic_ui PUBLIC logic_wave imgui ImGuiFileDialog stb)
 target_compile_options(logic_ui PRIVATE ${LOGIC_WARNINGS})
+
+# installed fonts from fontconfig, without it the font folders are scanned
+find_package(PkgConfig QUIET)
+option(LOGIC_USE_FONTCONFIG "Find installed fonts with fontconfig" ON)
+if(LOGIC_USE_FONTCONFIG AND PkgConfig_FOUND)
+    pkg_check_modules(FONTCONFIG QUIET IMPORTED_TARGET fontconfig)
+endif()
+if(FONTCONFIG_FOUND)
+    target_link_libraries(logic_ui PRIVATE PkgConfig::FONTCONFIG)
+    target_compile_definitions(logic_ui PRIVATE LOGIC_HAVE_FONTCONFIG)
+endif()
 
 add_executable(logic
     src/main.cpp
@@ -142,7 +155,6 @@ set_target_properties(logic_chips PROPERTIES
 add_dependencies(logic logic_chips)
 
 # avr microcontrollers with the system's simavr, skipped without it
-find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
     pkg_check_modules(SIMAVR QUIET IMPORTED_TARGET simavr)
 endif()

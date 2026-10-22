@@ -129,7 +129,7 @@ void draw_digital(ImDrawList& draw, const trace& tr, format f, const mapping& m,
             float fall = i + 1 < n && raw_b <= right ? std::min(5.0f, (b - a) * 0.3f) : 0;
             ImVec2 polygon[] = {{a + rise, high}, {b - fall, high}, {b, mid}, {b - fall, low}, {a + rise, low}, {a, mid}};
             draw.AddConvexPolyFilled(polygon, 6, with_alpha(color, 0.18f));
-            draw.AddPolyline(polygon, 6, color, ImDrawFlags_Closed, 1.5f);
+            draw.AddPolyline(polygon, 6, color, 1.5f, ImDrawFlags_Closed);
             float inset = std::max(4.0f, rise + 2);
             if (b - a > GetFontSize() + inset + 4 && CalcTextSize(label().c_str()).x + inset + std::max(4.0f, fall) < b - a)
                 draw.AddText({a + inset, mid - GetTextLineHeight() / 2}, color, label().c_str());
@@ -155,7 +155,7 @@ void draw_analog(ImDrawList& draw, const trace& tr, display mode, bool is_signed
     if (i1 - i0 < size_t(m.width)) {
         std::vector<ImVec2> points;
         auto flush = [&] {
-            if (points.size() >= 2) draw.AddPolyline(points.data(), (int)points.size(), color, 0, 1.5f);
+            if (points.size() >= 2) draw.AddPolyline(points.data(), (int)points.size(), color, 1.5f);
             points.clear();
         };
         size_t last = std::min(i1 + 1, n - 1);

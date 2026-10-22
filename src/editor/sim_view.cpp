@@ -1,4 +1,5 @@
 #include "sim_view.h"
+#include "../ui/fonts.h"
 
 #include <imgui_internal.h>
 
@@ -574,7 +575,10 @@ void sim_view::instance_panel()
     if (has_terminal) {
         SeparatorText("Terminal");
         BeginChild("screen", {0, 220}, ImGuiChildFlags_Borders);
-        TextUnformatted(terminal.c_str());
+        {
+            ui::mono_scope mono;
+            TextUnformatted(terminal.c_str());
+        }
         if (GetScrollY() >= GetScrollMaxY() - 20) SetScrollHereY(1.0f);
         EndChild();
         SetNextItemWidth(-60);
@@ -627,21 +631,24 @@ void sim_view::instance_panel()
             InputScalar("From", ImGuiDataType_U64, &disassemble_from, nullptr, nullptr, "%llX", ImGuiInputTextFlags_CharsHexadecimal);
         }
         BeginChild("disassembly", {0, 16 * GetTextLineHeightWithSpacing()}, ImGuiChildFlags_Borders);
-        for (auto& l : w.disassembly) {
-            bool bp = std::find(w.breakpoints.begin(), w.breakpoints.end(), l.address) != w.breakpoints.end();
-            bool at_pc = w.pc && *w.pc == l.address;
-            auto label = std::string(bp ? "* " : "  ") + (at_pc ? "> " : "  ");
-            char addr[32];
-            std::snprintf(addr, sizeof(addr), "%04llX  ", (unsigned long long)l.address);
-            PushID((int)l.address);
-            if (at_pc) PushStyleColor(ImGuiCol_Text, ImVec4{1, 0.85f, 0.3f, 1});
-            // a click sets or clears a breakpoint
-            if (Selectable((label + addr + l.text).c_str(), false)) {
-                auto a = l.address;
-                s->debug([a, bp](sim::debug_interface& d) { d.set_breakpoint(a, !bp); });
+        {
+            ui::mono_scope mono;
+            for (auto& l : w.disassembly) {
+                bool bp = std::find(w.breakpoints.begin(), w.breakpoints.end(), l.address) != w.breakpoints.end();
+                bool at_pc = w.pc && *w.pc == l.address;
+                auto label = std::string(bp ? "* " : "  ") + (at_pc ? "> " : "  ");
+                char addr[32];
+                std::snprintf(addr, sizeof(addr), "%04llX  ", (unsigned long long)l.address);
+                PushID((int)l.address);
+                if (at_pc) PushStyleColor(ImGuiCol_Text, ImVec4{1, 0.85f, 0.3f, 1});
+                // a click sets or clears a breakpoint
+                if (Selectable((label + addr + l.text).c_str(), false)) {
+                    auto a = l.address;
+                    s->debug([a, bp](sim::debug_interface& d) { d.set_breakpoint(a, !bp); });
+                }
+                if (at_pc) PopStyleColor();
+                PopID();
             }
-            if (at_pc) PopStyleColor();
-            PopID();
         }
         EndChild();
     }
@@ -663,6 +670,7 @@ void sim_view::instance_panel()
         if (ArrowButton("##down", ImGuiDir_Down)) memory_address += 256;
 
         if (w.memory == memory && w.memory_address == memory_address) {
+            ui::mono_scope mono;
             for (size_t row = 0; row * 16 < w.bytes.size(); row++) {
                 char line[128];
                 int n = std::snprintf(line, sizeof(line), "%06llX ", (unsigned long long)(memory_address + row * 16));
