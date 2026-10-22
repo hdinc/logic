@@ -93,7 +93,7 @@ Entries in chronological order, the newest last.
 
 ### Changes made
 
-- **Hd submodule** (not committed there yet):
+- **Hd submodule:**
   - `Hd::Font` takes a face index for collections (`.ttc`)
   - `Hd::Font` throws `std::runtime_error` on data that isn't a font,
     instead of reading garbage
@@ -162,11 +162,9 @@ Entries in chronological order, the newest last.
   by the first regular monospace face in the scan.
 - The Windows and macOS discovery paths are untested. On Linux, the scan
   agrees with fontconfig (454 vs 457 faces, the same 12 monospace families).
-- The Hd changes need a commit in the Hd repository and a submodule bump.
 
 ### Next steps
 
-- Commit the Hd changes and bump the submodule.
 - Test font discovery on Windows (MinGW).
 - Add font settings to `logic-wave`.
 
@@ -214,8 +212,6 @@ Entries in chronological order, the newest last.
 
 ### Outstanding issues
 
-- Hd needs a commit of the ImGui update together with the earlier font
-  changes, then a submodule bump here.
 - ImGuiFileDialog stays at its pinned commit, which supports 1.92 (tested:
   the open dialog of `logic-wave`). Upstream has newer fixes.
 - `logic-wave <folder>` reports `basic_string::_M_replace_aux` instead of
@@ -225,5 +221,4 @@ Entries in chronological order, the newest last.
 
 ### Next steps
 
-- Commit the Hd changes and bump the submodule.
 - Plan the 1.93 update with a visual check of the waveform view.
