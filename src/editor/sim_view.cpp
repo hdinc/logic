@@ -3,6 +3,8 @@
 
 #include <imgui_internal.h>
 
+#include <cmath>
+
 namespace logic::editor {
 
 namespace {
@@ -72,9 +74,10 @@ void sim_view::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     auto& sc = current();
     auto& e = editor_of(*sc.cell);
 
+    // whole pixels, the framebuffer is shown 1:1 so small text stays sharp
     auto size = GetContentRegionAvail();
-    size.x = std::min(size.x, (float)tex.GetWidth());
-    size.y = std::min(size.y, (float)tex.GetHeight());
+    size.x = std::min(std::floor(size.x), (float)tex.GetWidth());
+    size.y = std::min(std::floor(size.y), (float)tex.GetHeight());
     if (size.x < 1.0f || size.y < 1.0f) return;
 
     auto screen_pos = GetCursorScreenPos();

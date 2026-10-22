@@ -194,6 +194,15 @@ target_link_libraries(waveform_test logic_core logic_ui)
 target_compile_options(waveform_test PRIVATE ${LOGIC_WARNINGS})
 add_test(NAME waveform_test COMMAND waveform_test)
 
+# distance fields of the canvas font, with fonts of the system when they're there
+add_executable(font_test tests/font_test.cpp)
+target_link_libraries(font_test Hd)
+target_compile_options(font_test PRIVATE ${LOGIC_WARNINGS})
+add_test(NAME font_test COMMAND font_test ${CMAKE_SOURCE_DIR}/res/fonts/Roboto.ttf
+    /usr/share/fonts/noto/NotoSans-CondensedBoldItalic.ttf /usr/share/fonts/gsfonts/C059-BdIta.otf
+    /usr/share/fonts/noto/NotoSerifDisplay-SemiCondensedBlackItalic.ttf)
+set_tests_properties(font_test PROPERTIES SKIP_RETURN_CODE 77)
+
 # a plugin that refuses every abi version, only for the tests
 logic_add_model(test_bad_plugin tests/plugins/bad_plugin.c)
 set_target_properties(test_bad_plugin PROPERTIES

@@ -421,3 +421,190 @@ tested. No code changed.
 ### Next steps
 
 - Check the Windows build with and without FreeType.
+
+## 2026-10-23 00:06 +0300
+
+### Changes made
+
+- **Canvas text** (schematics, symbols, component bar) is drawn three ways,
+  by its size on screen:
+  - **24 px and more:** exactly from the glyph outlines, computed per pixel
+    in the shader. Correct at any zoom, including hairlines and corners.
+  - **Smaller, with FreeType:** hinted bitmaps at the exact pixel size, on
+    whole pixels, so labels look like interface text.
+  - **Otherwise:** multi-channel signed distance fields (MSDF). They replace
+    the single-channel stb_truetype SDF.
+- **Bug fix:** with high-contrast fonts, zoomed-in canvas text lost strokes.
+  The reported case was Noto Serif Display SemiCondensed Black Italic,
+  where the `U`'s right stem and the joint of the `1` broke up into
+  specks. Those are hairlines about 11 font units wide, 0.4 of a texel at
+  the atlas's 48 px, which no texture-based field can hold.
+- **Editors** show their framebuffer at whole-pixel sizes. A fractional window
+  size scaled the image slightly and blurred everything on the canvas.
+- **README:** FreeType is also used for small canvas text;
+  `-DHD_USE_FREETYPE=OFF` turns it off.
+
+### Features implemented
+
+- Exact, resolution-independent canvas text at large sizes.
+- Hinted small canvas text, matching the interface.
+- MSDF canvas glyphs with sharp corners for the remaining cases.
+- `tests/font_test.cpp` (ctest `font_test`), a headless check of the
+  distance fields and the outline curves.
+
+### How it works
+
+- **Hd library:**
+  - **`Hd/deps/msdfgen`:** msdfgen v1.13 core (MIT), unmodified, built as a
+    static library with `-O2` even in Debug. It's linked privately into Hd.
+  - **`Hd/src/Hd/Msdf.{h,cpp}` (no OpenGL):** converts stb_truetype outlines
+    into `msdfgen::Shape` (closing open contours, dropping empty edges).
+    Generation steps:
+    1. `normalize`
+    2. an orientation fix found with a distance probe outside the bounds
+       (TrueType and CFF wind opposite ways)
+    3. ink-trap edge coloring
+    4. `generateMSDF` with overlap support
+    5. `distanceSignCorrection` with the nonzero rule
+    6. error correction
+
+    `pack()` generates the glyphs on up to 8 threads and shelf-packs them
+    into a 1024 px atlas, growing to 2048 or 4096 if needed. Atlas text
+    height 48 px, range 6 px, `GL_RGB8`. Rows are bottom-up like OpenGL
+    textures.
+  - **`Hd/src/Hd/Outline.{h,cpp}` (no OpenGL):** turns each glyph's outline
+    into quadratic curves:
+    - lines get their control point in the middle
+    - CFF cubics become 4 quadratics each, with tangent-based control points
+    - every curve is split at its x and y extrema, so it's monotonic in both
+
+    A monotonic curve crosses a horizontal or vertical line at most once,
+    and only if its end points are on both sides. Shared end points
+    therefore never count twice.
+  - **`Hd::Font`:**
+    - keeps its public API and adds `range()` and `curveTexture()`
+    - `Glyph` gains `first`, `count`, `lo` and `hi`: the outline's curves
+      and bounds, in units of the text height
+    - curves live in an RGBA32F 2D texture, two texels per curve, rows of
+      1024 (`Font::curveRow`)
+    - with `HD_HAS_FREETYPE`, a private `Hinted` part (FreeType face from
+      the font bytes, so `.ttc` indices work) adds `bitmap(cp, pixelHeight)`,
+      `bitmapTexture()` and `newBatch()`:
+      - light hinting, sized from stb's text height so both paths agree
+      - an R8 cache, 1024 growing to 2048, uploading only dirty rows
+      - at most 256 new glyphs per batch
+      - a full cache is cleared only between batches
+      - missing glyphs map to `?` in every path
+  - **`Hd::Renderer2D`:**
+    - `begin()` stores the viewport and the inverse of `vp`, notes whether
+      the view is axis-aligned (needed for snapping), and starts a font
+      batch
+    - `text()` picks per string: `exact` when `round(height/px) >=
+      hintBelow` (24); hinted when smaller, hinting is on, the view is
+      axis-aligned and the size is at least 3 px; MSDF otherwise or on a
+      cache miss
+    - hinted glyphs keep the unhinted layout, with only the baseline and
+      each glyph's start rounded to whole pixels, so text width and
+      alignment are identical in all three paths
+    - new public settings `hinting` and `hintBelow`
+    - `end()` binds the MSDF atlas, the bitmap cache and the curve texture
+      to units 0–2, keeping one batch and one draw call
+  - **`shape_frag.glsl`:**
+    - type 4 (MSDF): the median of three channels, the pixel range from
+      `fwidth`, at least 1
+    - type 5 (hinted bitmap): coverage from texel UVs
+    - type 6 (outline): loops over the glyph's curves and casts a
+      horizontal and a vertical ray. Each crossing adds its direction,
+      weighted by how much of the pixel lies on its side. The nonzero
+      coverage of the two rays is averaged. Hairlines thinner than a pixel
+      get proportional, faint coverage.
+  - **CMake:** FreeType is now found at Hd level
+    (`option(HD_USE_FREETYPE ON)`), so ImGui and the canvas share the
+    result. Hd defines `HD_HAS_FREETYPE` privately.
+- **App:** `cell_editor.cpp` and `sim_view.cpp` floor the size of the
+  editor image.
+- **Decisions:**
+  - Exact outline rendering for large text instead of a bigger atlas or
+    FreeType bitmaps up to a size cap. The hairline needs about 190 px of
+    atlas height to survive in a field. Bitmaps would re-rasterize
+    constantly while zooming and still break past their cap.
+  - Rays against monotonic pieces with the half-open endpoint rule, rather
+    than solving full quadratics with root-range checks. That avoids the
+    double-counted crossings that leave streaks where curves meet.
+  - Curves are stored in a 2D float texture, not a texture buffer: Hd's
+    `Shader` validates programs right after linking, when every sampler is
+    on unit 0, and a `samplerBuffer` sharing a unit with `sampler2D`s fails
+    validation.
+  - MSDF stays, for builds without FreeType, for views that aren't
+    axis-aligned, and for full bitmap caches.
+  - Hinted layout uses unhinted advances with rounded glyph starts. Hinted
+    advances would drift by up to half a pixel per glyph and break right
+    alignment against symbol boxes.
+- **Diagnosis along the way:** the first assumption, a sign error in
+  stb_truetype's SDF, was wrong. That SDF and msdfgen both had correct signs
+  in every texel more than 1.5 px from the outline. The outline from
+  `stbtt_GetGlyphShape` matches fontTools point for point. A FreeType
+  rendering at 400 pt shows the `U`'s right stem really is a hairline.
+
+### Testing
+
+- **`font_test`** (ctest, 4 fonts: Roboto, Noto Sans Condensed Bold Italic,
+  C059 Bold Italic (CFF) and Noto Serif Display SemiCondensed Black Italic):
+  - **Distance field signs:** every MSDF texel more than 1.5 px from the
+    outline must match the outline's nonzero winding. 0 errors in
+    1713 glyphs.
+  - **Curves:** for every glyph, the winding of the monotonic curves must
+    match stb_truetype's own rasterizer at 300 px, on pixels that are fully
+    inside or outside along with their neighbors. 0 errors in all four
+    fonts.
+  - **Corner:** Roboto `L` keeps its outer corner a quarter texel inside.
+  - Takes about 9 s.
+- **Mutation checks** (scratch builds):
+  - Always taking the first quadratic root fails on Roboto glyphs (U+021B
+    by 345 pixels), so the curve test catches crossing errors.
+  - Removing the monotonic split doesn't fail on the test fonts, because
+    well-made TrueType fonts put points at extrema. The split protects
+    fonts that don't.
+- **Timing (Release, 24 cores):** building a font atlas takes 32 ms
+  (Roboto), 49 ms (Noto Serif Display) and 69 ms (C059); the curves take
+  under 1 ms.
+- **GUI** (VNC display, XTest screenshots):
+  - **Noto Serif Display Black Italic:** "U1" zoomed far in now matches
+    FreeType's rendering: hairline stem, the `1`'s flag joint, smooth
+    curves, about one pixel of anti-aliasing, no streaks or specks.
+    Medium zooms are clean.
+  - **Small text:** hinted labels are crisp below 24 px, with right-aligned
+    port labels flush against the box at every step.
+  - **CFF:** C059 Bold Italic zoomed in is clean.
+- **Without FreeType** (scratch build with `-DHD_USE_FREETYPE=OFF`): ImGui
+  and Hd build without FreeType defines, `font_test` passes, and the app
+  draws small canvas text with MSDF.
+- All 7 ctest suites pass.
+
+### Recommended features
+
+- A canvas setting for `hintBelow` and hinting on or off.
+- Culling glyphs outside the view. Every label is still sent to the GPU when
+  zoomed far in, which is cheap but grows with the size of the schematic.
+- Band or grid acceleration for the outline shader if fonts with very many
+  curves per glyph get slow.
+- Using the exact outline path for the component bar icons too, for
+  pixel-exact tiny text.
+
+### Outstanding issues
+
+- At exactly 24 px text switches from hinted to exact, which can shift a
+  glyph by up to half a pixel for one zoom step.
+- The MSDF distance field check skips texels within 1.5 px of the outline,
+  so it can't see strokes thinner than 3 px at the atlas size. The curve
+  test covers those.
+- `font_test`'s corner check assumes an upright `L`. It runs only on the
+  first font (Roboto).
+- Large text is drawn per fragment against all of a glyph's curves. A full
+  screen of huge CFF text costs about 70 curves × 2 rays per pixel.
+
+### Next steps
+
+- Check the Windows build: MSDF and outlines without FreeType, and with
+  FreeType.
+- Watch the outline shader's cost on weaker GPUs.
