@@ -7,6 +7,7 @@
 #include <Hd/Shader.h>
 #include <Hd/VAO.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -39,6 +40,8 @@ struct theme {
     glm::vec4 bus;
     // a known value of a bundle
     glm::vec4 bundle;
+    // inside closed outlines of symbols, see renderer::fill_symbols
+    glm::vec4 symbol_fill;
 };
 
 const theme& dark_theme();
@@ -50,7 +53,8 @@ void set_theme(const theme& t);
 
 enum class grid_style {
     dots,
-    lines
+    lines,
+    checkers
 };
 
 // which instance names schematics show
@@ -80,6 +84,7 @@ class renderer {
 public:
     renderer();
 
+    ~renderer();
     renderer(const renderer&) = delete;
     renderer& operator=(const renderer&) = delete;
 
@@ -97,6 +102,16 @@ public:
     void rect(glm::vec2 a, glm::vec2 b, glm::vec4 color, float corner = 0.0f) { g.rect(a, b, color, corner); }
     void rect_outline(glm::vec2 a, glm::vec2 b, glm::vec4 color, float width = stroke, float corner = 0.0f) { g.rectOutline(a, b, width, color, corner); }
 
+    // a filled polygon (any winding, may be concave), drawn under all lines
+    // and text at end()
+    void fill(const std::vector<glm::vec2>& polygon, glm::vec4 color);
+    // the closed outlines of the symbol filled, see model::fill_outlines.
+    // the triangles are cached per symbol.
+    void fill_symbol(const model::symbol& s, glm::ivec2 pos, model::transform xf, glm::vec4 color);
+    // draws and forgets the fills so far, for drawing without begin/end
+    // (e.g. icons). end() calls it.
+    void draw_fills(const glm::mat4& vp);
+
     // pos is the left end of the baseline for align::left
     void text(const std::string& str, glm::vec2 pos, float size, glm::vec4 color, align a = align::left);
     // like text() but pos.y is the vertical middle of capitals and digits
@@ -112,6 +127,9 @@ public:
     // buses and bundles as thick lines (wires and the stubs of symbols),
     // otherwise only their colors tell them apart
     bool thick_buses = false;
+    // closed outlines of symbols filled with the theme's color (cells may
+    // have their own)
+    bool fill_symbols = true;
     // the width of a wire
     float wire_line(bool bus, bool bundle) const;
 
@@ -122,14 +140,36 @@ private:
 
     Hd::Shader grid_shader;
     Hd::VAO grid_vao;
+
+    glm::mat4 frame_vp{1.0f};
+    struct fill_vertex {
+        glm::vec2 pos;
+        glm::vec4 color;
+    };
+    std::vector<fill_vertex> fills;
+    Hd::Shader fill_shader;
+    Hd::VAO fill_vao;
+    GLuint fill_vbo = 0;
+    size_t fill_capacity = 0;
+    // triangles of the symbols' fills in their own coordinates
+    struct fill_entry {
+        model::symbol symbol;
+        std::vector<glm::vec2> triangles;
+    };
+    std::map<const model::symbol*, fill_entry> fill_cache;
 };
 
 void draw_shape(renderer& r, const model::shape& s, glm::ivec2 pos, model::transform xf, glm::vec4 color);
 
 // shapes of a symbol placed at pos. pins get a dot unless pin_connected
 // says they are connected (null: none is).
+// fill: the color inside its closed outlines, alpha 0 for none
 void draw_symbol(renderer& r, const model::symbol& s, glm::ivec2 pos, model::transform xf, glm::vec4 color,
-    const std::vector<bool>* pin_connected = nullptr);
+    const std::vector<bool>* pin_connected = nullptr, glm::vec4 fill = {});
+
+// the fill of an instance's cell: its own color, else the theme's if
+// symbols are filled
+glm::vec4 fill_of(const renderer& r, const model::cell* c);
 
 // instance of a cell in a schematic, missing cells are drawn as a red box.
 // pin_nets: net of each port of the instance (-1 if not connected), null if

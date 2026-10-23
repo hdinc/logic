@@ -6,6 +6,7 @@
 #include "schematic.h"
 #include "symbol.h"
 
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -162,6 +163,9 @@ struct cell {
     // groups cells in the library panel and the component bar, empty for
     // none. like the name it's not part of the undo history.
     std::string category;
+    // the color inside the closed outlines of its symbol instead of the
+    // theme's, alpha 0 for no fill. none: the theme's.
+    std::optional<glm::vec4> fill;
 
     std::vector<port> ports;
     model::symbol symbol;

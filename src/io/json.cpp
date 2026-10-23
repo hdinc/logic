@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <map>
 #include <cstdio>
+#include <cstdlib>
+#include <cmath>
 #include <optional>
 #include <stdexcept>
 
@@ -278,6 +280,12 @@ json to_json(const cell& c)
     j["id"] = id_to_string(c.id);
     j["name"] = c.name;
     if (!c.category.empty()) j["category"] = c.category;
+    if (c.fill) {
+        char buf[16];
+        auto byte = [](float f) { return (int)std::lround(std::clamp(f, 0.0f, 1.0f) * 255.0f); };
+        std::snprintf(buf, sizeof(buf), "#%02X%02X%02X%02X", byte(c.fill->r), byte(c.fill->g), byte(c.fill->b), byte(c.fill->a));
+        j["fill"] = buf;
+    }
     j["next_id"] = c.next_id;
 
     j["ports"] = json::array();
@@ -387,6 +395,11 @@ cell cell_from_json(const json& j)
     c.id = id_from_string(j.at("id"));
     c.name = j.at("name");
     c.category = j.value("category", "");
+    // #RRGGBBAA, anything else is no color of its own
+    if (auto f = j.value("fill", std::string()); f.size() == 9 && f[0] == '#') {
+        auto v = std::strtoul(f.c_str() + 1, nullptr, 16);
+        c.fill = glm::vec4((v >> 24) & 0xFF, (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF) / 255.0f;
+    }
     c.next_id = j.at("next_id");
 
     for (auto& p : j.at("ports"))

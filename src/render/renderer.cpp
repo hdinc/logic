@@ -1,4 +1,6 @@
 #include "renderer.h"
+#include <cstddef>
+#include <algorithm>
 #include "../sim/numbers.h"
 
 #include <Hd/Resource.h>
@@ -42,6 +44,7 @@ const theme& dark_theme()
         .floating = rgb(0x5a8cff),
         .bus = rgb(0x8cc8f2),
         .bundle = rgb(0xd2b0f5),
+        .symbol_fill = rgb(0x1f2b38),
     };
     return t;
 }
@@ -69,6 +72,7 @@ const theme& light_theme()
         .floating = rgb(0x2966f0),
         .bus = rgb(0x1f7acc),
         .bundle = rgb(0x9b4fd9),
+        .symbol_fill = rgb(0xdce8f5),
     };
     return t;
 }
@@ -86,7 +90,22 @@ void set_theme(const theme& t)
 renderer::renderer()
     : g((const unsigned char*)Hd::Resource::getExeRes("res/fonts/Roboto.ttf").first)
     , grid_shader(Hd::Resource::getExeRes("res/shaders/grid_vert.glsl").first, Hd::Resource::getExeRes("res/shaders/grid_frag.glsl").first)
+    , fill_shader(Hd::Resource::getExeRes("res/shaders/fill_vert.glsl").first, Hd::Resource::getExeRes("res/shaders/fill_frag.glsl").first)
 {
+    glGenBuffers(1, &fill_vbo);
+    fill_vao.Bind();
+    glBindBuffer(GL_ARRAY_BUFFER, fill_vbo);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(fill_vertex), (void*)offsetof(fill_vertex, pos));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(fill_vertex), (void*)offsetof(fill_vertex, color));
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+renderer::~renderer()
+{
+    glDeleteBuffers(1, &fill_vbo);
 }
 
 void renderer::begin(const glm::mat4& vp)
@@ -96,12 +115,112 @@ void renderer::begin(const glm::mat4& vp)
     glClear(GL_COLOR_BUFFER_BIT);
 
     g.begin(vp);
+    frame_vp = vp;
     if (show_grid) draw_grid(vp);
 }
 
 void renderer::end()
 {
+    // under the lines and text
+    draw_fills(frame_vp);
     g.end();
+}
+
+namespace {
+
+// triangles of a simple polygon by ear clipping, any winding. a polygon
+// that isn't simple keeps the triangles found until no ear is left.
+std::vector<glm::vec2> triangulate(std::vector<glm::vec2> ps)
+{
+    std::vector<glm::vec2> r;
+    // counter clockwise
+    float area = 0;
+    for (size_t k = 0; k < ps.size(); k++)
+        area += ps[k].x * ps[(k + 1) % ps.size()].y - ps[(k + 1) % ps.size()].x * ps[k].y;
+    if (area < 0) std::reverse(ps.begin(), ps.end());
+
+    auto cross = [](glm::vec2 a, glm::vec2 b, glm::vec2 c) { return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x); };
+    std::vector<int> idx(ps.size());
+    for (size_t k = 0; k < ps.size(); k++)
+        idx[k] = (int)k;
+
+    while (idx.size() > 3) {
+        int n = (int)idx.size();
+        bool clipped = false;
+        for (int k = 0; k < n && !clipped; k++) {
+            auto a = ps[idx[(k + n - 1) % n]], b = ps[idx[k]], c = ps[idx[(k + 1) % n]];
+            float turn = cross(a, b, c);
+            // collinear points go without a triangle
+            if (std::abs(turn) < 1e-6f) {
+                idx.erase(idx.begin() + k);
+                clipped = true;
+                break;
+            }
+            if (turn < 0) continue;
+            bool empty = true;
+            for (int j = 0; j < n && empty; j++) {
+                if (j == k || j == (k + 1) % n || j == (k + n - 1) % n) continue;
+                auto p = ps[idx[j]];
+                if (cross(a, b, p) > 0 && cross(b, c, p) > 0 && cross(c, a, p) > 0) empty = false;
+            }
+            if (!empty) continue;
+            r.insert(r.end(), {a, b, c});
+            idx.erase(idx.begin() + k);
+            clipped = true;
+        }
+        if (!clipped) return r;
+    }
+    if (idx.size() == 3) r.insert(r.end(), {ps[idx[0]], ps[idx[1]], ps[idx[2]]});
+    return r;
+}
+
+}
+
+void renderer::fill(const std::vector<glm::vec2>& polygon, glm::vec4 color)
+{
+    for (auto p : triangulate(polygon))
+        fills.push_back({p, color});
+}
+
+void renderer::fill_symbol(const model::symbol& s, glm::ivec2 pos, model::transform xf, glm::vec4 color)
+{
+    if (color.a <= 0.0f) return;
+    auto it = fill_cache.find(&s);
+    if (it == fill_cache.end() || it->second.symbol != s) {
+        // symbols that are gone leave stale entries, start over now and then
+        if (fill_cache.size() > 2000) fill_cache.clear();
+        fill_entry e{s, {}};
+        for (auto& outline : model::fill_outlines(s)) {
+            auto t = triangulate(outline);
+            e.triangles.insert(e.triangles.end(), t.begin(), t.end());
+        }
+        it = fill_cache.insert_or_assign(&s, std::move(e)).first;
+    }
+    for (auto p : it->second.triangles)
+        fills.push_back({glm::vec2(pos) + xf.apply(p), color});
+}
+
+void renderer::draw_fills(const glm::mat4& vp)
+{
+    if (fills.empty()) return;
+    glEnable(GL_BLEND);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    fill_shader.Bind();
+    glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(vp));
+    fill_vao.Bind();
+    glBindBuffer(GL_ARRAY_BUFFER, fill_vbo);
+    // the buffer only grows, rewriting it in place is cheap for drivers
+    // that are slow to respecify buffers many times per frame (icons)
+    size_t bytes = fills.size() * sizeof(fill_vertex);
+    if (bytes > fill_capacity) {
+        fill_capacity = std::max(bytes, 2 * fill_capacity);
+        glBufferData(GL_ARRAY_BUFFER, fill_capacity, nullptr, GL_DYNAMIC_DRAW);
+    }
+    glBufferSubData(GL_ARRAY_BUFFER, 0, bytes, fills.data());
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)fills.size());
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    fills.clear();
 }
 
 void renderer::draw_grid(const glm::mat4& vp)
@@ -127,7 +246,11 @@ void renderer::draw_grid(const glm::mat4& vp)
     glUniform1f(2, pixel());
     glUniform1f(3, spacing);
     glUniform1f(4, fine);
-    glUniform1i(5, grid == grid_style::lines ? 1 : 0);
+    // 0 dots, 1 lines, 2 checkers
+    int mode = 0;
+    if (grid == grid_style::lines) mode = 1;
+    if (grid == grid_style::checkers) mode = 2;
+    glUniform1i(5, mode);
 
     grid_vao.Bind();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -192,8 +315,15 @@ void draw_shape(renderer& r, const model::shape& s, glm::ivec2 pos, model::trans
     }
 }
 
-void draw_symbol(renderer& r, const model::symbol& s, glm::ivec2 pos, model::transform xf, glm::vec4 color, const std::vector<bool>* pin_connected)
+glm::vec4 fill_of(const renderer& r, const model::cell* c)
 {
+    if (c && c->fill) return *c->fill;
+    return r.fill_symbols ? colors().symbol_fill : glm::vec4{};
+}
+
+void draw_symbol(renderer& r, const model::symbol& s, glm::ivec2 pos, model::transform xf, glm::vec4 color, const std::vector<bool>* pin_connected, glm::vec4 fill)
+{
+    r.fill_symbol(s, pos, xf, fill);
     for (auto& sh : s.shapes)
         draw_shape(r, sh, pos, xf, color);
 
@@ -223,7 +353,7 @@ void draw_instance(renderer& r, const model::workspace& ws, const model::instanc
             connected.push_back(c);
         }
     }
-    draw_symbol(r, *iface.symbol, i.pos, i.xf, color, pin_nets ? &connected : nullptr);
+    draw_symbol(r, *iface.symbol, i.pos, i.xf, color, pin_nets ? &connected : nullptr, fill_of(r, ws.find_cell(i.cell)));
 
     bool show = r.names == instance_names::all || (r.names == instance_names::custom && !model::is_default_instance_name(i.name));
     if (!i.name.empty() && show) {

@@ -119,6 +119,27 @@ void app::update_canvas_font()
     }
 }
 
+namespace {
+
+// for imgui.ini
+const char* grid_style_name(render::grid_style g)
+{
+    switch (g) {
+    case render::grid_style::lines: return "lines";
+    case render::grid_style::checkers: return "checkers";
+    default: return "dots";
+    }
+}
+
+render::grid_style grid_style_from(const char* s)
+{
+    if (std::strcmp(s, "lines") == 0) return render::grid_style::lines;
+    if (std::strcmp(s, "checkers") == 0) return render::grid_style::checkers;
+    return render::grid_style::dots;
+}
+
+}
+
 void app::add_settings_handler()
 {
     ImGuiSettingsHandler h;
@@ -137,7 +158,9 @@ void app::add_settings_handler()
         else if (std::sscanf(line, "Grid=%d", &i) == 1)
             a->renderer.show_grid = i != 0;
         else if (std::sscanf(line, "GridStyle=%31s", str) == 1)
-            a->renderer.grid = std::strcmp(str, "lines") == 0 ? render::grid_style::lines : render::grid_style::dots;
+            a->renderer.grid = grid_style_from(str);
+        else if (std::sscanf(line, "FillSymbols=%d", &i) == 1)
+            a->renderer.fill_symbols = i != 0;
         else if (std::sscanf(line, "ThickBuses=%d", &i) == 1)
             a->renderer.thick_buses = i != 0;
         else if (std::sscanf(line, "InstanceNames=%31s", str) == 1)
@@ -169,11 +192,10 @@ void app::add_settings_handler()
     };
     h.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* h, ImGuiTextBuffer* buf) {
         auto a = (app*)h->UserData;
-        buf->appendf("[Logic][Settings]\nTheme=%s\nGrid=%d\nGridStyle=%s\nComponentBar=%s\nFontSize=%d\n", a->light_theme ? "light" : "dark", a->renderer.show_grid ? 1 : 0,
-            a->renderer.grid == render::grid_style::lines ? "lines" : "dots", a->components.dir == component_bar::orientation::horizontal ? "horizontal" : "vertical", a->font_size);
+        buf->appendf("[Logic][Settings]\nTheme=%s\nGrid=%d\nGridStyle=%s\nComponentBar=%s\nFontSize=%d\n", a->light_theme ? "light" : "dark", a->renderer.show_grid ? 1 : 0, grid_style_name(a->renderer.grid), a->components.dir == component_bar::orientation::horizontal ? "horizontal" : "vertical", a->font_size);
         // the file's path is the rest of the line
         const char* names[] = {"all", "custom", "none"};
-        buf->appendf("InstanceNames=%s\nThickBuses=%d\n", names[(int)a->renderer.names], a->renderer.thick_buses ? 1 : 0);
+        buf->appendf("InstanceNames=%s\nThickBuses=%d\nFillSymbols=%d\n", names[(int)a->renderer.names], a->renderer.thick_buses ? 1 : 0, a->renderer.fill_symbols ? 1 : 0);
         buf->appendf("UiFont=%s\nMonoFont=%s\nCanvasFont=%s\n\n", ui::to_string(a->ui_font).c_str(), ui::to_string(a->mono_font).c_str(), ui::to_string(a->canvas_font).c_str());
     };
     ImGui::AddSettingsHandler(&h);
@@ -182,7 +204,7 @@ void app::add_settings_handler()
 
 app::settings app::current_settings() const
 {
-    return {light_theme, renderer.show_grid, renderer.grid, renderer.names, renderer.thick_buses, components.dir, font_size, ui_font, mono_font, canvas_font};
+    return {light_theme, renderer.show_grid, renderer.grid, renderer.names, renderer.thick_buses, renderer.fill_symbols, components.dir, font_size, ui_font, mono_font, canvas_font};
 }
 
 void app::apply_theme()
@@ -251,9 +273,13 @@ void app::settings_window()
         RadioButton("Dots", &style, (int)render::grid_style::dots);
         SameLine();
         RadioButton("Lines", &style, (int)render::grid_style::lines);
+        SameLine();
+        RadioButton("Checkers", &style, (int)render::grid_style::checkers);
         renderer.grid = (render::grid_style)style;
         EndDisabled();
 
+        Checkbox("Fill symbols", &renderer.fill_symbols);
+        SetItemTooltip("Closed outlines of symbols in the theme's color, cells can have their own (symbol properties)");
         Checkbox("Thick buses and bundles", &renderer.thick_buses);
         SetItemTooltip("Wires and pins of buses and bundles as thick lines, otherwise only their colors differ");
 
@@ -473,8 +499,10 @@ void app::menu_bar()
             if (BeginMenu("Grid style", renderer.show_grid)) {
                 if (MenuItem("Dots", nullptr, renderer.grid == render::grid_style::dots)) renderer.grid = render::grid_style::dots;
                 if (MenuItem("Lines", nullptr, renderer.grid == render::grid_style::lines)) renderer.grid = render::grid_style::lines;
+                if (MenuItem("Checkers", nullptr, renderer.grid == render::grid_style::checkers)) renderer.grid = render::grid_style::checkers;
                 EndMenu();
             }
+            MenuItem("Fill symbols", nullptr, &renderer.fill_symbols);
             MenuItem("Thick buses and bundles", nullptr, &renderer.thick_buses);
             if (BeginMenu("Instance names")) {
                 if (MenuItem("All", nullptr, renderer.names == render::instance_names::all)) renderer.names = render::instance_names::all;
@@ -529,7 +557,7 @@ void app::menu_bar()
         BulletText("Components bar: click an icon, then click in the schematic to place it");
         BulletText("Right click the components bar: vertical or horizontal");
         SeparatorText("Symbol");
-        BulletText("P: pin, L: line, B: bezier, A: arc, C: circle, T: text");
+        BulletText("P: pin, L: line, B: bezier, A: arc, C: circle, T: text, R: rectangle");
         SeparatorText("Simulate");
         BulletText("F5: start / stop simulating the schematic");
         BulletText("Click an input port: toggle it, wider inputs are set in the properties");

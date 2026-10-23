@@ -182,6 +182,58 @@ private:
     int step = 0;
 };
 
+// draws a rectangle as four lines by clicking two corners, shift keeps
+// drawing. closed like this it gets the symbol's fill.
+class rect_tool : public tool<symbol_editor> {
+public:
+    void update(symbol_editor& e, bool hovered) override
+    {
+        using namespace ImGui;
+
+        b = round(e.view.mouse_world());
+        if (!started) a = b;
+        if (!hovered) return;
+
+        if (IsKeyPressed(ImGuiKey_Escape)) {
+            started = false;
+            done = true;
+        } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
+            if (!started) {
+                started = true;
+                return;
+            }
+            started = false;
+            if (a.x == b.x || a.y == b.y) return;
+            for (auto& l : lines()) {
+                model::shape s{e.ctx.cell.new_id(), l};
+                e.sym.shapes.push_back(s);
+            }
+            e.ctx.modified();
+            done = !GetIO().KeyShift;
+        }
+    }
+
+    void draw(symbol_editor& e) override
+    {
+        auto& r = e.ctx.r;
+        for (auto& l : lines())
+            render::draw_shape(r, {model::no_id, l}, {0, 0}, {}, render::colors().preview);
+        r.circle(a, 1.0f, render::colors().control_point);
+        r.circle(b, 1.0f, render::colors().control_point);
+    }
+
+    bool busy() const override { return started; }
+
+private:
+    std::vector<model::line> lines() const
+    {
+        return {{a, {b.x, a.y}}, {{b.x, a.y}, b}, {b, {a.x, b.y}}, {{a.x, b.y}, a}};
+    }
+
+    glm::ivec2 a{0, 0}, b{0, 0};
+    bool started = false;
+};
+
 }
 
 symbol_editor::symbol_editor(context c)
@@ -204,6 +256,7 @@ void symbol_editor::set_tool(tool_kind k)
     case tool_kind::arc: t = std::make_unique<shape_tool>(model::shape{model::no_id, model::arc{}}); break;
     case tool_kind::circle: t = std::make_unique<shape_tool>(model::shape{model::no_id, model::circle{{0, 0}, 0.0f}}); break;
     case tool_kind::text: t = std::make_unique<shape_tool>(model::shape{model::no_id, model::text{}}); break;
+    case tool_kind::rect: t = std::make_unique<rect_tool>(); break;
     // needs something copied, see begin_paste()
     case tool_kind::paste: return;
     }
@@ -273,6 +326,8 @@ void symbol_editor::process_inputs(bool hovered)
             set_tool(tool_kind::circle);
         else if (IsKeyPressed(ImGuiKey_T))
             set_tool(tool_kind::text);
+        else if (IsKeyPressed(ImGuiKey_R))
+            set_tool(tool_kind::rect);
     }
 
     int turns;
@@ -444,6 +499,9 @@ void symbol_editor::draw()
     r.line({0, -5}, {0, 5}, c.preview, hair);
     r.ring({0, 0}, 2.5f, c.preview, hair);
 
+    // the fill as in schematics
+    r.fill_symbol(sym, {0, 0}, {}, render::fill_of(r, &ctx.cell));
+
     for (auto& s : sym.shapes) {
         auto color = is_shape_selected(s.id) ? c.selection : c.symbol;
         render::draw_shape(r, s, {0, 0}, {}, color);
@@ -587,6 +645,24 @@ void symbol_editor::property_panel()
 
     SeparatorText("Symbol");
     Text("%zu shapes, %zu pins", sym.shapes.size(), sym.pins.size());
+
+    // the fill of its closed outlines, the theme's unless the cell has its own
+    BeginDisabled(ctx.lib.read_only);
+    bool own = ctx.cell.fill.has_value();
+    if (Checkbox("Own fill color", &own)) {
+        if (own)
+            ctx.cell.fill = render::colors().symbol_fill;
+        else
+            ctx.cell.fill.reset();
+        ctx.modified();
+    }
+    SetItemTooltip("Fill the closed outlines with this color instead of the theme's. Alpha 0: no fill.");
+    if (ctx.cell.fill) {
+        SameLine();
+        if (ColorEdit4("##fill", &ctx.cell.fill->x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf))
+            ctx.modified();
+    }
+    EndDisabled();
 
     if (Button("Generate from ports")) {
         if (sym.shapes.empty() && sym.pins.empty()) {

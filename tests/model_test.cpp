@@ -908,6 +908,71 @@ static void test_categories(const std::filesystem::path& dir)
     std::filesystem::remove_all(dir);
 }
 
+// polygon area, positive counter clockwise
+static float area(const std::vector<glm::vec2>& ps)
+{
+    float a = 0;
+    for (size_t k = 0; k < ps.size(); k++) {
+        auto p = ps[k], q = ps[(k + 1) % ps.size()];
+        a += p.x * q.y - q.x * p.y;
+    }
+    return a / 2;
+}
+
+static void test_fill_outlines()
+{
+    auto& reg = builtin::registry();
+    auto symbol_of = [&](const char* kind, model::param_values v = {}) {
+        auto p = reg.find(kind);
+        return p->build(model::resolve_params(p->params(), v)).symbol;
+    };
+
+    // gates: one outline, the leads and the output line left out
+    for (auto kind : {"and", "or", "xor", "nand"}) {
+        auto o = model::fill_outlines(symbol_of(kind));
+        // nand: the body and the bubble
+        CHECK(o.size() == (std::string(kind) == "nand" ? 2u : 1u));
+        if (!o.empty()) CHECK(std::abs(area(o.back())) > 100 || std::abs(area(o.front())) > 100);
+    }
+    // 9 inputs extend the back line of an and gate past its corners (to
+    // +-40, the body is +-30): the outline is only the body
+    auto and9 = model::fill_outlines(symbol_of("and", {{"inputs", int64_t(9)}}));
+    CHECK(and9.size() == 1);
+    float top = -1e9f;
+    for (auto& o : and9)
+        for (auto p : o)
+            top = std::max(top, p.y);
+    CHECK(std::abs(top - 30) < 0.01f);
+
+    // a register: the box, the clock triangle on its edge doesn't count
+    auto r = model::fill_outlines(symbol_of("register"));
+    CHECK(r.size() == 1 && !r.empty() && std::abs(std::abs(area(r[0])) - 40 * 60) < 1);
+
+    // a generated box with pin stubs on its edges
+    model::cell c;
+    c.add_port(model::direction::input, {0, 0});
+    c.add_port(model::direction::output, {0, 0});
+    c.generate_symbol();
+    auto box = model::fill_outlines(c.symbol);
+    CHECK(box.size() == 1);
+
+    // a cell's own fill color is saved, "no fill" too
+    c.id = 1;
+    c.fill = glm::vec4(1.0f, 0.5f, 0.0f, 1.0f);
+    auto filled = io::cell_from_json(io::to_json(c));
+    CHECK(filled.fill && glm::distance(*filled.fill, *c.fill) < 0.01f);
+    c.fill = glm::vec4(0.0f);
+    CHECK(io::cell_from_json(io::to_json(c)).fill == glm::vec4(0.0f));
+    c.fill.reset();
+    CHECK(!io::to_json(c).contains("fill") && !io::cell_from_json(io::to_json(c)).fill);
+
+    // an open polyline has nothing to fill
+    model::symbol open;
+    open.shapes.push_back({1, model::line{{0, 0}, {10, 0}}});
+    open.shapes.push_back({2, model::line{{10, 0}, {10, 10}}});
+    CHECK(model::fill_outlines(open).empty());
+}
+
 int main(int argc, char** argv)
 {
     auto dir = std::filesystem::path(argc > 1 ? argv[1] : ".") / "model_test_workspace";
@@ -930,6 +995,7 @@ int main(int argc, char** argv)
     test_bundles_from_prefixes();
     test_label_alignment();
     test_categories(dir);
+    test_fill_outlines();
 
     if (failures) {
         std::printf("%d check(s) failed\n", failures);

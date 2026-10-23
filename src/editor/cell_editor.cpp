@@ -194,6 +194,7 @@ void cell_editor::edit_toolbar()
         if (tool_button("Arc", "Draw an arc: both ends, then a point on it (A)", t == k::arc)) symbol.set_tool(k::arc);
         if (tool_button("Circle", "Draw a circle: center, then radius (C)", t == k::circle)) symbol.set_tool(k::circle);
         if (tool_button("Text", "Place a text (T)", t == k::text)) symbol.set_tool(k::text);
+        if (tool_button("Rect", "Draw a rectangle: two corners (R)", t == k::rect)) symbol.set_tool(k::rect);
     } else {
         using k = schematic_editor::tool_kind;
         auto t = schematic->current_tool();

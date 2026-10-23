@@ -1,5 +1,6 @@
 #include "symbol.h"
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -136,6 +137,185 @@ rect symbol::bounds() const
 
     if (first) return {{-grid, -grid}, {grid, grid}};
 
+    return r;
+}
+
+namespace {
+
+// the graph of fill_outlines: points and the segments between them
+struct outline_graph {
+    std::vector<glm::vec2> points;
+    struct edge {
+        int a, b;
+        bool alive = true;
+    };
+    std::vector<edge> edges;
+    // edges at each point
+    std::vector<std::vector<int>> at;
+
+    // the point at p, the same for points closer than a hundredth
+    int point(glm::vec2 p)
+    {
+        for (int k = 0; k < (int)points.size(); k++)
+            if (glm::distance(points[k], p) < 0.01f) return k;
+        points.push_back(p);
+        at.emplace_back();
+        return (int)points.size() - 1;
+    }
+
+    void add(int a, int b)
+    {
+        if (a == b) return;
+        edges.push_back({a, b});
+        at[a].push_back((int)edges.size() - 1);
+        at[b].push_back((int)edges.size() - 1);
+    }
+
+    void polyline(const std::vector<glm::vec2>& ps)
+    {
+        for (size_t k = 1; k < ps.size(); k++)
+            add(point(ps[k - 1]), point(ps[k]));
+    }
+
+    int degree(int p) const
+    {
+        int n = 0;
+        for (int e : at[p])
+            n += edges[e].alive;
+        return n;
+    }
+
+    int other(int e, int p) const { return edges[e].a == p ? edges[e].b : edges[e].a; }
+};
+
+std::vector<glm::vec2> bezier_points(const bezier& b)
+{
+    std::vector<glm::vec2> r;
+    for (int k = 0; k <= 16; k++) {
+        float t = k / 16.0f;
+        r.push_back((1 - t) * (1 - t) * glm::vec2(b.a) + 2 * t * (1 - t) * glm::vec2(b.c) + t * t * glm::vec2(b.b));
+    }
+    return r;
+}
+
+}
+
+std::vector<std::vector<glm::vec2>> fill_outlines(const symbol& s)
+{
+    std::vector<std::vector<glm::vec2>> r;
+    outline_graph g;
+
+    // the ends of all shapes split the lines they lie on
+    std::vector<glm::vec2> ends;
+    for (auto& sh : s.shapes) {
+        if (auto l = std::get_if<line>(&sh.geom)) ends.insert(ends.end(), {glm::vec2(l->a), glm::vec2(l->b)});
+        if (auto a = std::get_if<arc>(&sh.geom)) ends.insert(ends.end(), {glm::vec2(a->a), glm::vec2(a->b)});
+        if (auto b = std::get_if<bezier>(&sh.geom)) ends.insert(ends.end(), {glm::vec2(b->a), glm::vec2(b->b)});
+    }
+
+    for (auto& sh : s.shapes) {
+        if (auto l = std::get_if<line>(&sh.geom)) {
+            glm::vec2 a = l->a, b = l->b;
+            auto d = b - a;
+            float len2 = glm::dot(d, d);
+            if (len2 == 0) continue;
+            // the line through the ends on it, in order
+            std::vector<float> ts{0, 1};
+            for (auto p : ends) {
+                float t = glm::dot(p - a, d) / len2;
+                if (t <= 0.001f || t >= 0.999f) continue;
+                if (glm::distance(a + t * d, p) < 0.01f) ts.push_back(t);
+            }
+            std::sort(ts.begin(), ts.end());
+            std::vector<glm::vec2> ps;
+            for (float t : ts)
+                ps.push_back(a + t * d);
+            g.polyline(ps);
+        } else if (auto a = std::get_if<arc>(&sh.geom)) {
+            g.polyline(arc_points(*a));
+        } else if (auto b = std::get_if<bezier>(&sh.geom)) {
+            g.polyline(bezier_points(*b));
+        } else if (auto c = std::get_if<circle>(&sh.geom)) {
+            if (c->radius <= 0) continue;
+            std::vector<glm::vec2> loop;
+            for (int k = 0; k < 32; k++) {
+                float t = k * 2.0f * std::numbers::pi_v<float> / 32;
+                loop.push_back(glm::vec2(c->center) + c->radius * glm::vec2{std::cos(t), std::sin(t)});
+            }
+            r.push_back(std::move(loop));
+        }
+    }
+
+    // what hangs off the outlines goes, end by end
+    std::vector<int> open;
+    for (int p = 0; p < (int)g.points.size(); p++)
+        if (g.degree(p) == 1) open.push_back(p);
+    while (!open.empty()) {
+        int p = open.back();
+        open.pop_back();
+        for (int e : g.at[p]) {
+            if (!g.edges[e].alive) continue;
+            g.edges[e].alive = false;
+            int q = g.other(e, p);
+            if (g.degree(q) == 1) open.push_back(q);
+        }
+    }
+
+    // the outer boundary of each group: from its leftmost point, always the
+    // most clockwise turn, the outside stays on the right
+    std::vector<bool> done(g.points.size(), false);
+    for (int start = 0; start < (int)g.points.size(); start++) {
+        if (done[start] || g.degree(start) == 0) continue;
+        // the group of start, and its leftmost (then lowest) point
+        std::vector<int> group{start}, stack{start};
+        done[start] = true;
+        while (!stack.empty()) {
+            int p = stack.back();
+            stack.pop_back();
+            for (int e : g.at[p]) {
+                if (!g.edges[e].alive) continue;
+                int q = g.other(e, p);
+                if (done[q]) continue;
+                done[q] = true;
+                group.push_back(q);
+                stack.push_back(q);
+            }
+        }
+        int first = start;
+        for (int p : group) {
+            auto a = g.points[p], b = g.points[first];
+            if (a.x < b.x - 0.001f || (std::abs(a.x - b.x) <= 0.001f && a.y < b.y)) first = p;
+        }
+
+        std::vector<glm::vec2> outline;
+        int p = first, came = -1;
+        glm::vec2 dir{0, -1};
+        int first_edge = -1;
+        for (size_t step = 0; step < 4 * g.edges.size() + 4; step++) {
+            int best = -1;
+            float best_turn = 10;
+            for (int e : g.at[p]) {
+                if (!g.edges[e].alive) continue;
+                // back the same way only at a dead end
+                if (e == came && g.degree(p) > 1) continue;
+                auto d = g.points[g.other(e, p)] - g.points[p];
+                float turn = std::atan2(dir.x * d.y - dir.y * d.x, glm::dot(dir, d));
+                if (turn < best_turn) {
+                    best_turn = turn;
+                    best = e;
+                }
+            }
+            if (best < 0) break;
+            if (best == first_edge && p == first) break;
+            if (first_edge < 0) first_edge = best;
+            outline.push_back(g.points[p]);
+            int q = g.other(best, p);
+            dir = g.points[q] - g.points[p];
+            came = best;
+            p = q;
+        }
+        if (outline.size() >= 3) r.push_back(std::move(outline));
+    }
     return r;
 }
 

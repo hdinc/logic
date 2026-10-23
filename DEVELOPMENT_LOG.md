@@ -1826,3 +1826,104 @@ product is twice as wide).
 - **GUI screenshot:** a tap on a bundle wire shows its diagonal joining
   the wire without the ring.
 - model_test (`test_builtins`) and sim_test pass.
+
+## 2026-10-23 18:02 +0300
+
+### Changes made
+
+- **Filled symbols:** the closed outlines of symbols are filled, like the
+  light-blue gates in your screenshot. That covers gates (and their
+  bubbles), the mux trapezoids, registers, boxes, generated symbols and
+  your own drawings, in schematics (editing and simulating), the symbol
+  editor and the component bar icons.
+  - **Fill color:** the theme's `symbol_fill` (#DCE8F5 in the light theme,
+    #1F2B38 in the dark).
+  - **View option:** "Fill symbols" (View menu and Settings > Canvas,
+    `imgui.ini` `FillSymbols`), on by default.
+  - **Per cell:** a cell can have its own color (symbol editor
+    properties, "Own fill color", saved as `"fill": "#RRGGBBAA"`).
+    Alpha 0 means no fill.
+- **Checkers background:** a third grid style, faint squares of one grid
+  that fade into five-grid squares while zooming out. In View > Grid
+  style and Settings, saved as `GridStyle=checkers`.
+- **Rectangle tool in the symbol editor** ("Rect", key R): two corners
+  make four lines, which fill like any closed outline.
+- **README:** describes filling and the grid styles.
+
+### How it works
+
+- **Finding the outlines** (`model::fill_outlines`,
+  `src/model/symbol.cpp`):
+  1. Lines, arcs (`arc_points`) and Béziers (17 points) make a graph.
+     Straight lines are split where another shape's end lies on them, so
+     T-junctions become vertices (an AND gate's long back line, pin stubs
+     ending on a box edge).
+  2. Vertices of degree 1 are removed until none is left. That drops pin
+     stubs, leads, output lines, the XOR's separate back curve and open
+     shapes.
+  3. The outer boundary of each remaining group is traced from its
+     leftmost point, always taking the most clockwise turn, so inner lines
+     (a register's clock triangle on its box edge) don't change the fill.
+  4. Circles are outlines of their own.
+- **Your decisions:**
+  - Automatic fills of closed outlines, so no symbol needs redrawing.
+    **Rejected:** a filled shape type, which would have meant redrawing
+    builtins and existing symbols.
+  - A theme color with a per-cell override.
+  - Checkers as a grid style.
+- **Drawing** (`src/render/renderer.{h,cpp}`):
+  - `renderer::fill` triangulates by ear clipping (either winding,
+    concave shapes like OR gates).
+  - `fill_symbol` caches the triangles per symbol (by address, checked
+    against a copy of the symbol) and moves them to the instance.
+  - `draw_fills` draws them with `res/shaders/fill_*.glsl`, in
+    `renderer::end()` before Hd's batch, so fills lie under all lines and
+    text. The component bar icon pass calls it before its own `g.end()`.
+  - The fill outlines are covered by the strokes, so the fill needs no
+    antialiasing of its own.
+  - **Hd is unchanged:** `Renderer2D` has no polygons, so the fill path
+    lives in the app.
+- **Fill color:** `render::fill_of(r, cell)` returns the cell's own color,
+  else the theme's if the option is on, else none. `draw_symbol` takes
+  the fill, `draw_instance` passes the instance's cell's, and the
+  selection only recolors strokes.
+- **Bug found while testing:** re-allocating the fill vertex buffer with
+  `glBufferData` for every component bar icon (about 60 times per frame)
+  hung the WSL D3D12 GL driver inside a mutex. The buffer now only grows
+  and is updated with `glBufferSubData`.
+- **Checkers:** `grid_frag.glsl` mode 2 draws alternating squares at the
+  grid and at five grids, mixed with the same `u_fine` as the dots, at
+  12 % of the grid color.
+
+### Testing
+
+- **model_test** (`test_fill_outlines`):
+  - AND, OR, XOR and NAND give one outline (NAND: plus its bubble).
+  - The 9-input AND's outline stops at the body (±30), not the extended
+    back line (±40).
+  - The register gives one outline of exactly its box (40×60).
+  - A generated box gives one; an open polyline none.
+  - A cell's own fill color and "no fill" round-trip through JSON.
+- **GUI** (private Xvnc):
+  - **Dark theme:** filled AND, OR, XOR (back curve not filled), NOT
+    triangle and bubble, 9-input AND, register.
+  - **Light theme with checkers:** the gates look like the screenshot, the
+    icons are filled, and the checkers are faint.
+  - **Symbol editor:** the rectangle tool drew a filled box, and an own
+    color (#FFE0A0) filled it orange.
+  - The driver hang above showed up as a black window and was found with a
+    gdb backtrace. It's fixed, and icons are filled.
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed.
+
+### Recommended features
+
+- A per-instance fill color, to group parts in a schematic.
+- Filling holes (outlines inside outlines) as holes.
+
+### Outstanding issues
+
+- The fill cache keys on the symbol's address. Entries of symbols that are
+  gone stay until 2000 entries, when the cache starts over.
+- Outlines that cross each other without a shared point aren't joined;
+  they fill separately.

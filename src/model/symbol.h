@@ -95,4 +95,10 @@ struct symbol {
     bool operator==(const symbol&) const = default;
 };
 
+// the closed outlines of the shapes, to fill: the outer boundary of every
+// group of connected lines, arcs and beziers (ends that touch, also an end
+// on a line), leaving out what hangs off it (pin stubs, leads) and open
+// shapes. every circle is an outline of its own. text is ignored.
+std::vector<std::vector<glm::vec2>> fill_outlines(const symbol& s);
+
 }

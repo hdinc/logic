@@ -101,6 +101,10 @@ binary, octal, unsigned or signed fixed point, IEEE float (16, 32 or 64
 bits), bfloat16 or ASCII, chosen in the port's properties or in that
 popup.
 
+Symbols are filled inside their closed outlines (**View > Fill
+symbols**), in the theme's color or a cell's own (symbol properties, "Own
+fill color"). **View > Grid style** has dots, lines or checkers.
+
 Buses and bundles are drawn in their own colors. **View > Thick buses and
 bundles** also draws them as thick lines.
 

@@ -18,6 +18,7 @@ namespace logic::editor {
 //   l / b / c        draw a line / bezier (two ends, then control) / circle
 //   a                draw an arc (two ends, then a point on it)
 //   t                place a text
+//   r                draw a rectangle (two corners), as four lines
 //   ctrl+c/x/v       copy, cut, paste shapes (handled by the app)
 //   delete           delete selection
 //   esc              cancel the tool / clear selection
@@ -32,6 +33,7 @@ public:
         arc,
         circle,
         text,
+        rect,
         paste,
     };
 

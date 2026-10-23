@@ -1,8 +1,9 @@
 #version 330 core
 #extension GL_ARB_explicit_uniform_location : require
 
-// dots or lines every u_spacing world units, and every 5 * u_spacing. the
-// finer ones fade with u_fine while zooming out.
+// dots or lines every u_spacing world units, and every 5 * u_spacing, or a
+// checkerboard of squares of those sizes. the finer ones fade with u_fine
+// while zooming out.
 
 in vec2 v_ndc;
 out vec4 fragcolor;
@@ -12,7 +13,7 @@ layout(location = 1) uniform vec4 u_color;
 layout(location = 2) uniform float u_px; // world units per pixel
 layout(location = 3) uniform float u_spacing;
 layout(location = 4) uniform float u_fine;
-layout(location = 5) uniform int u_lines;
+layout(location = 5) uniform int u_lines; // 0 dots, 1 lines, 2 checkers
 
 // coverage of a mark of the given pixel size at distance d (in pixels)
 float mark(float d, float size)
@@ -26,9 +27,23 @@ float level(vec2 p, float s, float size)
     return u_lines == 1 ? mark(min(d.x, d.y), size * 0.5) : mark(length(d), size);
 }
 
+// 1 on every other square of size s
+float checker(vec2 p, float s)
+{
+    vec2 c = floor(p / s);
+    return mod(c.x + c.y, 2.0);
+}
+
 void main()
 {
     vec2 p = (u_inv_vp * vec4(v_ndc, 0, 1)).xy;
+    if (u_lines == 2) {
+        // faint squares, the small ones fading into the big ones
+        float a = mix(checker(p, u_spacing * 5.0), checker(p, u_spacing), u_fine) * 0.12;
+        if (a <= 0.0) discard;
+        fragcolor = vec4(u_color.rgb, u_color.a * a);
+        return;
+    }
     float a = max(level(p, u_spacing, 1.1) * u_fine, level(p, u_spacing * 5.0, 1.1));
     // lines are much more ink than dots
     if (u_lines == 1) a *= 0.45;

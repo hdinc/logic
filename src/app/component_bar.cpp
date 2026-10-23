@@ -101,9 +101,11 @@ void component_bar::draw_icons(const std::vector<const model::cell*>& cells)
         r.stroke_scale = std::max(1.0f, 1.5f * r.pixel() / render::stroke);
         // no pin dots, nothing is connected in a preview
         std::vector<bool> connected(sym.pins.size(), true);
-        render::draw_symbol(r, sym, {0, 0}, {}, color, &connected);
+        render::draw_symbol(r, sym, {0, 0}, {}, color, &connected, render::fill_of(r, cells[k]));
         // a new cell without a symbol yet
         if (sym.shapes.empty() && sym.pins.empty()) r.rect_outline(lo + 2.0f, hi - 2.0f, color, render::stroke * r.stroke_scale, 2.0f);
+        // the fills under the lines
+        r.draw_fills(vp);
         r.g.end();
     }
     r.stroke_scale = 1.0f;
