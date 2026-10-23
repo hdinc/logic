@@ -924,7 +924,7 @@ static void test_plugin_libraries()
     auto counter = f.ws.find_cell(plugin::model_cell_id("logic_examples", "counter"));
     CHECK(counter && counter->name == "counter" && counter->check().empty());
     CHECK(counter && counter->ports.size() == 4 && counter->external_params()->size() == 1);
-    CHECK(counter && lib->categories[counter->id] == "Examples");
+    CHECK(counter && counter->category == "Examples");
     if (!counter) return;
 
     // generated: the pins of a side are a grid apart

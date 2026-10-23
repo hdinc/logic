@@ -1062,6 +1062,7 @@ void schematic_editor::property_panel()
 
     SeparatorText("Cell");
     Text("%s / %s", ctx.lib.name.c_str(), ctx.cell.name.c_str());
+    if (!ctx.lib.read_only && edit_category(ctx.lib, ctx.cell.category)) ctx.modified();
     Text("%zu wires, %zu instances, %zu ports", sch.wires.size(), sch.instances.size(), ctx.cell.ports.size());
 
     if (!ctx.cell.ports.empty() && BeginTable("ports", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {

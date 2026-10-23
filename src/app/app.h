@@ -63,6 +63,8 @@ private:
     // bundle types are edited in tabs next to the cells
     void open_bundle_editor(model::library& lib, model::bundle_type& b);
     editor::bundle_editor* find_bundle_editor(model::id bundle);
+    // a cell in the library panel: open, rename, category, delete
+    void library_cell(model::library& lib, model::cell& c);
     // the bundles of a library in the library panel
     void library_bundles(model::library& lib);
     void new_bundle(model::library& lib);

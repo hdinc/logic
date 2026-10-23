@@ -19,8 +19,14 @@ standalone VCD viewer, `logic-wave`.
   off a bundle wire. HDL and C model cells group their ports (`m0_valid`,
   `m0_data`, ...) into bundle ports.
 - **Builtin parts**: constants, clocks, logic gates, tristate buffers,
-  registers, RAM, ROM, pull resistors, buttons, switches, LEDs, hex displays
-  and a serial terminal.
+  registers, counters, RAM, ROM, pull resistors, buttons, switches, LEDs,
+  hex displays and a serial terminal. Arithmetic of any width: adder/
+  subtractor, multiplier, divider, negator, comparator, barrel shifter and
+  bit extender. Plexers: multiplexer, demultiplexer, decoder, priority
+  encoder, bit counter and bit selector.
+- **Categories**: cells are grouped by category in the library panel and
+  the component bar. Set a cell's category in its properties or from the
+  library panel's context menu.
 - **Simulator**: 4-state values (0, 1, x, z) of any width, inouts, time in
   picoseconds. It runs on its own thread, in real time or as fast as
   possible. You can step it and look inside every instance of the hierarchy.

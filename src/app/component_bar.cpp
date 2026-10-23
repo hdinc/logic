@@ -52,25 +52,21 @@ std::vector<component_bar::group> component_bar::groups(const model::workspace& 
         it->cells.push_back(c);
     };
 
-    // builtins by category first, then the cells of each library
-    for (auto& lib : ws.libraries) {
-        for (auto& c : lib->cells) {
-            auto p = ws.primitive_of(*c);
-            std::string cat = p ? p->category() : "";
-            if (!search.empty() && !contains_ignore_case(c->name, search) && !contains_ignore_case(cat, search) && !contains_ignore_case(lib->name, search)) continue;
-            if (p) add(cat.empty() ? lib->name : cat, c.get());
+    // builtins first, then the other libraries' cells, each by category or
+    // else by library
+    auto add_cells = [&](bool builtins) {
+        for (auto& lib : ws.libraries) {
+            for (auto& c : lib->cells) {
+                if ((ws.primitive_of(*c) != nullptr) != builtins) continue;
+                auto& cat = c->category;
+                if (!search.empty() && !contains_ignore_case(c->name, search) && !contains_ignore_case(cat, search) && !contains_ignore_case(lib->name, search))
+                    continue;
+                add(cat.empty() ? lib->name : cat, c.get());
+            }
         }
-    }
-    // plugin models by their category
-    for (auto& lib : ws.libraries) {
-        for (auto& c : lib->cells) {
-            if (ws.primitive_of(*c)) continue;
-            auto it = lib->categories.find(c->id);
-            std::string cat = it != lib->categories.end() ? it->second : "";
-            if (!search.empty() && !contains_ignore_case(c->name, search) && !contains_ignore_case(cat, search) && !contains_ignore_case(lib->name, search)) continue;
-            add(cat.empty() ? lib->name : cat, c.get());
-        }
-    }
+    };
+    add_cells(true);
+    add_cells(false);
     return gs;
 }
 

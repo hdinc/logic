@@ -1,6 +1,7 @@
 #include "library.h"
 
 #include <algorithm>
+#include <set>
 
 namespace logic::model {
 
@@ -30,6 +31,14 @@ bundle_type* library::find_bundle(const std::string& name)
     for (auto& b : bundles)
         if (b->name == name) return b.get();
     return nullptr;
+}
+
+std::vector<std::string> library::categories() const
+{
+    std::set<std::string> r;
+    for (auto& c : cells)
+        if (!c->category.empty()) r.insert(c->category);
+    return {r.begin(), r.end()};
 }
 
 std::string library::unique_cell_name(const std::string& prefix) const

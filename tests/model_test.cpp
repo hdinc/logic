@@ -866,6 +866,33 @@ static void test_label_alignment()
     CHECK(io::cell_from_json(j).symbol == c.symbol);
 }
 
+// categories of cells: saved, listed by the library, builtins have theirs
+static void test_categories(const std::filesystem::path& dir)
+{
+    model::workspace ws;
+    auto& builtins = ws.add_builtin_library(builtin::registry());
+    CHECK(ws.find_cell(model::builtin_cell_id("addsub"))->category == "Arithmetic");
+    CHECK(ws.find_cell(model::builtin_cell_id("mux"))->category == "Plexers");
+    auto cats = builtins.categories();
+    CHECK(std::find(cats.begin(), cats.end(), "Logic gates") != cats.end() && std::is_sorted(cats.begin(), cats.end()));
+
+    auto& lib = ws.add_library("work");
+    ws.create_cell(lib, "alu").category = "datapath";
+    ws.create_cell(lib, "regs").category = "datapath";
+    ws.create_cell(lib, "top");
+    CHECK(lib.categories() == std::vector<std::string>{"datapath"});
+
+    std::filesystem::remove_all(dir);
+    io::save_library(lib, dir);
+    model::workspace loaded;
+    io::load_workspace(loaded, dir);
+    auto l = loaded.find_library("work");
+    CHECK(l && l->find_cell("alu")->category == "datapath" && l->find_cell("top")->category.empty());
+    // no category, no key in the file
+    CHECK(!io::to_json(*lib.find_cell("top")).contains("category"));
+    std::filesystem::remove_all(dir);
+}
+
 int main(int argc, char** argv)
 {
     auto dir = std::filesystem::path(argc > 1 ? argv[1] : ".") / "model_test_workspace";
@@ -886,6 +913,7 @@ int main(int argc, char** argv)
     test_bundles(dir);
     test_bundles_from_prefixes();
     test_label_alignment();
+    test_categories(dir);
 
     if (failures) {
         std::printf("%d check(s) failed\n", failures);

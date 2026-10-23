@@ -87,6 +87,33 @@ bool edit_fields(const char* label, std::string& value, const model::bundle_layo
 
 }
 
+bool edit_category(const model::library& lib, std::string& category)
+{
+    using namespace ImGui;
+    auto& style = GetStyle();
+    float button = GetFrameHeight();
+    SetNextItemWidth(CalcItemWidth() - button - style.ItemInnerSpacing.x);
+    bool changed = input_string("##category", category);
+    SetItemTooltip("groups cells in the library panel and the component bar, empty for none");
+    SameLine(0, style.ItemInnerSpacing.x);
+    if (BeginCombo("##categories", nullptr, ImGuiComboFlags_NoPreview)) {
+        if (Selectable("(none)", category.empty())) {
+            changed = !category.empty();
+            category.clear();
+        }
+        for (auto& c : lib.categories()) {
+            if (Selectable(c.c_str(), c == category)) {
+                changed = changed || c != category;
+                category = c;
+            }
+        }
+        EndCombo();
+    }
+    SameLine(0, style.ItemInnerSpacing.x);
+    TextUnformatted("Category");
+    return changed;
+}
+
 bool edit_params(const std::vector<model::param_def>& defs, model::param_values& values, const std::filesystem::path& base, const model::workspace* ws)
 {
     using namespace ImGui;

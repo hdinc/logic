@@ -1042,3 +1042,171 @@ tested. No code changed.
   `handshake_sink` bundle stub is a bit thicker than a bus.
 - All ctest suites pass except `font_test`, which wasn't run again: no font
   code changed.
+
+## 2026-10-23 14:43 +0300
+
+### Changes made
+
+- **Category "Arithmetic":**
+  - Adder/subtractor (`addsub`)
+  - Multiplier (`multiplier`)
+  - Divider (`divider`)
+  - Negator (`negator`)
+  - Comparator (`comparator`)
+  - Shifter (`shifter`, a barrel shifter)
+  - Bit extender (`extender`)
+- **Category "Memory":** Counter (`counter`).
+- **Category "Plexers":**
+  - Multiplexer (`mux`)
+  - Demultiplexer (`demux`)
+  - Decoder (`decoder`)
+  - Priority encoder (`priority`)
+  - Bit counter (`popcount`)
+  - Bit selector (`bitselect`)
+- **Cell categories:**
+  - Every cell has a `category`, saved as `"category"` when set.
+  - Builtin cells take their primitive's category, and plugin models their
+    `logic_model_desc::category`. `library::categories` (the old map for
+    plugin models) is gone; `library::categories()` lists the categories
+    in use.
+  - The library panel shows each library's categories as tree nodes (open,
+    sorted), followed by the cells without one, then the bundles.
+  - The category is set in the cell's properties (schematic and model
+    editors) or from the library panel's context menu (Category): a text
+    input with a list of the library's categories.
+  - The component bar groups every cell by its category, or by its library
+    if it has none, with builtins first.
+- **README:** lists the new parts and categories.
+
+### Features implemented
+
+All widths go up to 4096 bits, except the multiplier at 2048 (its full
+product is twice as wide).
+
+- **Adder/subtractor:**
+  - Width; mode add, subtract or input (a `sub` pin chooses).
+  - Optional carry in and carry out, which are borrow in and out when
+    subtracting.
+  - Title `+`, `-` or `+/-`.
+- **Multiplier:** width; signed; output the low half or the full product.
+- **Divider:** width; signed (rounding towards 0, the remainder has the sign
+  of a); optional remainder. Dividing by 0 gives x.
+- **Negator:** the two's complement.
+- **Comparator:** width; signed; outputs lt, eq, gt.
+- **Shifter:**
+  - Width; operation shift left, shift right, arithmetic right, rotate
+    left or rotate right.
+  - The amount pin has the bits for 0..width−1. A larger amount shifts
+    everything out, and rotations go modulo the width.
+- **Bit extender:** input and output widths; zero, sign or one extension;
+  narrower keeps the low bits.
+- **Counter:**
+  - Width; maximum (0 = all ones); direction up or down; at the end wrap or
+    stay.
+  - Ports clk, en, load, d, rst and q, plus carry (1 at the end value).
+  - On the rising edge rst comes first, then load, then en.
+  - Its count is saved with the simulation state and shown in the
+    inspector.
+- **Multiplexer / demultiplexer:**
+  - Select bits (1–6, up to 64 inputs or outputs); width; optional enable.
+  - Enable 0 makes the outputs 0.
+  - The demultiplexer's other outputs are 0.
+- **Decoder:** select bits (1–12); optional enable; a one-hot output bus.
+- **Priority encoder:** input bits; index of the highest 1; valid.
+- **Bit counter:** the number of 1 bits.
+- **Bit selector:**
+  - Width; output bits; `sel` picks the group of bits starting at
+    `sel × out`.
+  - Bits beyond the bus are 0.
+
+### How it works
+
+- **`src/sim/arith.{h,cpp}`:** add, sub, negate, mul, divmod, shl, shr,
+  sar, rotl, rotr, compare, popcount and extend, on known values of any
+  width. They work on 64-bit words with `unsigned __int128` for carries
+  and partial products. Division is shift and subtract, one bit at a time.
+  Signed operations work on magnitudes and fix the sign at the end.
+  **Rejected:** limiting the parts to 64 bits. The simulator supports up to
+  4096 bits everywhere else.
+- **Unknown inputs:**
+  - Any x or z bit in an operand makes the arithmetic outputs x (your
+    choice). It's simple and predictable, like Verilog's arithmetic.
+  - Optional control inputs that aren't connected (all z) count as their
+    inactive value: carry in 0, enable 1, load 0, rst 0. An unknown control
+    makes the outputs x. For the counter, an unknown control on the clock
+    edge makes the count x.
+- **One shared symbol layout,** `builder::box`:
+  - Inputs on the left and outputs on the right, one grid apart, with bus
+    stubs for buses. Selects and enables go at the bottom.
+  - Labels sit inside, the right ones right aligned, and a title under the
+    top edge, clear of the instance name above the box.
+  - **Rejected:** trapezoid mux symbols. The box keeps pins on the grid for
+    any input count, and looks like the other parts.
+- **Files and registration:** the parts live in
+  `src/builtin/{arith,plexers}.cpp` and are registered by
+  `add_arith`/`add_plexers`. Port order follows the box: left, bottom,
+  right.
+- **Categories:** `cell::category` isn't part of the cell's undo state,
+  like the name, so changing it is immediate and not an undo step.
+
+### Testing
+
+- **sim_test:**
+  - `test_arith_values`: carries across 64-bit words, 100-bit subtraction,
+    signed and unsigned products (also 70×70 bits), division (−7 / 2 = −3
+    r −1, −128 / −1 wrapping, 100-bit), shifts by the width and more,
+    rotations, signed compare, popcount, extension, negation.
+  - `test_arith_parts`: the adder with carry, x propagation and a 100-bit
+    input-selected subtract; signed full product; division by 0 giving x;
+    the comparator; shifter amount widths (3 bits for 8, 4 for 12) and a
+    rotation by 13 on 12 bits; the extender with x bits.
+  - `test_counter_part`:
+    - Counting to 5 and wrapping, with carry.
+    - Enable, load, reset priority and an unknown enable.
+    - Down with stay and with wrap.
+    - Unconnected en, load and rst (counts).
+    - Saving and loading its state.
+  - `test_plexers`:
+    - Mux select, an x select and enable 0; demux outputs.
+    - Decoder one-hot and an x select.
+    - Priority encoder index width and valid, bit counter width.
+    - Bit selector groups, including the cut last group.
+  - A `part_fixture` helper wires each pin of a part to a top port by name,
+    or leaves the listed pins unconnected.
+- **model_test:**
+  - `test_builtins` builds every new part at its defaults and extremes:
+    pins on the grid, ports and pins matching, no pins on top of each
+    other.
+  - `test_categories`: builtin categories, `library::categories()`, and
+    the save/load round trip (no key when empty).
+- **plugin_test:** plugin models get their category on the cell.
+- **GUI** (private Xvnc, screenshots):
+  - The library panel's category trees (`demos` in work; Arithmetic,
+    Input/Output, ... in builtin) and the Category field.
+  - All 14 parts placed in one schematic: boxes with labels, titles, bus
+    stubs, and the mux's select and enable at the bottom.
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed.
+
+### Recommended features
+
+- An ALU combining the arithmetic, logic and shift operations with an op
+  input and flags.
+- Per-bit x propagation for the adder (low bits that don't depend on
+  unknown ones).
+- Separate decoder outputs as an option, instead of one bus.
+- Logisim-style trapezoid symbols for the plexers, as an option.
+- Renaming or deleting a category for all its cells at once.
+
+### Outstanding issues
+
+- Any x in an operand makes the whole arithmetic result x, even bits it
+  can't affect.
+- The counter's maximum parameter is a 64-bit integer. Wider counters can
+  only use all ones or a value below 2^63 as their end.
+- Category names are free text: two spellings make two categories.
+
+### Next steps
+
+- Use the new parts in an example (e.g. a counter, adder and mux datapath)
+  in the workspace examples.

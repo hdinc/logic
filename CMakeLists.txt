@@ -60,8 +60,11 @@ add_library(logic_core STATIC
     src/builtin/memory.cpp
     src/builtin/wiring.cpp
     src/builtin/io.cpp
+    src/builtin/arith.cpp
+    src/builtin/plexers.cpp
     src/netlist/netlist.cpp
     src/sim/simulator.cpp
+    src/sim/arith.cpp
     src/sim/runner.cpp
     src/sim/waveform.cpp
     src/plugin/dynlib.cpp

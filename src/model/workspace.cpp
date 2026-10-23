@@ -492,6 +492,7 @@ library& workspace::add_builtin_library(const primitive_registry& r, const std::
         auto c = std::make_unique<cell>();
         c->id = builtin_cell_id(p->kind());
         c->name = p->name();
+        c->category = p->category();
         c->impl = builtin_impl{p->kind()};
         auto iface = p->build(resolve_params(p->params(), {}));
         c->ports = std::move(iface.ports);

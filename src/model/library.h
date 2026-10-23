@@ -34,8 +34,8 @@ struct library {
     std::map<id, model::symbol> default_symbols;
     // cells whose symbol was edited since the last save
     std::set<id> changed_symbols;
-    // groups in the component bar by cell, e.g. a plugin model's category
-    std::map<id, std::string> categories;
+    // the categories of the cells, sorted
+    std::vector<std::string> categories() const;
 
     cell* find_cell(id i);
     cell* find_cell(const std::string& name);

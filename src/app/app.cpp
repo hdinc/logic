@@ -1,5 +1,6 @@
 #include "app.h"
 #include "../builtin/builtin.h"
+#include "../editor/param_editor.h"
 #include "../io/storage.h"
 #include "../plugin/libraries.h"
 #include "../ui/style.h"
@@ -542,28 +543,15 @@ void app::library_panel()
 
         if (lib->cells.empty() && lib->bundles.empty()) TextDisabled("empty");
 
-        for (auto& c : lib->cells) {
-            PushID((void*)c.get());
-
-            if (renaming == c->id) {
-                rename_input(*lib, c->name, false);
-            } else {
-                if (Selectable(c->name.c_str(), active_cell == c->id)) open_editor(*c);
-
-                if (!lib->read_only && IsItemHovered() && IsKeyPressed(ImGuiKey_F2)) start_rename(c->id, c->name);
-
-                if (BeginPopupContextItem()) {
-                    if (Selectable("Open")) open_editor(*c);
-                    if (!lib->read_only) {
-                        if (Selectable("Rename (F2)")) start_rename(c->id, c->name);
-                        if (Selectable("Delete")) deleting = c->id;
-                    }
-                    EndPopup();
-                }
-            }
-
-            PopID();
+        // the categories as tree nodes, then the cells without one
+        for (auto& cat : lib->categories()) {
+            if (!TreeNodeEx(cat.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) continue;
+            for (auto& c : lib->cells)
+                if (c->category == cat) library_cell(*lib, *c);
+            TreePop();
         }
+        for (auto& c : lib->cells)
+            if (c->category.empty()) library_cell(*lib, *c);
 
         library_bundles(*lib);
         TreePop();
@@ -639,6 +627,35 @@ void app::library_panel()
     }
 
     End();
+}
+
+void app::library_cell(model::library& lib, model::cell& c)
+{
+    using namespace ImGui;
+    PushID((void*)&c);
+
+    if (renaming == c.id) {
+        rename_input(lib, c.name, false);
+    } else {
+        if (Selectable(c.name.c_str(), active_cell == c.id)) open_editor(c);
+
+        if (!lib.read_only && IsItemHovered() && IsKeyPressed(ImGuiKey_F2)) start_rename(c.id, c.name);
+
+        if (BeginPopupContextItem()) {
+            if (Selectable("Open")) open_editor(c);
+            if (!lib.read_only) {
+                if (Selectable("Rename (F2)")) start_rename(c.id, c.name);
+                if (BeginMenu("Category")) {
+                    if (editor::edit_category(lib, c.category)) lib.dirty = true;
+                    EndMenu();
+                }
+                if (Selectable("Delete")) deleting = c.id;
+            }
+            EndPopup();
+        }
+    }
+
+    PopID();
 }
 
 void app::rename_input(model::library& lib, std::string& name, bool bundle)

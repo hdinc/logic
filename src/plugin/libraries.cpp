@@ -185,7 +185,7 @@ std::vector<std::string> sync_libraries(model::workspace& ws, const registry& re
                     messages.push_back(a.name + "/" + d.name + ": " + p);
             }
             impl.params = std::move(params);
-            lib->categories[id] = d.category ? d.category : "";
+            c->category = d.category ? d.category : "";
             choose_symbol(*lib, *c, d, a.name, messages);
         }
         // nothing to save from building it

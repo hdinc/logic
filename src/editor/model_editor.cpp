@@ -1,4 +1,5 @@
 #include "model_editor.h"
+#include "param_editor.h"
 #include "file_dialog.h"
 
 #include <algorithm>
@@ -86,6 +87,7 @@ void model_editor::gui(bool locked)
     }
 
     BeginDisabled(locked);
+    if (edit_category(ctx.lib, c.category)) ctx.modified();
     if (auto m = std::get_if<model::c_model_impl>(&c.impl)) c_model_settings(*m);
     if (auto h = std::get_if<model::hdl_impl>(&c.impl)) {
         hdl_settings(*h);

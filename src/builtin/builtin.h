@@ -39,5 +39,10 @@ void add_memory(model::primitive_registry& r);
 void add_wiring(model::primitive_registry& r);
 // led, displays, button, switch, terminal
 void add_io(model::primitive_registry& r);
+// adder/subtractor, multiplier, divider, negator, comparator, shifter, bit
+// extender, counter
+void add_arith(model::primitive_registry& r);
+// mux, demux, decoder, priority encoder, bit counter, bit selector
+void add_plexers(model::primitive_registry& r);
 
 }

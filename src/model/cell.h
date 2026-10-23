@@ -154,6 +154,9 @@ enum class pin_order {
 struct cell {
     model::id id = no_id;
     std::string name;
+    // groups cells in the library panel and the component bar, empty for
+    // none. like the name it's not part of the undo history.
+    std::string category;
 
     std::vector<port> ports;
     model::symbol symbol;

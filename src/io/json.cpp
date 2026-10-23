@@ -268,6 +268,7 @@ json to_json(const cell& c)
     j["format"] = format_version;
     j["id"] = id_to_string(c.id);
     j["name"] = c.name;
+    if (!c.category.empty()) j["category"] = c.category;
     j["next_id"] = c.next_id;
 
     j["ports"] = json::array();
@@ -376,6 +377,7 @@ cell cell_from_json(const json& j)
     cell c;
     c.id = id_from_string(j.at("id"));
     c.name = j.at("name");
+    c.category = j.value("category", "");
     c.next_id = j.at("next_id");
 
     for (auto& p : j.at("ports"))

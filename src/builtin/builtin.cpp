@@ -24,6 +24,8 @@ const model::primitive_registry& registry()
         add_sources(r);
         add_gates(r);
         add_memory(r);
+        add_arith(r);
+        add_plexers(r);
         add_wiring(r);
         add_io(r);
         return r;

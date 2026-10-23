@@ -4,6 +4,7 @@
 #include "../src/builtin/builder.h"
 #include "../src/builtin/builtin.h"
 #include "../src/io/firmware.h"
+#include "../src/sim/arith.h"
 #include "../src/sim/runner.h"
 #include "../src/sim/simulator.h"
 
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <thread>
 
 using namespace logic;
@@ -1792,6 +1794,262 @@ static void test_bundle_groups()
     CHECK(sink.ports.size() == 4 && sink.leaf_ports()->empty());
 }
 
+// one builtin part with a top cell port on each of its pins (but those in
+// unconnected), by pin name
+struct part_fixture : fixture {
+    std::map<std::string, int> ports;
+    std::unique_ptr<sim::simulator> s;
+
+    part_fixture(const std::string& kind, model::param_values params = {}, std::vector<std::string> unconnected = {})
+    {
+        place(kind, {0, 0}, std::move(params));
+        auto iface = ws.interface_of(sch().instances[0]);
+        for (int k = 0; k < (int)iface.ports->size(); k++) {
+            auto& p = (*iface.ports)[k];
+            if (std::find(unconnected.begin(), unconnected.end(), p.name) != unconnected.end()) continue;
+            ports[p.name] = port(p.dir == model::direction::output ? model::direction::output : model::direction::input, instance_pin(*this, 0, k), p.width);
+        }
+        s = std::make_unique<sim::simulator>(ws, *top, builtin::factory());
+        print_problems(*s);
+        CHECK(s->problems().empty());
+    }
+
+    void set(const std::string& name, value v) { s->set_input(ports.at(name), std::move(v)); }
+    void set(const std::string& name, uint64_t v) { set(name, sim::known(v, top->ports[ports.at(name)].width)); }
+    value get(const std::string& name) { return s->port_value(ports.at(name)); }
+    uint64_t num(const std::string& name) { return get(name).to_u64(); }
+    // a clock edge
+    void tick()
+    {
+        set("clk", uint64_t(0));
+        set("clk", uint64_t(1));
+    }
+};
+
+static void test_arith_values()
+{
+    using namespace sim;
+    // carries across words
+    auto a = *parse_hex("FFFFFFFF_FFFFFFFF_FFFFFFFF", 100);
+    auto r = add(a, known(1, 100));
+    CHECK(r.v == *parse_hex("1_00000000_00000000_00000000", 100) && !r.carry);
+    r = add(*parse_hex("F_FFFFFFFF_FFFFFFFF_FFFFFFFF", 100), known(1, 100));
+    CHECK(is_zero(r.v) && r.carry);
+    r = sub(known(0, 100), known(1, 100));
+    CHECK(r.v == *parse_hex("F_FFFFFFFF_FFFFFFFF_FFFFFFFF", 100) && r.carry);
+    CHECK(add(known(0xF, 4), known(1, 4)).carry && !add(known(0xE, 4), known(1, 4)).carry);
+
+    // products and quotients
+    CHECK(mul(known(0xFF, 8), known(0xFF, 8), false) == known(0xFE01, 16));
+    CHECK(mul(known(0xFF, 8), known(0xFF, 8), true) == known(1, 16));
+    CHECK(mul(known(0xFE, 8), known(3, 8), true) == known(0xFFFA, 16));
+    auto big = mul(*parse_hex("1_00000000_00000001", 70), *parse_hex("1_00000000_00000001", 70), false);
+    CHECK(big == *parse_hex("1_00000000_00000002_00000000_00000001", 140));
+    auto d = divmod(known(100, 8), known(7, 8), false);
+    CHECK(d.q == known(14, 8) && d.r == known(2, 8));
+    d = divmod(known(0xF9, 8), known(2, 8), true); // -7 / 2
+    CHECK(d.q == known(0xFD, 8) && d.r == known(0xFF, 8)); // -3 r -1
+    d = divmod(*parse_hex("FFFFFFFF_FFFFFFFF_FFFFFFFF", 100), known(0x10, 100), false);
+    CHECK(d.q == *parse_hex("FFFFFFF_FFFFFFFF_FFFFFFFF", 100) && d.r == known(0xF, 100));
+    d = divmod(known(0x80, 8), known(0xFF, 8), true); // -128 / -1 wraps
+    CHECK(d.q == known(0x80, 8) && is_zero(d.r));
+
+    // shifts, also by the width and more
+    CHECK(shl(known(0x81, 8), 1) == known(0x02, 8) && shl(known(0x81, 8), 8) == known(0, 8));
+    CHECK(shr(known(0x81, 8), 7) == known(1, 8) && shr(known(0x81, 8), 20) == known(0, 8));
+    CHECK(sar(known(0x81, 8), 1) == known(0xC0, 8) && sar(known(0x81, 8), 9) == known(0xFF, 8) && sar(known(0x41, 8), 1) == known(0x20, 8));
+    CHECK(rotl(known(0x81, 8), 1) == known(0x03, 8) && rotr(known(0x81, 8), 9) == known(0xC0, 8));
+    CHECK(shl(known(1, 100), 99) == *parse_hex("8_00000000_00000000_00000000", 100));
+
+    CHECK(compare(known(0xFF, 8), known(1, 8), false) == 1 && compare(known(0xFF, 8), known(1, 8), true) == -1);
+    CHECK(compare(known(5, 8), known(5, 8), true) == 0);
+    CHECK(popcount(*parse_hex("FFFFFFFF_FFFFFFFF_F", 68)) == 68);
+    CHECK(extend(known(0x80, 8), 12, extend_mode::sign) == known(0xF80, 12) && extend(known(0x80, 8), 12, extend_mode::zero) == known(0x80, 12));
+    CHECK(extend(known(0x3, 2), 4, extend_mode::one) == known(0xF, 4) && extend(known(0xAB, 8), 4, extend_mode::sign) == known(0xB, 4));
+    CHECK(negate(known(1, 8)) == known(0xFF, 8) && negate(known(0, 8)) == known(0, 8));
+}
+
+static void test_arith_parts()
+{
+    // adder with carries, the carry in not connected counts as 0
+    {
+        part_fixture f("addsub", {{"carry_in", true}});
+        f.set("a", 200), f.set("b", 100);
+        CHECK(f.num("y") == 44 && f.num("cout") == 1);
+        f.set("cin", 1);
+        CHECK(f.num("y") == 45);
+        f.set("b", sim::unknown(8));
+        CHECK(f.get("y") == sim::unknown(8) && f.get("cout") == sim::unknown(1));
+    }
+    // subtractor and the input-selected mode
+    {
+        part_fixture f("addsub", {{"mode", std::string("subtract")}});
+        f.set("a", 5), f.set("b", 7);
+        CHECK(f.num("y") == 254 && f.num("cout") == 1);
+        part_fixture g("addsub", {{"mode", std::string("input")}, {"width", int64_t(100)}});
+        g.set("a", 5), g.set("b", 7), g.set("sub", 0);
+        CHECK(g.num("y") == 12);
+        g.set("sub", 1);
+        CHECK(g.get("y") == *sim::parse_hex("F_FFFFFFFF_FFFFFFFF_FFFFFFFE", 100));
+    }
+    // multiplier: low half or all of it, signed
+    {
+        part_fixture f("multiplier", {{"output", std::string("full")}, {"signed", true}});
+        f.set("a", 0xFF), f.set("b", 0xFF);
+        CHECK(f.get("y") == sim::known(1, 16));
+        part_fixture g("multiplier");
+        g.set("a", 20), g.set("b", 20);
+        CHECK(g.num("y") == 144);
+    }
+    // divider, dividing by 0 is unknown
+    {
+        part_fixture f("divider", {{"signed", true}});
+        f.set("a", 0xF9), f.set("b", 2);
+        CHECK(f.num("q") == 0xFD && f.num("r") == 0xFF);
+        f.set("b", 0);
+        CHECK(f.get("q") == sim::unknown(8) && f.get("r") == sim::unknown(8));
+    }
+    {
+        part_fixture f("negator");
+        f.set("in", 3);
+        CHECK(f.num("out") == 0xFD);
+    }
+    {
+        part_fixture f("comparator", {{"signed", true}});
+        f.set("a", 0xFF), f.set("b", 1);
+        CHECK(f.num("lt") == 1 && f.num("eq") == 0 && f.num("gt") == 0);
+        f.set("b", 0xFF);
+        CHECK(f.num("eq") == 1);
+    }
+    // shifter: the amount pin has the bits for 0..width-1
+    {
+        part_fixture f("shifter", {{"operation", std::string("arithmetic right")}});
+        CHECK(f.top->ports[f.ports["amount"]].width == 3);
+        f.set("in", 0x90), f.set("amount", 4);
+        CHECK(f.num("out") == 0xF9);
+        part_fixture g("shifter", {{"operation", std::string("rotate left")}, {"width", int64_t(12)}});
+        CHECK(g.top->ports[g.ports["amount"]].width == 4);
+        // 13 is 1 modulo 12
+        g.set("in", 0x801), g.set("amount", 13);
+        CHECK(g.num("out") == 0x003);
+    }
+    // extender: a floating input bit becomes x, an unknown sign extends as x
+    {
+        part_fixture f("extender", {{"in_width", int64_t(4)}, {"out_width", int64_t(8)}});
+        f.set("in", 0x9);
+        CHECK(f.num("out") == 0xF9);
+        f.set("in", sim::value(4, 0x1, 0x8, 0));
+        CHECK(f.get("out") == sim::value(8, 0x1, 0xF8, 0));
+    }
+}
+
+static void test_counter_part()
+{
+    // up to 5, wrapping, carry at the end
+    // en is wired to a top input here, which starts at 0
+    part_fixture f("counter", {{"max", int64_t(5)}, {"width", int64_t(4)}});
+    f.set("en", 1);
+    CHECK(f.num("q") == 0);
+    for (int k = 1; k <= 5; k++)
+        f.tick();
+    CHECK(f.num("q") == 5 && f.num("carry") == 1);
+    f.tick();
+    CHECK(f.num("q") == 0 && f.num("carry") == 0);
+    // en 0 holds, load takes d, rst wins over load
+    f.set("en", 0);
+    f.tick();
+    CHECK(f.num("q") == 0 && f.num("carry") == 0);
+    f.set("d", 3), f.set("load", 1);
+    f.tick();
+    CHECK(f.num("q") == 3);
+    f.set("rst", 1);
+    f.tick();
+    CHECK(f.num("q") == 0);
+    f.set("rst", 0), f.set("load", 0), f.set("en", 1);
+    f.set("en", sim::unknown(1));
+    f.tick();
+    CHECK(f.get("q") == sim::unknown(4));
+
+    // down and stay
+    part_fixture g("counter", {{"direction", std::string("down")}, {"at_end", std::string("stay")}, {"width", int64_t(3)}});
+    g.set("en", 1), g.set("d", 2), g.set("load", 1);
+    g.tick();
+    g.set("load", 0);
+    g.tick(), g.tick(), g.tick();
+    CHECK(g.num("q") == 0 && g.num("carry") == 1);
+    // down and wrap goes to all ones
+    part_fixture h("counter", {{"direction", std::string("down")}, {"width", int64_t(3)}});
+    h.set("en", 1);
+    h.tick();
+    CHECK(h.num("q") == 7);
+
+    // a not connected enable counts, load and reset are off
+    part_fixture free("counter", {{"width", int64_t(4)}}, {"en", "load", "rst"});
+    free.tick(), free.tick();
+    CHECK(free.num("q") == 2);
+
+    // the count is saved and loaded with the state
+    auto comp = h.s->component_of(h.s->root(), 0);
+    std::vector<uint8_t> state;
+    CHECK(comp && comp->save_state(state));
+    h.tick();
+    CHECK(h.num("q") == 6);
+    CHECK(comp->load_state(state));
+    comp->reset();
+    CHECK(comp->load_state(state));
+}
+
+static void test_plexers()
+{
+    // mux with an enable
+    {
+        part_fixture f("mux", {{"select", int64_t(2)}, {"width", int64_t(8)}, {"enable", true}});
+        for (int k = 0; k < 4; k++)
+            f.set("in" + std::to_string(k), 10 + k);
+        f.set("en", 1), f.set("sel", 2);
+        CHECK(f.num("out") == 12);
+        f.set("sel", sim::value(2, 0, 1, 0));
+        CHECK(f.get("out") == sim::unknown(8));
+        f.set("sel", 3), f.set("en", 0);
+        CHECK(f.get("out") == sim::known(0, 8));
+    }
+    {
+        part_fixture f("demux", {{"select", int64_t(1)}, {"width", int64_t(4)}});
+        f.set("in", 9), f.set("sel", 1);
+        CHECK(f.num("out0") == 0 && f.num("out1") == 9);
+    }
+    {
+        part_fixture f("decoder", {{"select", int64_t(3)}});
+        f.set("sel", 5);
+        CHECK(f.get("out") == sim::known(0x20, 8));
+        f.set("sel", sim::unknown(3));
+        CHECK(f.get("out") == sim::unknown(8));
+    }
+    {
+        part_fixture f("priority", {{"inputs", int64_t(10)}});
+        CHECK(f.top->ports[f.ports["index"]].width == 4);
+        f.set("in", 0x0A0);
+        CHECK(f.num("index") == 7 && f.num("valid") == 1);
+        f.set("in", 0);
+        CHECK(f.num("valid") == 0);
+    }
+    {
+        part_fixture f("popcount", {{"width", int64_t(8)}});
+        CHECK(f.top->ports[f.ports["count"]].width == 4);
+        f.set("in", 0xFF);
+        CHECK(f.num("count") == 8);
+    }
+    {
+        part_fixture f("bitselect", {{"width", int64_t(10)}, {"out", int64_t(4)}});
+        CHECK(f.top->ports[f.ports["sel"]].width == 2);
+        f.set("in", 0x2B5), f.set("sel", 1);
+        CHECK(f.num("out") == 0xB);
+        // the last group is cut by the bus, the rest is 0
+        f.set("sel", 2);
+        CHECK(f.get("out") == sim::known(0x2, 4));
+    }
+}
+
 int main()
 {
     test_values();
@@ -1810,6 +2068,10 @@ int main()
     test_splitter_params();
     test_bundles();
     test_bundle_groups();
+    test_arith_values();
+    test_arith_parts();
+    test_counter_part();
+    test_plexers();
     test_wide_values();
     test_wide_circuits();
     test_time();
