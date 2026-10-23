@@ -47,6 +47,9 @@ struct cell_interface {
     // the ports the simulation model sees when they differ from ports (see
     // port_group), in the model's order. empty if they are the ports.
     std::vector<model_port> model_ports;
+    // a tunnel: its pin is connected to the pins of all tunnels with the
+    // same name in the schematic. empty for other parts.
+    std::string tunnel;
 };
 
 // what a primitive may look up while building its interface besides its
@@ -80,6 +83,10 @@ public:
     // uses_bundles. the interface is rebuilt when a bundle type changes.
     virtual cell_interface build(const param_values& values, const build_context&) const { return build(values); }
     virtual bool uses_bundles() const { return false; }
+
+    // only connects nets (splitters, tunnels, ...), it has no simulation
+    // model
+    virtual bool is_wiring() const { return false; }
 
     // problem with a combination of resolved values that build() works
     // around, shown to the user. empty if there is none.

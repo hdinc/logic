@@ -142,6 +142,7 @@ public:
     }
 
     // pure wiring, see the links
+    bool is_wiring() const override { return true; }
     std::unique_ptr<sim::component> create(const model::param_values&) const override { return nullptr; }
 };
 
@@ -188,6 +189,7 @@ public:
     }
 
     // works through the pulls of its interface
+    bool is_wiring() const override { return true; }
     std::unique_ptr<sim::component> create(const model::param_values&) const override { return nullptr; }
 };
 
@@ -342,6 +344,7 @@ public:
     std::string check(const model::param_values& v, const model::build_context& ctx) const override { return bundle_view(v, ctx, false).check(ctx, false); }
 
     // pure wiring, see the links
+    bool is_wiring() const override { return true; }
     std::unique_ptr<sim::component> create(const model::param_values&) const override { return nullptr; }
 };
 
@@ -387,8 +390,49 @@ public:
 
     std::string check(const model::param_values& v, const model::build_context& ctx) const override { return bundle_view(v, ctx, true).check(ctx, true); }
 
+    bool is_wiring() const override { return true; }
     std::unique_ptr<sim::component> create(const model::param_values&) const override { return nullptr; }
 };
+// connects its pin to every tunnel of the same name in the schematic, like
+// an invisible wire. it takes the width of its net.
+class tunnel : public primitive {
+public:
+    std::string kind() const override { return "tunnel"; }
+    std::string name() const override { return "Tunnel"; }
+    std::string category() const override { return "Wiring"; }
+    std::string description() const override { return "connects to all tunnels with the same name in the schematic"; }
+
+    std::vector<model::param_def> params() const override
+    {
+        return {model::text_param("name", "Name", "net", "tunnels with the same name are connected")};
+    }
+
+    model::cell_interface build(const model::param_values& v) const override
+    {
+        auto label = model::get_string(v, "name");
+        if (label.empty()) label = "?";
+
+        // a small tag pointing at the pin, less than a grid high so tunnels
+        // stack a grid apart. the name beside it, away from the pin.
+        builder b;
+        b.polyline({{0, 0}, {4, 4}, {grid + 5, 4}, {grid + 5, -4}, {4, -4}, {0, 0}});
+        b.text({grid + 8, -2}, label, 6.0f);
+        b.port("pin", direction::inout, 0, {0, 0}, "connected to the tunnels named " + label);
+
+        auto r = b.finish();
+        r.tunnel = model::get_string(v, "name");
+        return r;
+    }
+
+    std::string check(const model::param_values& v) const override
+    {
+        return model::get_string(v, "name").empty() ? "give the tunnel a name" : std::string();
+    }
+
+    bool is_wiring() const override { return true; }
+    std::unique_ptr<sim::component> create(const model::param_values&) const override { return nullptr; }
+};
+
 }
 
 void add_wiring(model::primitive_registry& r)
@@ -396,6 +440,7 @@ void add_wiring(model::primitive_registry& r)
     r.add(std::make_unique<splitter>());
     r.add(std::make_unique<breakout>());
     r.add(std::make_unique<tap>());
+    r.add(std::make_unique<tunnel>());
     r.add(std::make_unique<pull_resistor>());
 }
 

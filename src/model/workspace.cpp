@@ -538,7 +538,7 @@ interface_view workspace::interface_of(const instance& i) const
     if (p->uses_bundles()) key += '\n' + std::to_string(m_bundle_revision);
     auto it = interface_cache.find(key);
     if (it == interface_cache.end()) it = interface_cache.emplace(key, p->build(values, build_context{this})).first;
-    return {&it->second.ports, &it->second.symbol, &it->second.links, &it->second.pulls, &it->second.model_ports};
+    return {&it->second.ports, &it->second.symbol, &it->second.links, &it->second.pulls, &it->second.model_ports, &it->second.tunnel};
 }
 
 std::vector<param_def> workspace::params_of(const instance& i) const

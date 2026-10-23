@@ -21,6 +21,8 @@ struct interface_view {
     const std::vector<pull>* pulls = nullptr;
     // never null when the view is valid, see cell_interface::model_ports
     const std::vector<model_port>* model_ports = nullptr;
+    // see cell_interface::tunnel, null for cells that are not primitives
+    const std::string* tunnel = nullptr;
 
     explicit operator bool() const { return symbol != nullptr; }
 };

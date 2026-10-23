@@ -9,7 +9,8 @@ standalone VCD viewer, `logic-wave`.
 
 ## Features
 
-- **Schematic editor**: wires, buses and splitters, copy/paste, undo/redo,
+- **Schematic editor**: wires, buses, splitters and tunnels (same-named
+  tunnels are connected without a wire), copy/paste, undo/redo,
   rotate and mirror, symbols for subcircuits. Pan and zoom with the right or
   middle mouse button and the wheel.
 - **Bundles**: named wires that go together, like SystemVerilog interfaces.

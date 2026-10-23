@@ -18,6 +18,7 @@ struct port {
     int width = 1;
     // shown when hovering the pin of an instance
     std::string description;
+    // width 0: the port takes the width of its net (e.g. a tunnel's pin)
 
     // a port of a bundle type: width is the bundle's total width (kept up to
     // date by the workspace) and the fields have their own directions. dir

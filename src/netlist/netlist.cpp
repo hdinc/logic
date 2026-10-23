@@ -90,6 +90,17 @@ netlist extract(const model::workspace& ws, const model::cell& c)
         }
     }
 
+    // tunnels of the same name are connected
+    std::map<std::string, int> tunnel_node;
+    for (int i = 0; i < (int)sch->instances.size(); i++) {
+        auto& inst = sch->instances[i];
+        auto iface = ws.interface_of(inst);
+        if (!iface || !iface.tunnel || iface.tunnel->empty() || iface.symbol->pins.empty()) continue;
+        int n = node(model::pin_position(inst, iface.symbol->pins[0]));
+        auto [it, added] = tunnel_node.emplace(*iface.tunnel, n);
+        if (!added) uf.join(n, it->second);
+    }
+
     // nets in order of their first wire or terminal, so indices are stable
     // for the same schematic
     std::map<int, int> root_net;
@@ -130,6 +141,8 @@ netlist extract(const model::workspace& ws, const model::cell& c)
             r.instance_nets[t.t.instance][t.t.port] = n;
 
         first_name.resize(r.nets.size());
+        // a terminal of width 0 (a tunnel) takes the net's width
+        if (t.width == 0) continue;
         auto type = [&](int width, model::id bundle) { return bundle != model::no_id ? ws.bundle_label(bundle) : std::to_string(width) + (width == 1 ? " bit" : " bits"); };
         if (net.width == 0) {
             net.width = t.width;

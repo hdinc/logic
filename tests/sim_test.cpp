@@ -2050,6 +2050,81 @@ static void test_plexers()
     }
 }
 
+static void test_tunnels()
+{
+    using model::direction;
+    auto tunnel = [](const char* name) { return model::param_values{{"name", std::string(name)}}; };
+
+    // the same name connects, without a wire, at any width
+    {
+        fixture f;
+        f.place("tunnel", {0, 0}, tunnel("data"));
+        f.place("tunnel", {200, 100}, tunnel("data"));
+        f.place("tunnel", {0, 100}, tunnel("other"));
+        int in = f.port(direction::input, {0, 0}, 8);
+        int out = f.port(direction::output, {200, 100}, 8);
+        int alone = f.port(direction::output, {0, 100}, 8);
+        sim::simulator s(f.ws, *f.top, builtin::factory());
+        print_problems(s);
+        CHECK(s.problems().empty());
+        s.set_input(in, sim::known(0x5A, 8));
+        CHECK(s.port_value(out) == sim::known(0x5A, 8));
+        CHECK(s.port_value(alone) == sim::floating(8));
+        // the tunnels' pins take the width of the net
+        auto nl = netlist::extract(f.ws, *f.top);
+        CHECK(nl.nets[nl.instance_nets[0][0]].width == 8 && nl.instance_nets[0][0] == nl.instance_nets[1][0]);
+    }
+
+    // different widths on tunnels of one name are a width error
+    {
+        fixture f;
+        f.place("tunnel", {0, 0}, tunnel("x"));
+        f.place("tunnel", {200, 0}, tunnel("x"));
+        f.port(direction::input, {0, 0}, 8);
+        f.port(direction::output, {200, 0}, 4);
+        sim::simulator s(f.ws, *f.top, builtin::factory());
+        CHECK(s.problems().size() == 1 && s.problems()[0].find("width mismatch") != std::string::npos);
+    }
+
+    // a bundle goes through tunnels with its type
+    {
+        bundle_fixture f;
+        f.place("tunnel", {0, 0}, tunnel("bus"));
+        f.place("tunnel", {200, 0}, tunnel("bus"));
+        f.bundle_port(direction::input, {0, 0}, *f.hs, true);
+        f.bundle_port(direction::output, {200, 0}, *f.hs, true);
+        auto nl = netlist::extract(f.ws, *f.top);
+        CHECK(nl.problems.empty() && nl.nets.size() == 1 && nl.nets[0].bundle == f.hs->id);
+    }
+
+    // tunnels connect only within their schematic
+    {
+        fixture f;
+        auto& sub = f.new_cell("sub");
+        f.place("tunnel", {0, 0}, tunnel("x"));
+        int sub_in = f.port(direction::input, {0, 0});
+        sub.symbol.pins.push_back({sub.new_id(), sub.ports[sub_in].id, {-20, 0}});
+
+        f.new_cell("top2");
+        f.place_cell(sub.id, {0, 0});
+        f.place("tunnel", {100, 0}, tunnel("x"));
+        int out = f.port(direction::output, {100, 0});
+        int in = f.port(direction::input, {-20, 0});
+        sim::simulator s(f.ws, *f.top, builtin::factory());
+        print_problems(s);
+        CHECK(s.problems().empty());
+        s.set_input(in, bit(true));
+        CHECK(s.port_value(out) == sim::floating(1));
+    }
+
+    // a tunnel without a name says so
+    {
+        fixture f;
+        f.place("tunnel", {0, 0}, tunnel(""));
+        CHECK(f.ws.check_instance(f.sch().instances[0]) == "give the tunnel a name");
+    }
+}
+
 int main()
 {
     test_values();
@@ -2072,6 +2147,7 @@ int main()
     test_arith_parts();
     test_counter_part();
     test_plexers();
+    test_tunnels();
     test_wide_values();
     test_wide_circuits();
     test_time();

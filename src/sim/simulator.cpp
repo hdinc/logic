@@ -139,7 +139,7 @@ void simulator::elaborate(scope& s, const model::cell& c, const std::vector<int>
                 add_instance(s, i, std::move(comp), *iface.ports, pins, s.path.empty() ? inst.name : s.path + "/" + inst.name);
             else if (!error.empty())
                 m_problems.push_back(where(inst) + ": " + error);
-            else if (links.empty() && iface.pulls->empty() && !prim->uses_bundles())
+            else if (!prim->is_wiring())
                 m_problems.push_back(where(inst) + ": '" + cell->name + "' has no simulation model");
         } else if (auto defs = cell->external_params()) {
             auto groups = cell->port_groups();

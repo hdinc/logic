@@ -291,15 +291,14 @@ std::optional<model::cell> schematic_editor::copy_of(const std::vector<handle>& 
 void schematic_editor::duplicate_hovered()
 {
     auto m = view.mouse_world();
-    auto hs = hit_test(m);
-    if (hs.empty()) return;
-    // a wire end under the mouse means the whole segment
-    if (hs[0].kind == handle::wire_a || hs[0].kind == handle::wire_b) {
-        auto w = sch.find_wire(hs[0].id);
+    auto hit = hit_test(m);
+    if (hit.empty()) return;
+    // the first element under the mouse, a wire end means the whole segment
+    std::vector<handle> hs{hit[0]};
+    if (hit[0].kind == handle::wire_a || hit[0].kind == handle::wire_b) {
+        auto w = sch.find_wire(hit[0].id);
         if (!w) return;
         hs = {{handle::wire_a, w->id}, {handle::wire_b, w->id}};
-    } else {
-        hs.resize(1);
     }
 
     // an instance or port follows the mouse by its origin like a new one,
@@ -459,6 +458,8 @@ void port_tooltip(const std::string& name, const model::port& p, const sim::valu
     SameLine();
     if (b)
         TextDisabled(p.width == 1 ? "%s, %d bit" : "%s, %d bits", b->label.c_str(), p.width);
+    else if (p.width == 0)
+        TextDisabled("%s, takes the width of its net", model::to_string(p.dir));
     else
         TextDisabled(p.width == 1 ? "%s, %d bit" : "%s, %d bits", model::to_string(p.dir), p.width);
     if (!p.description.empty()) TextUnformatted(p.description.c_str());

@@ -1464,3 +1464,110 @@ product is twice as wide).
 ### Recommended features
 
 - A per-instance override (always or never show), saved in the file.
+
+## 2026-10-23 16:21 +0300
+
+### Changes made
+
+- **New builtin part: Tunnel** (Wiring, kind `tunnel`).
+  - It has one pin and a name (parameter `name`, default `net`). All
+    tunnels with the same name in a schematic are connected, like an
+    invisible wire.
+  - It takes the width of its net, so it carries single bits, buses and
+    bundles.
+  - It's drawn as a tag pointing at its pin, as long as its name. An empty
+    name shows "?" and the instance problem "give the tunnel a name".
+- **`primitive::is_wiring()`:** primitives that only connect nets
+  (splitter, bundle breakout and tap, pull resistor, tunnel) now say so.
+  The simulator uses it instead of guessing from links and pulls when
+  deciding whether to report "has no simulation model".
+- **Pin tooltips:** a pin that takes its net's width says "takes the width
+  of its net" instead of "0 bits".
+- **Warning fix:** `schematic_editor::duplicate_hovered` no longer
+  triggers a GCC `-Warray-bounds` false positive (seen in a full rebuild).
+- **README:** mentions tunnels.
+
+### How it works
+
+- **Your decisions:**
+  - A tunnel part rather than names on wires.
+  - Tunnels connect within one schematic: the same name in a subcircuit
+    is a different net, and signals cross levels through ports, like
+    Logisim.
+  - The width comes from the net.
+- **Joining:** `cell_interface::tunnel` (exposed as
+  `interface_view::tunnel`) holds the tunnel's name.
+  `netlist::extract` joins the pin nodes of all instances with the same
+  non-empty name in its union-find, before nets are numbered. Everything
+  after that (nets, widths, simulation, waveforms, hover) works unchanged.
+  **Rejected:** checking for the "tunnel" kind in the netlist. The
+  interface field keeps the netlist free of particular primitives.
+- **Width:** a port of width 0 takes its net's width. The netlist skips
+  width-0 terminals in the width and type checks, so the net's width and
+  bundle type come from the real ports. Two different widths on
+  same-named tunnels are the usual width mismatch.
+- **Simulation:** tunnels have no component and no links. The simulator
+  just sees their pins on joined nets.
+
+### Testing
+
+- **sim_test** (`test_tunnels`):
+  - Two tunnels named `data` pass an 8-bit value without a wire, and a
+    tunnel with another name stays floating.
+  - The tunnels' pins share the 8-bit net.
+  - 8 and 4 bits on one name give a width mismatch.
+  - A bundle passes through tunnels with its type.
+  - A tunnel in a subcircuit doesn't connect to the parent's tunnel of the
+    same name.
+  - An empty name gives the instance problem.
+- **model_test:** `test_builtins` checks the tunnel's interface at its
+  defaults.
+- **GUI** (private Xvnc): the tag symbol with its name, and while
+  simulating an 8-bit input through two tunnels with no wire between them
+  reaches the output (0xAB).
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed.
+
+### Recommended features
+
+- Highlighting all tunnels of a name when one is hovered or selected.
+- A warning for a tunnel name used only once in a schematic.
+- Net labels on wires sharing the tunnels' names.
+- Global tunnels (e.g. for clock and reset) across the hierarchy as an
+  option.
+
+### Outstanding issues
+
+- The tag's length comes from an estimated text width, like the other
+  generated symbols.
+
+## 2026-10-23 16:43 +0300
+
+### Changes made
+
+- **Smaller tunnel tag:** 8 units high, less than a grid, so tunnels
+  stacked one grid apart don't overlap. Before it was 12 units, and
+  stacked tags crossed.
+- **Name beside the tag:** the name is written next to the tag, on the
+  side away from the pin. The tag is a fixed small arrow (one and a half
+  grids long) instead of growing with the name.
+
+### How it works
+
+- In `tunnel::build` (`src/builtin/wiring.cpp`):
+  - The tag runs from the pin at (0, 0) to x = grid + 5, ±4 high.
+  - The name is a left-aligned text at x = grid + 8.
+  - Text keeps its side of the lines under a mirror (see `draw_shape`),
+    so a mirrored tunnel shows its name on the left, still away from the
+    pin.
+- **Rejected:** a full grid (±5) high. Stacked tags would share their
+  edges and look like one shape. ±4 leaves a small gap.
+
+### Testing
+
+- **GUI** (private Xvnc): two pairs of tunnels named "we" and "re", one
+  grid apart, normal and mirrored. The tags don't touch, and the names are
+  beside them on the outer side.
+- model_test (`test_builtins`) and `test_tunnels` in sim_test pass. All
+  ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed.
