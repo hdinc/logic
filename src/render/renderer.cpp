@@ -157,7 +157,12 @@ void draw_pin(renderer& r, glm::vec2 pos, glm::vec4 color)
 void draw_shape(renderer& r, const model::shape& s, glm::ivec2 pos, model::transform xf, glm::vec4 color)
 {
     auto tp = [&](glm::vec2 p) { return glm::vec2(pos) + xf.apply(p); };
-    float w = (s.width > 0.0f ? s.width : stroke) * r.stroke_scale;
+    // scaling up (icons) like thin lines would make buses and bundles blobs:
+    // they grow by a quarter of their extra width over a thin line, and
+    // never get thinner than they are
+    float thin = stroke * r.stroke_scale;
+    float w = thin;
+    if (s.width > 0.0f) w = r.stroke_scale > 1.0f ? std::max(s.width, thin * (1.0f + 0.25f * (s.width / stroke - 1.0f))) : s.width;
 
     if (auto l = std::get_if<model::line>(&s.geom)) {
         r.line(tp(l->a), tp(l->b), color, w);

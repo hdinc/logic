@@ -1015,3 +1015,30 @@ tested. No code changed.
 
 - Add the nested suggestions and a small dialog for the new type's name
   and view.
+
+## 2026-10-23 14:16 +0300
+
+### Changes made
+
+- **Bug fix:** bus and bundle stubs in the component bar's icons were drawn
+  far too thick, as blobs next to the thin lines.
+
+### How it works
+
+- **Cause:** icons draw at a small zoom, so the component bar raises
+  `renderer::stroke_scale` until thin lines are about 1.5 pixels wide.
+  `draw_shape` multiplied every width by that factor, so a bus (2.5×) or
+  bundle (5×) stroke grew by the same large factor.
+- **Fix:** while `stroke_scale` is above 1, a shape with its own width
+  grows by only a quarter of its extra width over a thin line:
+  `max(width, thin × (1 + 0.25 × (width / stroke − 1)))`. With the icon
+  scale, buses come out about 1.4× and bundles 2× a thin line. At the
+  normal scale (1) every width is drawn as it is, as before.
+
+### Testing
+
+- **GUI** (private Xvnc, screenshots of the component bar): bus pins of
+  the gates, registers, splitter and the plugin models are slim. The
+  `handshake_sink` bundle stub is a bit thicker than a bus.
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed.
