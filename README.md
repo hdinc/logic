@@ -25,9 +25,12 @@ standalone VCD viewer, `logic-wave`.
   subtractor, multiplier, divider, negator, comparator, barrel shifter and
   bit extender. Plexers: multiplexer, demultiplexer, decoder, priority
   encoder, bit counter and bit selector.
-- **Categories**: cells are grouped by category in the library panel and
-  the component bar. Set a cell's category in its properties or from the
-  library panel's context menu.
+- **Component bar**: the builtin parts as small icons by category,
+  vertical or as a row above the editor, in three sizes (right-click the
+  bar). Other cells are placed from the library panel or with Space.
+- **Categories**: cells are grouped by category in the library panel. Set
+  a cell's category in its properties or from the library panel's context
+  menu.
 - **Simulator**: 4-state values (0, 1, x, z) of any width, inouts, time in
   picoseconds. It runs on its own thread, in real time or as fast as
   possible. You can step it and look inside every instance of the hierarchy.

@@ -1927,3 +1927,108 @@ product is twice as wide).
   gone stay until 2000 entries, when the cache starts over.
 - Outlines that cross each other without a shared point aren't joined;
   they fill separately.
+
+## 2026-10-23 18:24 +0300
+
+### Changes made
+
+- **The component bar looks like the reference simulator's:**
+  - Every builtin part has a small hand-drawn icon of its body only: no
+    pin leads or labels, monochrome in the text color, thin even strokes.
+  - The vertical bar has collapsible category headers with separators.
+    The horizontal bar has framed buttons.
+- **Only builtin parts are listed,** by category. User cells, HDL and
+  plugin models are placed from the library panel or with Space / Cell...
+- **Icon sizes:** Small (24 px), Medium (32) and Large (44) in the bar's
+  right-click menu, saved in `imgui.ini` as `ComponentIcons`. The docked
+  bar resizes for the chosen size.
+- **README:** describes the bar.
+
+### Features implemented
+
+- `model::primitive::icon()` returns a pin-free drawing in a 24×24 box.
+  It's empty by default, and then the symbol is drawn.
+- `src/builtin/icons.cpp` has the 40 icons, built with `builtin::builder`
+  and looked up by kind (`builtin::icon(kind)`, used by
+  `builtin::primitive::icon()`):
+  - **Gates:** AND, NAND, OR, NOR, XOR, XNOR, NOT, buffer and the tristates
+    (with the enable stub), as bodies with bubbles.
+  - **Sources:** constant (circled 1), clock (circled square wave).
+  - **Memory and counter:** chips with pin ticks and short letters (D, R,
+    RW, CT).
+  - **Arithmetic:** boxed signs, and the extender as a narrow box into a
+    wide one.
+  - **Plexers:** mux and demux trapezoids, chips for the decoder and
+    priority encoder, "#1", a bracket for the bit selector.
+  - **Wiring:** a splitter fan, a breakout comb, the tap, the tunnel tag, a
+    pull-resistor zigzag to ground.
+  - **I/O:** LED with rays, "8." display, hex box "F", push button, switch,
+    terminal ">_".
+
+### How it works
+
+- **Your decisions:**
+  - Hand-drawn icons in code for every builtin. **Rejected:** image files
+    (no theme colors, blurry when scaled, artwork for every new part) and
+    automatic body-only icons from the symbols.
+  - Builtins only in the bar.
+  - The size as a menu setting.
+- **Pins:** the reference leaves them out, and so do the icons. At icon
+  size the leads and labels are noise, and the body shape is what tells
+  parts apart.
+- **Drawing** (`component_bar::draw_icons`):
+  - Icons are drawn into the atlas at the chosen size, from ±13 world units
+    (the 24-unit box and a margin).
+  - Strokes are 1.8 px at the small size, scaling with larger ones
+    (`px / 14`).
+  - Atlas slots are 48 px so every size fits.
+  - A part without an icon falls back to its symbol, scaled to its bounds.
+- **Text:** the icons use plain ASCII signs (+-, x, /, <>, <<), so any
+  canvas font has them. Chip labels are one or two letters because longer
+  ones aren't readable at 24 px.
+- **Dimmed icons:** icons are drawn at 35% alpha while there's nothing to
+  place into (no schematic open), as before. That's why they look grey on
+  a fresh start.
+
+### Testing
+
+- **model_test** (`test_builtins`): every builtin has an icon without pins
+  inside its 24×24 box. This caught the XNOR icon being 1.5 units too wide,
+  now tightened.
+- **GUI** (private Xvnc screenshots):
+  - **Horizontal:** framed icon buttons with separators between categories.
+  - **Vertical:** collapsible categories in both themes.
+  - **Large:** the icons and the re-docked, wider bar.
+  - Only builtins are listed, and the user cells and plugin models are
+    gone from it.
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed.
+
+### Recommended features
+
+- Icons for plugin models (an optional icon field in the SDK), if they
+  return to the bar.
+- A favorites or recently used group.
+
+### Outstanding issues
+
+- The small text in some icons (chip letters, two-character signs) is
+  only just readable at the small size.
+
+## 2026-10-23 18:26 +0300
+
+### Changes made
+
+- **Thinner component bar icons:** strokes are about 1.3 px at the small
+  size and at most 1.8 px at the large one. Before, they grew with the
+  size to about 3 px at large, which looked too thick.
+
+### How it works
+
+- `component_bar::draw_icons`: `line_px = clamp(px / 24, 1.3, 1.8)`, where
+  it was `max(1.8, px / 14)`.
+
+### Testing
+
+- **GUI screenshot:** the large icons have thin even strokes, like the
+  reference.

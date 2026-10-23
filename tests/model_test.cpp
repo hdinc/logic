@@ -368,6 +368,16 @@ static void test_builtins()
     auto and_cell = ws.find_cell(and_id);
     CHECK(and_cell && and_cell->name == "AND");
 
+    // every primitive has a component bar icon: a body without pins in its
+    // 24 by 24 box
+    for (auto& p : builtin::registry().all()) {
+        auto icon = p->icon();
+        CHECK(!icon.shapes.empty() && icon.pins.empty());
+        auto b = icon.bounds();
+        if (b.min.x < -12 || b.min.y < -12 || b.max.x > 12 || b.max.y > 12) std::printf("  icon of %s is outside its box\n", p->kind().c_str());
+        CHECK(b.min.x >= -12 && b.min.y >= -12 && b.max.x <= 12 && b.max.y <= 12);
+    }
+
     // every primitive builds valid interfaces for its defaults and extremes
     for (auto& p : builtin::registry().all()) {
         auto c = ws.find_cell(model::builtin_cell_id(p->kind()));

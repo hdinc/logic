@@ -152,7 +152,7 @@ private:
     ui::font_picker mono_font_picker{true};
     ui::font_picker canvas_font_picker;
     // settings at the last check, a change marks imgui.ini for saving
-    using settings = std::tuple<bool, bool, render::grid_style, render::instance_names, bool, bool, component_bar::orientation, int, ui::font_ref, ui::font_ref, ui::font_ref>;
+    using settings = std::tuple<bool, bool, render::grid_style, render::instance_names, bool, bool, component_bar::orientation, component_bar::icon_size, int, ui::font_ref, ui::font_ref, ui::font_ref>;
     settings current_settings() const;
     settings saved_settings;
 

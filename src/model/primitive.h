@@ -88,6 +88,10 @@ public:
     // model
     virtual bool is_wiring() const { return false; }
 
+    // a small drawing for the component bar in a 24 by 24 box around the
+    // origin, the body of the part without pins. empty: its symbol is drawn.
+    virtual symbol icon() const { return {}; }
+
     // problem with a combination of resolved values that build() works
     // around, shown to the user. empty if there is none.
     virtual std::string check(const param_values&) const { return {}; }

@@ -13,7 +13,7 @@ namespace logic::app {
 namespace {
 
 constexpr int atlas_size = 1024;
-constexpr int slots_per_row = atlas_size / component_bar::icon_size;
+constexpr int slots_per_row = atlas_size / component_bar::slot_size;
 constexpr int max_slots = slots_per_row * slots_per_row;
 
 bool contains_ignore_case(const std::string& s, const std::string& sub)
@@ -26,8 +26,11 @@ bool contains_ignore_case(const std::string& s, const std::string& sub)
 
 glm::ivec2 slot_pos(int slot)
 {
-    return {slot % slots_per_row * component_bar::icon_size, slot / slots_per_row * component_bar::icon_size};
+    return {slot % slots_per_row * component_bar::slot_size, slot / slots_per_row * component_bar::slot_size};
 }
+
+// half the size of the box icons are drawn in, with a little margin
+constexpr float icon_half = 13.0f;
 
 }
 
@@ -52,25 +55,29 @@ std::vector<component_bar::group> component_bar::groups(const model::workspace& 
         it->cells.push_back(c);
     };
 
-    // builtins first, then the other libraries' cells, each by category or
-    // else by library
-    auto add_cells = [&](bool builtins) {
-        for (auto& lib : ws.libraries) {
-            for (auto& c : lib->cells) {
-                if ((ws.primitive_of(*c) != nullptr) != builtins) continue;
-                auto& cat = c->category;
-                if (!search.empty() && !contains_ignore_case(c->name, search) && !contains_ignore_case(cat, search) && !contains_ignore_case(lib->name, search))
-                    continue;
-                add(cat.empty() ? lib->name : cat, c.get());
-            }
+    // only the builtins, by category in the order they are registered.
+    // other cells are placed from the library panel or with space.
+    for (auto& lib : ws.libraries) {
+        for (auto& c : lib->cells) {
+            if (!ws.primitive_of(*c)) continue;
+            auto& cat = c->category;
+            if (!search.empty() && !contains_ignore_case(c->name, search) && !contains_ignore_case(cat, search)) continue;
+            add(cat.empty() ? lib->name : cat, c.get());
         }
-    };
-    add_cells(true);
-    add_cells(false);
+    }
     return gs;
 }
 
-void component_bar::draw_icons(const std::vector<const model::cell*>& cells)
+int component_bar::icon_px() const
+{
+    switch (size) {
+    case icon_size::medium: return 32;
+    case icon_size::large: return 44;
+    default: return 24;
+    }
+}
+
+void component_bar::draw_icons(const model::workspace& ws, const std::vector<const model::cell*>& cells)
 {
     auto text = ImGui::GetStyleColorVec4(ImGuiCol_Text);
     glm::vec4 color{text.x, text.y, text.z, text.w};
@@ -83,29 +90,33 @@ void component_bar::draw_icons(const std::vector<const model::cell*>& cells)
     glClearColor(color.r, color.g, color.b, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    const float pad = 4.0f;
+    int px = icon_px();
     for (size_t k = 0; k < cells.size() && k < (size_t)max_slots; k++) {
-        auto& sym = cells[k]->symbol;
-        auto b = sym.bounds();
-        glm::vec2 lo = b.min, hi = b.max;
-        glm::vec2 mid = (lo + hi) * 0.5f;
-        float extent = std::max({hi.x - lo.x, hi.y - lo.y, 10.0f});
-        float half = extent / 2 * icon_size / (icon_size - 2 * pad);
+        // the part's icon, or its symbol if it has none
+        auto prim = ws.primitive_of(*cells[k]);
+        auto icon = prim ? prim->icon() : model::symbol{};
+        bool has_icon = !icon.shapes.empty();
+        auto& sym = has_icon ? icon : cells[k]->symbol;
+
+        glm::vec2 mid{0, 0};
+        float half = icon_half;
+        if (!has_icon) {
+            auto b = sym.bounds();
+            mid = (b.min + b.max) * 0.5f;
+            half = std::max({b.max.x - b.min.x, b.max.y - b.min.y, 10.0f}) / 2 * 1.1f;
+        }
 
         auto p = slot_pos((int)k);
-        glViewport(p.x, p.y, icon_size, icon_size);
+        glViewport(p.x, p.y, px, px);
         auto vp = glm::ortho(mid.x - half, mid.x + half, mid.y - half, mid.y + half);
 
         r.g.begin(vp);
-        // lines of about 1.5 pixels whatever the symbol's size
-        r.stroke_scale = std::max(1.0f, 1.5f * r.pixel() / render::stroke);
-        // no pin dots, nothing is connected in a preview
+        // thin lines, about 1.3 pixels at the small size and 1.8 at most
+        float line_px = std::clamp(px / 24.0f, 1.3f, 1.8f);
+        r.stroke_scale = line_px * r.pixel() / render::stroke;
+        // no pin dots, icons have no pins and a symbol shows its body
         std::vector<bool> connected(sym.pins.size(), true);
-        render::draw_symbol(r, sym, {0, 0}, {}, color, &connected, render::fill_of(r, cells[k]));
-        // a new cell without a symbol yet
-        if (sym.shapes.empty() && sym.pins.empty()) r.rect_outline(lo + 2.0f, hi - 2.0f, color, render::stroke * r.stroke_scale, 2.0f);
-        // the fills under the lines
-        r.draw_fills(vp);
+        render::draw_symbol(r, sym, {0, 0}, {}, color, &connected);
         r.g.end();
     }
     r.stroke_scale = 1.0f;
@@ -121,18 +132,27 @@ bool component_bar::icon(const model::workspace& ws, const model::cell& c, int s
     if (slot >= max_slots) return false;
 
     auto p = slot_pos(slot);
+    int px = icon_px();
     // gl textures start at the bottom
-    ImVec2 uv0{(float)p.x / atlas_size, (float)(p.y + icon_size) / atlas_size};
-    ImVec2 uv1{(float)(p.x + icon_size) / atlas_size, (float)p.y / atlas_size};
+    ImVec2 uv0{(float)p.x / atlas_size, (float)(p.y + px) / atlas_size};
+    ImVec2 uv1{(float)(p.x + px) / atlas_size, (float)p.y / atlas_size};
 
     bool can = t.can_place && t.can_place(c.id);
     bool active = t.placing == c.id;
 
     PushID(&c);
-    if (active) PushStyleColor(ImGuiCol_Button, GetStyleColorVec4(ImGuiCol_ButtonActive));
-    else PushStyleColor(ImGuiCol_Button, {0, 0, 0, 0});
+    // framed buttons in a row, plain icons in the vertical bar
+    bool framed = dir == orientation::horizontal;
+    if (active)
+        PushStyleColor(ImGuiCol_Button, GetStyleColorVec4(ImGuiCol_ButtonActive));
+    else if (framed)
+        PushStyleColor(ImGuiCol_Button, GetStyleColorVec4(ImGuiCol_FrameBg));
+    else
+        PushStyleColor(ImGuiCol_Button, {0, 0, 0, 0});
+    PushStyleVar(ImGuiStyleVar_FrameBorderSize, framed ? GetStyle().FrameBorderSize : 0.0f);
     ImVec4 tint{1, 1, 1, can ? 1.0f : 0.35f};
-    bool clicked = ImageButton("icon", (ImTextureID)atlas.Id(), {(float)icon_size, (float)icon_size}, uv0, uv1, {0, 0, 0, 0}, tint);
+    bool clicked = ImageButton("icon", (ImTextureID)atlas.Id(), {(float)px, (float)px}, uv0, uv1, {0, 0, 0, 0}, tint);
+    PopStyleVar();
     PopStyleColor();
     PopID();
 
@@ -163,6 +183,15 @@ void component_bar::context_menu()
             dir_changed = dir != orientation::horizontal;
             dir = orientation::horizontal;
         }
+        Separator();
+        const char* names[] = {"Small icons", "Medium icons", "Large icons"};
+        for (int k = 0; k < 3; k++) {
+            if (MenuItem(names[k], nullptr, size == (icon_size)k)) {
+                // the docked bar fits the new size
+                dir_changed = dir_changed || size != (icon_size)k;
+                size = (icon_size)k;
+            }
+        }
         EndPopup();
     }
 }
@@ -186,10 +215,10 @@ model::id component_bar::gui(const model::workspace& ws, const target& t)
     std::vector<const model::cell*> cells;
     for (auto& g : gs)
         cells.insert(cells.end(), g.cells.begin(), g.cells.end());
-    draw_icons(cells);
+    draw_icons(ws, cells);
 
     auto& style = GetStyle();
-    float button = icon_size + 2 * style.FramePadding.x;
+    float button = icon_px() + 2 * style.FramePadding.x;
     int slot = 0;
 
     if (horizontal) {

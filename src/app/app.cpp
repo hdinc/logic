@@ -159,7 +159,12 @@ void app::add_settings_handler()
             a->renderer.show_grid = i != 0;
         else if (std::sscanf(line, "GridStyle=%31s", str) == 1)
             a->renderer.grid = grid_style_from(str);
-        else if (std::sscanf(line, "FillSymbols=%d", &i) == 1)
+        else if (std::sscanf(line, "ComponentIcons=%31s", str) == 1) {
+            auto& size = a->components.size;
+            size = component_bar::icon_size::small;
+            if (std::strcmp(str, "medium") == 0) size = component_bar::icon_size::medium;
+            if (std::strcmp(str, "large") == 0) size = component_bar::icon_size::large;
+        } else if (std::sscanf(line, "FillSymbols=%d", &i) == 1)
             a->renderer.fill_symbols = i != 0;
         else if (std::sscanf(line, "ThickBuses=%d", &i) == 1)
             a->renderer.thick_buses = i != 0;
@@ -195,6 +200,8 @@ void app::add_settings_handler()
         buf->appendf("[Logic][Settings]\nTheme=%s\nGrid=%d\nGridStyle=%s\nComponentBar=%s\nFontSize=%d\n", a->light_theme ? "light" : "dark", a->renderer.show_grid ? 1 : 0, grid_style_name(a->renderer.grid), a->components.dir == component_bar::orientation::horizontal ? "horizontal" : "vertical", a->font_size);
         // the file's path is the rest of the line
         const char* names[] = {"all", "custom", "none"};
+        const char* sizes[] = {"small", "medium", "large"};
+        buf->appendf("ComponentIcons=%s\n", sizes[(int)a->components.size]);
         buf->appendf("InstanceNames=%s\nThickBuses=%d\nFillSymbols=%d\n", names[(int)a->renderer.names], a->renderer.thick_buses ? 1 : 0, a->renderer.fill_symbols ? 1 : 0);
         buf->appendf("UiFont=%s\nMonoFont=%s\nCanvasFont=%s\n\n", ui::to_string(a->ui_font).c_str(), ui::to_string(a->mono_font).c_str(), ui::to_string(a->canvas_font).c_str());
     };
@@ -204,7 +211,7 @@ void app::add_settings_handler()
 
 app::settings app::current_settings() const
 {
-    return {light_theme, renderer.show_grid, renderer.grid, renderer.names, renderer.thick_buses, renderer.fill_symbols, components.dir, font_size, ui_font, mono_font, canvas_font};
+    return {light_theme, renderer.show_grid, renderer.grid, renderer.names, renderer.thick_buses, renderer.fill_symbols, components.dir, components.size, font_size, ui_font, mono_font, canvas_font};
 }
 
 void app::apply_theme()
@@ -407,11 +414,11 @@ void app::dock_component_bar()
     ImGuiID bar;
     if (horizontal) {
         // one row of icons, its scrollbar and the tab
-        float h = component_bar::icon_size + 2 * style.FramePadding.y + 2 * style.WindowPadding.y + style.ScrollbarSize + GetFrameHeight() + 4;
+        float h = components.icon_px() + 2 * style.FramePadding.y + 2 * style.WindowPadding.y + style.ScrollbarSize + GetFrameHeight() + 4;
         bar = DockBuilderSplitNode(node->ID, ImGuiDir_Up, std::min(0.5f, h / std::max(size.y, 1.0f)), nullptr, &rest);
         DockBuilderSetNodeSize(bar, {size.x, h});
     } else {
-        float w = 4 * (component_bar::icon_size + 2 * style.FramePadding.x + style.ItemSpacing.x) + 2 * style.WindowPadding.x + style.ScrollbarSize;
+        float w = 4 * (components.icon_px() + 2 * style.FramePadding.x + style.ItemSpacing.x) + 2 * style.WindowPadding.x + style.ScrollbarSize;
         bar = DockBuilderSplitNode(node->ID, ImGuiDir_Left, std::min(0.5f, w / std::max(size.x, 1.0f)), nullptr, &rest);
         DockBuilderSetNodeSize(bar, {w, size.y});
     }

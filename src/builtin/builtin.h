@@ -21,7 +21,13 @@ public:
         (void)error;
         return create(info.params);
     }
+
+    model::symbol icon() const override;
 };
+
+// the component bar's icon of a builtin kind, see model::primitive::icon.
+// empty for kinds without one.
+model::symbol icon(const std::string& kind);
 
 // all primitives implemented in code
 const model::primitive_registry& registry();
