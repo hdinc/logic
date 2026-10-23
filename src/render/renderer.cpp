@@ -173,8 +173,11 @@ void draw_shape(renderer& r, const model::shape& s, glm::ivec2 pos, model::trans
         // text is not rotated or mirrored. the box it covers moves with the
         // transform and the text is drawn in it, so a mirrored symbol keeps
         // its labels on the same side of its lines.
+        float width = r.g.textWidth(t->str, t->size);
         glm::vec2 lo = t->pos;
-        glm::vec2 hi = lo + glm::vec2{r.g.textWidth(t->str, t->size), r.g.font().capHeight() * t->size};
+        if (t->align == model::text_align::right) lo.x -= width;
+        if (t->align == model::text_align::center) lo.x -= width / 2;
+        glm::vec2 hi = lo + glm::vec2{width, r.g.font().capHeight() * t->size};
         auto a = tp(lo), b = tp(hi);
         r.text(t->str, glm::min(a, b), t->size, color);
     }

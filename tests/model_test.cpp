@@ -786,6 +786,86 @@ static void test_bundles(const std::filesystem::path& dir)
     std::filesystem::remove_all(dir);
 }
 
+// the ports of Murax (VexRiscv) as verilator finds them
+static void test_bundles_from_prefixes()
+{
+    using model::direction;
+    model::workspace ws;
+    auto& lib = ws.add_library("work");
+    model::hdl_impl h;
+    h.top = "Murax";
+    auto& c = ws.create_cell(lib, "murax", h);
+    struct leaf {
+        const char* name;
+        direction dir;
+        int width;
+    };
+    const leaf leaves[] = {
+        {"io_asyncReset", direction::input, 1},
+        {"io_mainClk", direction::input, 1},
+        {"io_jtag_tms", direction::input, 1},
+        {"io_jtag_tdi", direction::input, 1},
+        {"io_jtag_tdo", direction::output, 1},
+        {"io_jtag_tck", direction::input, 1},
+        {"io_gpioA_read", direction::input, 32},
+        {"io_gpioA_write", direction::output, 32},
+        {"io_gpioA_writeEnable", direction::output, 32},
+        {"io_uart_txd", direction::output, 1},
+        {"io_uart_rxd", direction::input, 1},
+    };
+    for (auto [name, dir, w] : leaves) {
+        auto& p = c.add_port(dir, {0, 0});
+        p.name = name;
+        p.width = w;
+    }
+
+    auto found = model::common_prefixes(c.ports);
+    CHECK(found.size() == 4);
+    CHECK(found[0].prefix == "io_" && found[0].ports == std::vector<int>({0, 1}));
+    CHECK(found[1].prefix == "io_jtag_" && found[1].ports.size() == 4);
+    CHECK(found[2].prefix == "io_gpioA_" && found[3].prefix == "io_uart_");
+
+    // a type per prefix, the ports grouped in the model's (normal) view
+    for (int k = 1; k < 4; k++)
+        c.port_groups()->push_back(ws.bundle_from_ports(lib, c.ports, found[k]));
+    CHECK(ws.apply_groups(c).empty());
+    CHECK(c.ports.size() == 5 && c.model_ports().size() == 11);
+    auto jtag = lib.find_bundle("jtag");
+    CHECK(jtag && jtag->fields.size() == 4 && jtag->fields[2].name == "tdo" && jtag->fields[2].dir == direction::output);
+    CHECK(c.ports[2].name == "io_jtag" && c.ports[2].bundle == jtag->id && !c.ports[2].flipped && c.ports[2].width == 4);
+    // mostly inputs go left
+    CHECK(c.ports[2].dir == direction::input && c.ports[3].dir == direction::output);
+    auto gpio = lib.find_bundle("gpioA");
+    CHECK(gpio && ws.layout_of(gpio->id).width == 96);
+
+    // a second type of the same name gets a number
+    auto again = ws.bundle_from_ports(lib, c.model_ports(), found[1]);
+    CHECK(ws.find_bundle(again.bundle)->name == "jtag2");
+}
+
+// right side labels of generated symbols end at the box
+static void test_label_alignment()
+{
+    model::cell c;
+    c.id = 1;
+    c.add_port(model::direction::input, {0, 0});
+    c.add_port(model::direction::output, {0, 0}).name = "a_long_output";
+    c.generate_symbol();
+    int right = 0;
+    for (auto& s : c.symbol.shapes) {
+        auto t = std::get_if<model::text>(&s.geom);
+        if (t && t->str == "a_long_output") {
+            right++;
+            CHECK(t->align == model::text_align::right);
+        }
+        if (t && t->str == "in1") CHECK(t->align == model::text_align::left);
+    }
+    CHECK(right == 1);
+    auto j = io::to_json(c);
+    CHECK(io::to_json(io::cell_from_json(j)) == j);
+    CHECK(io::cell_from_json(j).symbol == c.symbol);
+}
+
 int main(int argc, char** argv)
 {
     auto dir = std::filesystem::path(argc > 1 ? argv[1] : ".") / "model_test_workspace";
@@ -804,6 +884,8 @@ int main(int argc, char** argv)
     test_save_load(dir);
     test_external_cells(dir);
     test_bundles(dir);
+    test_bundles_from_prefixes();
+    test_label_alignment();
 
     if (failures) {
         std::printf("%d check(s) failed\n", failures);

@@ -57,6 +57,16 @@ struct port_group {
 // the model's port for a field of a port group
 std::string field_port_name(const port_group& g, const std::string& path);
 
+// ports whose names share a prefix up to their last '_', e.g. io_jtag_tms
+// and io_jtag_tck share "io_jtag_". only prefixes of two or more ports, in
+// the order of their first port.
+struct port_prefix {
+    std::string prefix;
+    // indices of the ports, the rest of their names are the fields
+    std::vector<int> ports;
+};
+std::vector<port_prefix> common_prefixes(const std::vector<port>& ports);
+
 // cell implemented in c++ by the simulator, identified by kind
 struct builtin_impl {
     std::string kind;

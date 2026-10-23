@@ -36,10 +36,19 @@ struct circle {
     bool operator==(const circle&) const = default;
 };
 
+// which end of the text pos is: the left end of the baseline, its right
+// end or its middle
+enum class text_align {
+    left,
+    right,
+    center
+};
+
 struct text {
     glm::ivec2 pos;
     std::string str = "text";
     float size = 10.0f;
+    text_align align = text_align::left;
     bool operator==(const text&) const = default;
 };
 

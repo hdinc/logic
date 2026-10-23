@@ -393,6 +393,37 @@ workspace::grouping workspace::group_ports(const std::vector<port>& leaves, cons
     return r;
 }
 
+port_group workspace::bundle_from_ports(library& lib, const std::vector<port>& ports, const port_prefix& p)
+{
+    // io_jtag_ -> io_jtag -> jtag
+    auto base = p.prefix.substr(0, p.prefix.size() - 1);
+    auto last = base.substr(base.rfind('_') == std::string::npos ? 0 : base.rfind('_') + 1);
+    std::string error;
+    auto name = last;
+    for (int n = 2; !valid_bundle_name(lib, name, error); n++)
+        name = (last.empty() ? "bundle" : last) + std::to_string(n);
+
+    auto& b = create_bundle(lib, name);
+    int inputs = 0;
+    for (int k : p.ports) {
+        auto& port = ports[k];
+        bundle_field f;
+        f.name = port.name.substr(p.prefix.size());
+        f.width = port.width;
+        f.dir = port.dir;
+        f.description = port.description;
+        b.fields.push_back(f);
+        if (port.dir == direction::input) inputs++;
+    }
+
+    // the model's view is the normal one
+    port_group g;
+    g.name = base;
+    g.bundle = b.id;
+    g.side = 2 * inputs > (int)p.ports.size() ? direction::input : direction::output;
+    return g;
+}
+
 std::vector<std::string> workspace::apply_groups(cell& c)
 {
     auto groups = c.port_groups();

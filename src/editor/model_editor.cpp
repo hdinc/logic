@@ -492,10 +492,11 @@ void model_editor::groups_table()
 
     // prefixes whose ports fit a bundle type, in either view
     if (Button("Find bundle ports")) OpenPopup("find_groups");
-    SetItemTooltip("Look for ports of the model that make up a bundle type");
+    SetItemTooltip("Look for ports of the model that make up a bundle type, or that share a prefix for a new one");
     if (BeginPopup("find_groups")) {
         auto& leaves = c.model_ports();
         bool any = false;
+        SeparatorText("Existing bundle types");
         for (auto& l : ctx.ws.libraries) {
             for (auto& b : l->bundles) {
                 for (bool flipped : {false, true}) {
@@ -528,7 +529,32 @@ void model_editor::groups_table()
                 }
             }
         }
-        if (!any) TextDisabled("no ports of the model make up a bundle type");
+        if (!any) TextDisabled("none fits the model's ports");
+
+        // new types from ports with a common prefix that aren't grouped yet
+        auto grouping = ctx.ws.group_ports(leaves, *groups);
+        auto grouped = [&](int k) { return grouping.ports[grouping.model_ports[k].of].bundle != model::no_id; };
+        bool header = false;
+        for (auto& p : model::common_prefixes(leaves)) {
+            std::erase_if(p.ports, grouped);
+            if (p.ports.size() < 2) continue;
+            if (!header) {
+                SeparatorText("New bundle types");
+                header = true;
+            }
+            std::string fields;
+            for (int k : p.ports)
+                fields += (fields.empty() ? "" : ", ") + leaves[k].name.substr(p.prefix.size());
+            auto label = p.prefix.substr(0, p.prefix.size() - 1) + ": " + fields;
+            PushID(p.prefix.c_str());
+            if (MenuItem(label.c_str())) {
+                // the type goes to the cell's library, the ports keep their order
+                groups->push_back(ctx.ws.bundle_from_ports(ctx.lib, leaves, p));
+                changed = true;
+            }
+            SetItemTooltip("make a bundle type of these ports and group them into one bundle port");
+            PopID();
+        }
         EndPopup();
     }
     SameLine();

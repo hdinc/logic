@@ -926,3 +926,92 @@ tested. No code changed.
 
 - Use the wire colors for the bus and bundle stubs of instance symbols, so
   pins match their wires.
+
+## 2026-10-23 14:03 +0300
+
+### Changes made
+
+- **Right side labels of generated symbols end at the box.** Before, they
+  were placed by an estimated text width (0.6 × size per character), so
+  with real fonts they stopped short of the box or ran into it. For
+  example, in Murax's symbol `io_gpioA_write` was far from the right edge.
+- **Symbol text has an alignment:** left (the default), right or center.
+  It is set in the symbol editor's text properties ("Align") and saved as
+  `"align"` only when it isn't left. Older files load as left aligned.
+- **"Find bundle ports" suggests new bundle types.** It used to match only
+  existing types, so a model like Murax (VexRiscv), with no types defined,
+  got no suggestions.
+  - The popup now has two lists: existing types that fit the ports, and
+    "New bundle types" from ports sharing a prefix up to their last `_`.
+    For Murax these are `io_jtag` (tms, tdi, tdo, tck), `io_gpioA`
+    (read, write, writeEnable), `io_uart` (txd, rxd) and `io`
+    (asyncReset, mainClk).
+  - Picking one creates the type in the cell's library and groups the
+    ports into one bundle port.
+
+### How it works
+
+- **Alignment:** `model::text_align` in `model::text`; `pos` is the end
+  of the baseline the alignment names.
+  - **Renderer:** moves the text box left by its measured width (or half
+    of it) before the transform. Mirrored symbols therefore still keep
+    labels on the same side of their lines.
+  - **Symbol editor:** the hit box moves the same way, with the estimated
+    width.
+  - `cell::generate_symbol` anchors right side labels 3 units inside the
+    box, right aligned, so no font metrics are needed in the model.
+  - **Rejected:** measuring the text in `generate_symbol`. The model
+    doesn't know the font, and the canvas font can change in the settings.
+- **New types from prefixes:**
+  - `model::common_prefixes(ports)` groups ports by their name up to the
+    last `_`. A prefix needs two or more ports, and something has to be
+    left after it.
+  - `workspace::bundle_from_ports(lib, ports, prefix)` makes a type named
+    after the last part of the prefix (`io_jtag_` → `jtag`, numbered if
+    taken). It has a field per port with the port's width, direction and
+    description, so the model's view is the normal one.
+  - The group is named after the prefix (`io_jtag`). Its side is left
+    when most fields are inputs.
+  - Ports already in a group aren't suggested again.
+- **Note for existing cells:** a symbol generated before this change keeps
+  its old label positions until "Generate symbol" is used again.
+  Regrouping ports regenerates it too.
+
+### Testing
+
+- **model_test:**
+  - `test_bundles_from_prefixes` uses Murax's eleven ports:
+    - the four prefixes and their ports
+    - types created for jtag, gpioA and uart, with field directions
+      (`tdo` an output) and gpioA's width of 96 bits
+    - five visible ports after grouping, with jtag on the left and gpioA
+      on the right
+    - a second `jtag` type named `jtag2`
+  - `test_label_alignment`: right side labels are right aligned and left
+    side ones left aligned, and the JSON round trip keeps the alignment.
+- **GUI** (private Xvnc, screenshots): an HDL cell with Murax's ports.
+  - The popup lists the four prefix suggestions.
+  - Picking jtag, gpioA and uart creates the three types in the library
+    and the bundle port rows.
+  - The generated symbol shows `io_gpioA` and `io_uart` ending at the box
+    edge.
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed.
+
+### Recommended features
+
+- Nested suggestions: `io_` with its sub-bundles (jtag, gpioA, uart) as
+  one bundle.
+- Choosing the type name and the view (flipped) before creating it.
+
+### Outstanding issues
+
+- The prefix suggestion `io` (asyncReset, mainClk) is offered even though
+  a clock and a reset rarely make a useful bundle.
+- The symbol editor's hit box for right aligned text still uses the
+  estimated width.
+
+### Next steps
+
+- Add the nested suggestions and a small dialog for the new type's name
+  and view.

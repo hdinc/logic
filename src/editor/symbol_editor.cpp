@@ -42,6 +42,8 @@ float distance_to_shape(glm::vec2 p, const model::shape& s)
         // rough box from the anchor, the model has no font metrics
         glm::vec2 size{t->str.size() * t->size * 0.6f, t->size};
         auto rel = p - glm::vec2(t->pos);
+        if (t->align == model::text_align::right) rel.x += size.x;
+        if (t->align == model::text_align::center) rel.x += size.x / 2;
         return (rel.x >= 0 && rel.y >= 0 && rel.x <= size.x && rel.y <= size.y) ? 0.0f : 1e30f;
     }
     return 1e30f;
@@ -545,6 +547,12 @@ void symbol_editor::property_panel()
             SeparatorText("Text");
             if (input_string("Text", t->str)) ctx.modified();
             if (SliderFloat("Size", &t->size, 1.0f, 40.0f)) ctx.modified();
+            int align = (int)t->align;
+            if (Combo("Align", &align, "left\0right\0center\0")) {
+                t->align = (model::text_align)align;
+                ctx.modified();
+            }
+            SetItemTooltip("which end of the text its point is");
         } else if (auto c = std::get_if<model::circle>(&s->geom)) {
             SeparatorText("Circle");
             if (InputInt2("Center", &c->center.x)) ctx.modified();

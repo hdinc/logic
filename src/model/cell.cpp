@@ -100,6 +100,26 @@ std::string field_port_name(const port_group& g, const std::string& path)
     return r;
 }
 
+std::vector<port_prefix> common_prefixes(const std::vector<port>& ports)
+{
+    std::vector<port_prefix> r;
+    for (int k = 0; k < (int)ports.size(); k++) {
+        auto& name = ports[k].name;
+        auto u = name.rfind('_');
+        // a field name is left after the prefix
+        if (u == std::string::npos || u == 0 || u + 1 == name.size()) continue;
+        auto prefix = name.substr(0, u + 1);
+        auto it = std::find_if(r.begin(), r.end(), [&](auto& p) { return p.prefix == prefix; });
+        if (it == r.end()) {
+            r.push_back({prefix, {}});
+            it = r.end() - 1;
+        }
+        it->ports.push_back(k);
+    }
+    std::erase_if(r, [](auto& p) { return p.ports.size() < 2; });
+    return r;
+}
+
 const std::vector<port_group>* cell::port_groups() const
 {
     return const_cast<cell*>(this)->port_groups();
@@ -223,8 +243,9 @@ void cell::generate_symbol(pin_order order)
             symbol.shapes.push_back({new_id(), line{{x, y}, pin_pos}, p->bundle != no_id ? bundle_stroke : p->width > 1 ? bus_stroke
                                                                                                                         : 0.0f});
             symbol.pins.push_back({new_id(), p->id, pin_pos});
-            int lx = is_left ? x + 3 : x - 3 - (int)std::ceil(p->name.size() * label_size * 0.6f);
-            symbol.shapes.push_back({new_id(), text{{lx, y - 2}, p->name, label_size}});
+            // labels against the box: right side ones end there
+            int lx = is_left ? x + 3 : x - 3;
+            symbol.shapes.push_back({new_id(), text{{lx, y - 2}, p->name, label_size, is_left ? text_align::left : text_align::right}});
             y -= grid;
         }
     };

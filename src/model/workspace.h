@@ -93,6 +93,13 @@ public:
         std::vector<std::string> problems;
     };
     grouping group_ports(const std::vector<port>& leaves, const std::vector<port_group>& groups) const;
+    // a new bundle type in lib made of the ports with a common prefix: a
+    // field per port, the rest of its name, with its width and direction.
+    // the type is named after the last part of the prefix (io_jtag_ ->
+    // jtag), made unique. returns the group that makes the ports one
+    // bundle port, named after the prefix (io_jtag).
+    port_group bundle_from_ports(library& lib, const std::vector<port>& ports, const port_prefix& p);
+
     // sets the ports of an external cell from its model's ports (the leaf
     // ports, or the ports if there are none yet) and its groups, see
     // cell::set_ports. returns the problems of the grouping.

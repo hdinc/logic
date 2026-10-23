@@ -51,6 +51,8 @@ json shape_to_json(const shape& s)
         j["pos"] = vec(t->pos);
         j["text"] = t->str;
         j["size"] = t->size;
+        if (t->align == text_align::right) j["align"] = "right";
+        if (t->align == text_align::center) j["align"] = "center";
     }
     if (s.width != 0.0f) j["width"] = s.width;
     return j;
@@ -141,7 +143,11 @@ shape shape_from_json(const json& j)
     } else if (type == "circle") {
         s.geom = circle{vec(j.at("center")), j.at("radius").get<float>()};
     } else if (type == "text") {
-        s.geom = text{vec(j.at("pos")), j.at("text"), j.at("size").get<float>()};
+        text t{vec(j.at("pos")), j.at("text"), j.at("size").get<float>()};
+        auto align = j.value("align", "left");
+        if (align == "right") t.align = text_align::right;
+        if (align == "center") t.align = text_align::center;
+        s.geom = t;
     } else {
         throw std::runtime_error("invalid shape type '" + type + "'");
     }
