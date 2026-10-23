@@ -366,9 +366,8 @@ public:
         bundle_view view(v, ctx, true);
         constexpr float label_size = 5.0f;
 
-        // a dot on the bundle wire, a short diagonal and the field's end
+        // a short diagonal from the bundle wire and the field's end
         builder b;
-        b.circle({0, 0}, 2.5f);
         view.bundle_port(b, ctx, {0, 0});
         if (view.ends.empty()) {
             b.text({3, 3}, "?", label_size);

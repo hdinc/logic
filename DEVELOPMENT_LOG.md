@@ -1803,3 +1803,26 @@ product is twice as wide).
   demos, builtin and its categories, and frames and component bar buttons
   have borders.
 - No code paths changed besides the style, so the tests weren't run again.
+
+## 2026-10-23 17:38 +0300
+
+### Changes made
+
+- **The bundle tap has no circle on its bundle pin any more.** It was a
+  ring of radius 2.5 that looked like an unconnected pin on the wire. The
+  tap is now its diagonal from the bundle wire, the field's line and its
+  label.
+
+### How it works
+
+- `tap::build` (`src/builtin/wiring.cpp`) no longer adds the circle
+  shape. A tap without a field shows only "?" next to its pin.
+- A tap placed on a bundle wire splits the wire there (`normalize`), so
+  it still connects. Its pin dot shows only while nothing is connected,
+  like any pin.
+
+### Testing
+
+- **GUI screenshot:** a tap on a bundle wire shows its diagonal joining
+  the wire without the ring.
+- model_test (`test_builtins`) and sim_test pass.
