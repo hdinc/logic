@@ -494,10 +494,7 @@ void symbol_editor::draw()
     validate_selection();
 
     // origin of the symbol, the instance position in schematics
-    float hair = r.pixel();
-    r.line({-5, 0}, {5, 0}, c.preview, hair);
-    r.line({0, -5}, {0, 5}, c.preview, hair);
-    r.ring({0, 0}, 2.5f, c.preview, hair);
+    r.draw_origin();
 
     // the fill as in schematics
     r.fill_symbol(sym, {0, 0}, {}, render::fill_of(r, &ctx.cell));

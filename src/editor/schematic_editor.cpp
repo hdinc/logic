@@ -847,6 +847,8 @@ void schematic_editor::draw()
     // elements removed elsewhere (e.g. a port deleted from the properties)
     validate_selection();
 
+    r.draw_origin();
+
     if (!sim) nets = netlist::extract(ctx.ws, ctx.cell);
 
     std::map<glm::ivec2, int, ivec2_less> endpoint_count;

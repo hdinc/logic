@@ -126,6 +126,16 @@ void renderer::end()
     g.end();
 }
 
+void renderer::draw_origin()
+{
+    if (!show_origin) return;
+    auto c = colors().preview;
+    float hair = pixel();
+    line({-5, 0}, {5, 0}, c, hair);
+    line({0, -5}, {0, 5}, c, hair);
+    ring({0, 0}, 2.5f, c, hair);
+}
+
 namespace {
 
 // triangles of a simple polygon by ear clipping, any winding. a polygon

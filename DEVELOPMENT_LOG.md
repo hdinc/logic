@@ -2032,3 +2032,39 @@ product is twice as wide).
 
 - **GUI screenshot:** the large icons have thin even strokes, like the
   reference.
+
+## 2026-10-23 23:35 +0300
+
+### Features implemented
+
+- **Origin indicator in the schematic editor:** the cross and ring at
+  0, 0 that the symbol editor had is drawn in schematics too.
+- **Toggle:** View > Origin and a "Show origin" checkbox in the settings'
+  Canvas section turn it on and off in both editors. It's on by default and
+  saved in imgui.ini (`Origin=0/1`).
+
+### How it works
+
+- `renderer::show_origin` (next to `show_grid`) and
+  `renderer::draw_origin()`, which draws the cross in the preview color at
+  hairline width when the flag is on. The drawing code moved there from
+  `symbol_editor::draw`, and both editors call it right after `begin()`,
+  so it lies under wires, symbols and pins (fills are drawn first, so it
+  shows over instance fills).
+- The flag is part of `app::settings`, so changing it marks imgui.ini for
+  saving like the other view options.
+- No keyboard shortcut: G toggles the grid, and the origin is rarely
+  switched, so the menu is enough.
+
+### Testing
+
+- Builds; all 7 ctest suites pass.
+- **GUI (VNC :1):** the cross shows at the origin of counter_6502's
+  schematic over the 6502's fill. View > Origin hides it there and in the
+  symbol editor, turning it on again brings it back, and imgui.ini stores
+  `Origin=0`/`Origin=1`.
+
+### Recommended features
+
+- An option to also mark the schematic's bounds or the symbol's ports'
+  bounding box.

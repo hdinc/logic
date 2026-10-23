@@ -92,6 +92,8 @@ public:
     // collecting shapes
     void begin(const glm::mat4& vp);
     void end();
+    // the cross at 0, 0 when show_origin is on
+    void draw_origin();
 
     // size of a pixel in world units
     float pixel() const { return g.pixel(); }
@@ -118,6 +120,8 @@ public:
     void text_middle(const std::string& str, glm::vec2 pos, float size, glm::vec4 color, align a = align::left);
 
     bool show_grid = true;
+    // the origin of a symbol or schematic
+    bool show_origin = true;
     grid_style grid = grid_style::dots;
     instance_names names = instance_names::all;
 

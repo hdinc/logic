@@ -166,6 +166,8 @@ void app::add_settings_handler()
             if (std::strcmp(str, "large") == 0) size = component_bar::icon_size::large;
         } else if (std::sscanf(line, "FillSymbols=%d", &i) == 1)
             a->renderer.fill_symbols = i != 0;
+        else if (std::sscanf(line, "Origin=%d", &i) == 1)
+            a->renderer.show_origin = i != 0;
         else if (std::sscanf(line, "ThickBuses=%d", &i) == 1)
             a->renderer.thick_buses = i != 0;
         else if (std::sscanf(line, "InstanceNames=%31s", str) == 1)
@@ -202,7 +204,7 @@ void app::add_settings_handler()
         const char* names[] = {"all", "custom", "none"};
         const char* sizes[] = {"small", "medium", "large"};
         buf->appendf("ComponentIcons=%s\n", sizes[(int)a->components.size]);
-        buf->appendf("InstanceNames=%s\nThickBuses=%d\nFillSymbols=%d\n", names[(int)a->renderer.names], a->renderer.thick_buses ? 1 : 0, a->renderer.fill_symbols ? 1 : 0);
+        buf->appendf("InstanceNames=%s\nThickBuses=%d\nFillSymbols=%d\nOrigin=%d\n", names[(int)a->renderer.names], a->renderer.thick_buses ? 1 : 0, a->renderer.fill_symbols ? 1 : 0, a->renderer.show_origin ? 1 : 0);
         buf->appendf("UiFont=%s\nMonoFont=%s\nCanvasFont=%s\n\n", ui::to_string(a->ui_font).c_str(), ui::to_string(a->mono_font).c_str(), ui::to_string(a->canvas_font).c_str());
     };
     ImGui::AddSettingsHandler(&h);
@@ -211,7 +213,7 @@ void app::add_settings_handler()
 
 app::settings app::current_settings() const
 {
-    return {light_theme, renderer.show_grid, renderer.grid, renderer.names, renderer.thick_buses, renderer.fill_symbols, components.dir, components.size, font_size, ui_font, mono_font, canvas_font};
+    return {light_theme, renderer.show_grid, renderer.show_origin, renderer.grid, renderer.names, renderer.thick_buses, renderer.fill_symbols, components.dir, components.size, font_size, ui_font, mono_font, canvas_font};
 }
 
 void app::apply_theme()
@@ -284,6 +286,9 @@ void app::settings_window()
         RadioButton("Checkers", &style, (int)render::grid_style::checkers);
         renderer.grid = (render::grid_style)style;
         EndDisabled();
+
+        Checkbox("Show origin", &renderer.show_origin);
+        SetItemTooltip("The cross at 0, 0 in the symbol and schematic editors");
 
         Checkbox("Fill symbols", &renderer.fill_symbols);
         SetItemTooltip("Closed outlines of symbols in the theme's color, cells can have their own (symbol properties)");
@@ -509,6 +514,7 @@ void app::menu_bar()
                 if (MenuItem("Checkers", nullptr, renderer.grid == render::grid_style::checkers)) renderer.grid = render::grid_style::checkers;
                 EndMenu();
             }
+            MenuItem("Origin", nullptr, &renderer.show_origin);
             MenuItem("Fill symbols", nullptr, &renderer.fill_symbols);
             MenuItem("Thick buses and bundles", nullptr, &renderer.thick_buses);
             if (BeginMenu("Instance names")) {
