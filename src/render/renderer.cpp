@@ -221,7 +221,8 @@ void draw_instance(renderer& r, const model::workspace& ws, const model::instanc
     }
     draw_symbol(r, *iface.symbol, i.pos, i.xf, color, pin_nets ? &connected : nullptr);
 
-    if (!i.name.empty()) {
+    bool show = r.names == instance_names::all || (r.names == instance_names::custom && !model::is_default_instance_name(i.name));
+    if (!i.name.empty() && show) {
         auto b = model::instance_bounds(i, iface.symbol);
         r.text(i.name, {b.min.x, b.max.y + 2}, 6.0f, colors().label);
     }

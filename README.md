@@ -93,6 +93,9 @@ for the debugger, terminal and messages, and one for the text in schematics
 and symbols. Any installed TrueType or OpenType font with Latin letters can
 be chosen.
 
+**View > Instance names** shows all instance names, only the ones you gave
+(not the default U1, U2, ...), or none.
+
 To record signals, use **Signals...** in the simulation toolbar, or
 right-click a wire, port or pin and choose **Add to waveforms**.
 

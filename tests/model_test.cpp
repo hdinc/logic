@@ -56,6 +56,13 @@ static void test_normalize_wires()
     CHECK(has_wire(r, {0, 0}, {10, 0}));
 }
 
+static void test_default_instance_names()
+{
+    CHECK(model::is_default_instance_name("U1") && model::is_default_instance_name("U123"));
+    CHECK(!model::is_default_instance_name("U") && !model::is_default_instance_name("U1a") && !model::is_default_instance_name("cpu"));
+    CHECK(!model::is_default_instance_name("u1") && !model::is_default_instance_name(""));
+}
+
 static void test_transform()
 {
     model::transform t;
@@ -899,6 +906,7 @@ int main(int argc, char** argv)
 
     test_normalize_wires();
     test_transform();
+    test_default_instance_names();
     test_ports_and_check();
     test_generate_symbol();
     test_transform_then();

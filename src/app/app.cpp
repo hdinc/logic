@@ -138,6 +138,10 @@ void app::add_settings_handler()
             a->renderer.show_grid = i != 0;
         else if (std::sscanf(line, "GridStyle=%31s", str) == 1)
             a->renderer.grid = std::strcmp(str, "lines") == 0 ? render::grid_style::lines : render::grid_style::dots;
+        else if (std::sscanf(line, "InstanceNames=%31s", str) == 1)
+            a->renderer.names = std::strcmp(str, "none") == 0 ? render::instance_names::none
+                : std::strcmp(str, "custom") == 0             ? render::instance_names::custom
+                                                              : render::instance_names::all;
         else if (std::sscanf(line, "ComponentBar=%31s", str) == 1)
             a->components.dir = std::strcmp(str, "horizontal") == 0 ? component_bar::orientation::horizontal : component_bar::orientation::vertical;
         else if (std::sscanf(line, "FontSize=%d", &i) == 1) {
@@ -166,6 +170,8 @@ void app::add_settings_handler()
         buf->appendf("[Logic][Settings]\nTheme=%s\nGrid=%d\nGridStyle=%s\nComponentBar=%s\nFontSize=%d\n", a->light_theme ? "light" : "dark", a->renderer.show_grid ? 1 : 0,
             a->renderer.grid == render::grid_style::lines ? "lines" : "dots", a->components.dir == component_bar::orientation::horizontal ? "horizontal" : "vertical", a->font_size);
         // the file's path is the rest of the line
+        const char* names[] = {"all", "custom", "none"};
+        buf->appendf("InstanceNames=%s\n", names[(int)a->renderer.names]);
         buf->appendf("UiFont=%s\nMonoFont=%s\nCanvasFont=%s\n\n", ui::to_string(a->ui_font).c_str(), ui::to_string(a->mono_font).c_str(), ui::to_string(a->canvas_font).c_str());
     };
     ImGui::AddSettingsHandler(&h);
@@ -174,7 +180,7 @@ void app::add_settings_handler()
 
 app::settings app::current_settings() const
 {
-    return {light_theme, renderer.show_grid, renderer.grid, components.dir, font_size, ui_font, mono_font, canvas_font};
+    return {light_theme, renderer.show_grid, renderer.grid, renderer.names, components.dir, font_size, ui_font, mono_font, canvas_font};
 }
 
 void app::apply_theme()
@@ -245,6 +251,17 @@ void app::settings_window()
         RadioButton("Lines", &style, (int)render::grid_style::lines);
         renderer.grid = (render::grid_style)style;
         EndDisabled();
+
+        int names = (int)renderer.names;
+        TextUnformatted("Instance names");
+        SameLine();
+        RadioButton("All", &names, (int)render::instance_names::all);
+        SameLine();
+        RadioButton("Custom", &names, (int)render::instance_names::custom);
+        SetItemTooltip("Only names you gave, not the default U1, U2, ...");
+        SameLine();
+        RadioButton("None", &names, (int)render::instance_names::none);
+        renderer.names = (render::instance_names)names;
 
         SeparatorText("Component bar");
         int bar = (int)components.dir;
@@ -451,6 +468,13 @@ void app::menu_bar()
             if (BeginMenu("Grid style", renderer.show_grid)) {
                 if (MenuItem("Dots", nullptr, renderer.grid == render::grid_style::dots)) renderer.grid = render::grid_style::dots;
                 if (MenuItem("Lines", nullptr, renderer.grid == render::grid_style::lines)) renderer.grid = render::grid_style::lines;
+                EndMenu();
+            }
+            if (BeginMenu("Instance names")) {
+                if (MenuItem("All", nullptr, renderer.names == render::instance_names::all)) renderer.names = render::instance_names::all;
+                if (MenuItem("Custom only", nullptr, renderer.names == render::instance_names::custom)) renderer.names = render::instance_names::custom;
+                SetItemTooltip("Only names you gave, not the default U1, U2, ...");
+                if (MenuItem("None", nullptr, renderer.names == render::instance_names::none)) renderer.names = render::instance_names::none;
                 EndMenu();
             }
             if (BeginMenu("Component bar")) {

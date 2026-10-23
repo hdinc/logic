@@ -53,6 +53,14 @@ enum class grid_style {
     lines
 };
 
+// which instance names schematics show
+enum class instance_names {
+    all,
+    // names given by the user, not the default U1, U2, ...
+    custom,
+    none
+};
+
 enum class align {
     left,
     center,
@@ -96,6 +104,7 @@ public:
 
     bool show_grid = true;
     grid_style grid = grid_style::dots;
+    instance_names names = instance_names::all;
 
     // multiplies the line widths of symbol shapes, for small previews
     float stroke_scale = 1.0f;

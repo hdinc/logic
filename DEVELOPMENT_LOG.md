@@ -1419,3 +1419,48 @@ product is twice as wide).
   `m[10]`) and builds, but wasn't looked at again.
 - All ctest suites pass except `font_test`, which wasn't run again: no font
   code changed.
+
+## 2026-10-23 16:05 +0300
+
+### Changes made
+
+- **Instance names option:** View > Instance names, and Settings >
+  Canvas, choose which names schematics show above instances:
+  - **All** (the default, as before)
+  - **Custom only:** names you gave, not the default U1, U2, ...
+  - **None**
+
+  It applies to every schematic, editing and simulating, and is saved in
+  `imgui.ini` (`InstanceNames=all|custom|none`) like the grid settings.
+- **README:** describes the option.
+
+### How it works
+
+- `render::instance_names` is on the renderer (`renderer::names`), next
+  to the grid settings. `render::draw_instance` skips the label by it.
+- **Default names:** `model::is_default_instance_name`
+  (`src/model/schematic.cpp`) is true for "U" followed by one or more
+  digits, the names `schematic_editor::unique_instance_name` gives.
+- **Your decisions:**
+  - Three values in one setting instead of two toggles.
+  - A name counts as custom when it doesn't look like U<number>. Existing
+    schematics need no changes, but a name typed as e.g. U7 counts as
+    default. **Rejected:** a saved "renamed by the user" flag, under which
+    every existing name would count as default.
+  - A global view setting rather than per cell or per instance.
+- The app's settings tuple includes the option, so changing it marks
+  `imgui.ini` for saving.
+
+### Testing
+
+- **model_test** (`test_default_instance_names`): U1 and U123 are default;
+  U, U1a, cpu, u1 and the empty name are not.
+- **GUI:** with `InstanceNames=custom` in `imgui.ini`, a schematic with
+  U1, U2, dmx and U4 shows only "dmx" above its demux. This also checks
+  that the setting loads.
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed.
+
+### Recommended features
+
+- A per-instance override (always or never show), saved in the file.

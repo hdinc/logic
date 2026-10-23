@@ -36,6 +36,9 @@ struct schematic {
     bool operator==(const schematic&) const = default;
 };
 
+// a name like the editor gives new instances: U and digits, e.g. U12
+bool is_default_instance_name(const std::string& name);
+
 // merges overlapping collinear wires and splits wires at points where other
 // wires end or at the given extra points (pins), so every junction is a wire
 // endpoint. new wires get fresh ids from next_id.

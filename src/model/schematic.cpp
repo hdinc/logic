@@ -113,4 +113,9 @@ std::vector<wire> normalize_wires(const std::vector<wire>& wires, const std::vec
     return r;
 }
 
+bool is_default_instance_name(const std::string& name)
+{
+    return name.size() > 1 && name[0] == 'U' && std::all_of(name.begin() + 1, name.end(), [](char ch) { return ch >= '0' && ch <= '9'; });
+}
+
 }
