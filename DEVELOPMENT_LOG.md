@@ -1729,3 +1729,50 @@ product is twice as wide).
 - The bit buttons are left out above 128 bits; wider inputs are set as
   text.
 - Fixed point and floats are limited to 64 bits.
+
+## 2026-10-23 17:29 +0300
+
+### Changes made
+
+- **Thin buses and bundles by default:** bus and bundle signals are drawn
+  as thin as single wires, and only their colors tell them apart:
+  - while editing, buses blue and bundles violet
+  - while simulating, the value colors
+- **Option "Thick buses and bundles"** (View menu and Settings > Canvas,
+  saved in `imgui.ini` as `ThickBuses`, off by default) brings back the
+  thick lines. It covers:
+  - the wires and their junction dots
+  - the glow of a highlighted net
+  - the bus and bundle stubs of symbols (generated symbols, splitters,
+    breakouts, taps, gates' bus pins) and component bar icons
+- **README:** describes the option.
+
+### How it works
+
+- `renderer::thick_buses` and `renderer::wire_line(bus, bundle)` give the
+  width of a wire. `draw_wire`, the highlight glow and the junction dots
+  (`schematic_editor::draw`) use them.
+- **Symbol stubs:** `draw_shape` draws a shape whose width is exactly
+  `model::bus_stroke` or `model::bundle_stroke` at the normal stroke when
+  the option is off.
+  - Those widths are what the program uses to mark bus and bundle stubs.
+    A symbol line the user made thick with another width stays thick.
+  - **Rejected:** a flag on shapes, which would change the symbol format
+    and every builtin.
+- **Saved files are unchanged:** the stubs keep their widths and only the
+  drawing differs.
+
+### Testing
+
+- **GUI** (private Xvnc), a schematic with a bundle, buses, a breakout and
+  a tap:
+  - By default every wire and stub is thin, the bundle violet and the
+    buses blue.
+  - Turning on View > Thick buses and bundles draws them thick as before.
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed.
+
+### Outstanding issues
+
+- A symbol line drawn on purpose at exactly a bus's or bundle's stroke
+  width is also thinned when the option is off.

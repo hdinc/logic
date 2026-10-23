@@ -864,8 +864,7 @@ void schematic_editor::draw()
         for (auto& w : sch.wires) {
             if (local_nets.net_of_wire(w.id) != highlight_net) continue;
             bool bundle = local_nets.nets[highlight_net].bundle != model::no_id;
-            float width = bundle ? render::bundle_width : local_nets.nets[highlight_net].width > 1 ? render::bus_width
-                                                                                                   : render::wire_width;
+            float width = r.wire_line(local_nets.nets[highlight_net].width > 1, bundle);
             r.line(w.a, w.b, glow, width + 2.0f);
         }
     }
@@ -900,8 +899,12 @@ void schematic_editor::draw()
     // junction dots where three or more wires meet
     for (auto& [p, n] : endpoint_count) {
         if (n < 3) continue;
-        float radius = bundle_junction.count(p) ? render::bundle_width * 0.8f : bus_junction.count(p) ? 3.0f
-                                                                                                      : 2.0f;
+        // as wide as the wires
+        float radius = 2.0f;
+        if (r.thick_buses && bundle_junction.count(p))
+            radius = render::bundle_width * 0.8f;
+        else if (r.thick_buses && bus_junction.count(p))
+            radius = 3.0f;
         r.circle(p, radius, junction_color[p]);
     }
 

@@ -138,6 +138,8 @@ void app::add_settings_handler()
             a->renderer.show_grid = i != 0;
         else if (std::sscanf(line, "GridStyle=%31s", str) == 1)
             a->renderer.grid = std::strcmp(str, "lines") == 0 ? render::grid_style::lines : render::grid_style::dots;
+        else if (std::sscanf(line, "ThickBuses=%d", &i) == 1)
+            a->renderer.thick_buses = i != 0;
         else if (std::sscanf(line, "InstanceNames=%31s", str) == 1)
             a->renderer.names = std::strcmp(str, "none") == 0 ? render::instance_names::none
                 : std::strcmp(str, "custom") == 0             ? render::instance_names::custom
@@ -171,7 +173,7 @@ void app::add_settings_handler()
             a->renderer.grid == render::grid_style::lines ? "lines" : "dots", a->components.dir == component_bar::orientation::horizontal ? "horizontal" : "vertical", a->font_size);
         // the file's path is the rest of the line
         const char* names[] = {"all", "custom", "none"};
-        buf->appendf("InstanceNames=%s\n", names[(int)a->renderer.names]);
+        buf->appendf("InstanceNames=%s\nThickBuses=%d\n", names[(int)a->renderer.names], a->renderer.thick_buses ? 1 : 0);
         buf->appendf("UiFont=%s\nMonoFont=%s\nCanvasFont=%s\n\n", ui::to_string(a->ui_font).c_str(), ui::to_string(a->mono_font).c_str(), ui::to_string(a->canvas_font).c_str());
     };
     ImGui::AddSettingsHandler(&h);
@@ -180,7 +182,7 @@ void app::add_settings_handler()
 
 app::settings app::current_settings() const
 {
-    return {light_theme, renderer.show_grid, renderer.grid, renderer.names, components.dir, font_size, ui_font, mono_font, canvas_font};
+    return {light_theme, renderer.show_grid, renderer.grid, renderer.names, renderer.thick_buses, components.dir, font_size, ui_font, mono_font, canvas_font};
 }
 
 void app::apply_theme()
@@ -251,6 +253,9 @@ void app::settings_window()
         RadioButton("Lines", &style, (int)render::grid_style::lines);
         renderer.grid = (render::grid_style)style;
         EndDisabled();
+
+        Checkbox("Thick buses and bundles", &renderer.thick_buses);
+        SetItemTooltip("Wires and pins of buses and bundles as thick lines, otherwise only their colors differ");
 
         int names = (int)renderer.names;
         TextUnformatted("Instance names");
@@ -470,6 +475,7 @@ void app::menu_bar()
                 if (MenuItem("Lines", nullptr, renderer.grid == render::grid_style::lines)) renderer.grid = render::grid_style::lines;
                 EndMenu();
             }
+            MenuItem("Thick buses and bundles", nullptr, &renderer.thick_buses);
             if (BeginMenu("Instance names")) {
                 if (MenuItem("All", nullptr, renderer.names == render::instance_names::all)) renderer.names = render::instance_names::all;
                 if (MenuItem("Custom only", nullptr, renderer.names == render::instance_names::custom)) renderer.names = render::instance_names::custom;

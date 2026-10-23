@@ -101,6 +101,9 @@ binary, octal, unsigned or signed fixed point, IEEE float (16, 32 or 64
 bits), bfloat16 or ASCII, chosen in the port's properties or in that
 popup.
 
+Buses and bundles are drawn in their own colors. **View > Thick buses and
+bundles** also draws them as thick lines.
+
 **View > Instance names** shows all instance names, only the ones you gave
 (not the default U1, U2, ...), or none.
 

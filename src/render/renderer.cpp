@@ -162,8 +162,11 @@ void draw_shape(renderer& r, const model::shape& s, glm::ivec2 pos, model::trans
     // they grow by a quarter of their extra width over a thin line, and
     // never get thinner than they are
     float thin = stroke * r.stroke_scale;
+    float width = s.width;
+    // the stubs of bus and bundle pins are thin unless buses are thick
+    if (!r.thick_buses && (width == model::bus_stroke || width == model::bundle_stroke)) width = 0.0f;
     float w = thin;
-    if (s.width > 0.0f) w = r.stroke_scale > 1.0f ? std::max(s.width, thin * (1.0f + 0.25f * (s.width / stroke - 1.0f))) : s.width;
+    if (width > 0.0f) w = r.stroke_scale > 1.0f ? std::max(width, thin * (1.0f + 0.25f * (width / stroke - 1.0f))) : width;
 
     if (auto l = std::get_if<model::line>(&s.geom)) {
         r.line(tp(l->a), tp(l->b), color, w);
@@ -253,10 +256,16 @@ void draw_port(renderer& r, const model::port& p, glm::vec4 color, bool connecte
         r.text_middle(label, pos + glm::vec2{8, 0}, 10.0f, color, align::left);
 }
 
+float renderer::wire_line(bool bus, bool bundle) const
+{
+    if (!thick_buses) return wire_width;
+    return bundle ? bundle_width : bus ? bus_width
+                                       : wire_width;
+}
+
 void draw_wire(renderer& r, const model::wire& w, glm::vec4 color, bool bus, bool bundle)
 {
-    r.line(w.a, w.b, color, bundle ? bundle_width : bus ? bus_width
-                                                        : wire_width);
+    r.line(w.a, w.b, color, r.wire_line(bus, bundle));
 }
 
 glm::vec4 value_color(const sim::value& v, bool bundle)

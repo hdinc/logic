@@ -109,6 +109,12 @@ public:
     // multiplies the line widths of symbol shapes, for small previews
     float stroke_scale = 1.0f;
 
+    // buses and bundles as thick lines (wires and the stubs of symbols),
+    // otherwise only their colors tell them apart
+    bool thick_buses = false;
+    // the width of a wire
+    float wire_line(bool bus, bool bundle) const;
+
     Hd::Renderer2D g;
 
 private:
