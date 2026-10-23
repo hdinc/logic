@@ -579,9 +579,10 @@ std::unique_ptr<sim::component> registry::create_from(const std::shared_ptr<load
     if (!collect_ports(*d, values, ports, error)) return nullptr;
     auto defs = c.external_params();
     if (defs && values == model::resolve_params(*defs, {})) {
-        bool same = ports.size() == c.ports.size();
+        auto& own = c.model_ports();
+        bool same = ports.size() == own.size();
         for (size_t k = 0; same && k < ports.size(); k++)
-            same = ports[k].name == c.ports[k].name && ports[k].dir == c.ports[k].dir && ports[k].width == c.ports[k].width;
+            same = ports[k].name == own[k].name && ports[k].dir == own[k].dir && ports[k].width == own[k].width;
         if (!same) {
             error = "the ports of '" + c.name + "' changed in the plugin, refresh its interface";
             return nullptr;

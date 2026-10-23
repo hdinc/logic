@@ -109,6 +109,7 @@ void model_editor::gui(bool locked)
     }
 
     ports_table();
+    groups_table();
     params_table();
 
     EndDisabled();
@@ -132,9 +133,12 @@ void model_editor::plugin_tables()
             TableNextColumn();
             TextUnformatted(p.name.c_str());
             TableNextColumn();
-            TextUnformatted(model::to_string(p.dir));
+            TextUnformatted(p.bundle != model::no_id ? "bundle" : model::to_string(p.dir));
             TableNextColumn();
-            Text("%d", p.width);
+            if (p.bundle != model::no_id)
+                Text("%s (%d)", ctx.ws.bundle_label(p.bundle, p.flipped).c_str(), p.width);
+            else
+                Text("%d", p.width);
             TableNextColumn();
             TextWrapped("%s", p.description.c_str());
         }
@@ -332,6 +336,13 @@ void model_editor::ports_table()
     SeparatorText("Ports");
     TextDisabled("Found by refreshing, or entered by hand");
 
+    // with bundle ports the model's own ports are edited, the cell's are
+    // made from them
+    bool grouped = c.port_groups() && !c.port_groups()->empty();
+    auto& list = grouped ? *c.leaf_ports() : c.ports;
+    if (grouped) TextDisabled("The model's ports, some of them make up the bundle ports below");
+    bool changed = false;
+
     model::id remove = model::no_id;
     if (BeginTable("ports", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
         TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 2);
@@ -341,28 +352,28 @@ void model_editor::ports_table()
         TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
         TableHeadersRow();
 
-        for (auto& p : c.ports) {
+        for (auto& p : list) {
             PushID((int)p.id);
             TableNextRow();
             TableNextColumn();
             SetNextItemWidth(-1);
-            if (input_string("##name", p.name)) ctx.modified();
+            if (input_string("##name", p.name)) changed = true;
             TableNextColumn();
             SetNextItemWidth(-1);
             int dir = (int)p.dir;
             if (Combo("##dir", &dir, "input\0output\0inout\0")) {
                 p.dir = (model::direction)dir;
-                ctx.modified();
+                changed = true;
             }
             TableNextColumn();
             SetNextItemWidth(-1);
             if (InputInt("##width", &p.width, 0)) {
                 p.width = std::clamp(p.width, 1, model::max_width);
-                ctx.modified();
+                changed = true;
             }
             TableNextColumn();
             SetNextItemWidth(-1);
-            if (input_string("##desc", p.description)) ctx.modified();
+            if (input_string("##desc", p.description)) changed = true;
             TableNextColumn();
             if (SmallButton("x")) remove = p.id;
             SetItemTooltip("remove the port and its pin");
@@ -371,12 +382,29 @@ void model_editor::ports_table()
         EndTable();
     }
     if (remove != model::no_id) {
-        c.remove_port(remove);
-        ctx.modified();
+        if (grouped)
+            std::erase_if(list, [&](auto& p) { return p.id == remove; });
+        else
+            c.remove_port(remove);
+        changed = true;
     }
 
     if (Button("Add port")) {
-        c.add_port(model::direction::input, {0, 0});
+        if (grouped) {
+            model::port p;
+            p.id = c.new_id();
+            for (int n = 1; p.name.empty(); n++) {
+                auto name = "in" + std::to_string(n);
+                if (std::none_of(list.begin(), list.end(), [&](auto& o) { return o.name == name; })) p.name = name;
+            }
+            list.push_back(p);
+        } else {
+            c.add_port(model::direction::input, {0, 0});
+        }
+        changed = true;
+    }
+    if (changed) {
+        if (grouped) ctx.ws.apply_groups(c);
         ctx.modified();
     }
     SameLine();
@@ -388,6 +416,138 @@ void model_editor::ports_table()
 
     for (auto& problem : c.check())
         TextColored({1, 0.6f, 0.2f, 1}, "%s", problem.c_str());
+}
+
+void model_editor::groups_table()
+{
+    using namespace ImGui;
+
+    auto& c = ctx.cell;
+    auto groups = c.port_groups();
+    if (!groups) return;
+
+    SeparatorText("Bundle ports");
+    TextDisabled("Ports of the model named <prefix><field> as one bundle port, e.g. m0_valid and m0_data as m0");
+
+    bool changed = false;
+    int remove = -1;
+    if (!groups->empty() && BeginTable("groups", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 1.5f);
+        TableSetupColumn("Bundle", ImGuiTableColumnFlags_WidthStretch, 1.5f);
+        TableSetupColumn("Flipped", ImGuiTableColumnFlags_WidthFixed);
+        TableSetupColumn("Prefix", ImGuiTableColumnFlags_WidthStretch, 1.5f);
+        TableSetupColumn("Side", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
+        TableHeadersRow();
+        for (int k = 0; k < (int)groups->size(); k++) {
+            auto& g = (*groups)[k];
+            PushID(k);
+            TableNextRow();
+            TableNextColumn();
+            SetNextItemWidth(-1);
+            if (input_string("##name", g.name)) changed = true;
+            TableNextColumn();
+            SetNextItemWidth(-1);
+            if (BeginCombo("##bundle", ctx.ws.bundle_label(g.bundle).c_str())) {
+                for (auto& l : ctx.ws.libraries) {
+                    if (l->bundles.empty()) continue;
+                    SeparatorText(l->name.c_str());
+                    for (auto& b : l->bundles) {
+                        PushID(b.get());
+                        if (Selectable(b->name.c_str(), g.bundle == b->id)) {
+                            g.bundle = b->id;
+                            changed = true;
+                        }
+                        PopID();
+                    }
+                }
+                EndCombo();
+            }
+            TableNextColumn();
+            if (Checkbox("##flipped", &g.flipped)) changed = true;
+            SetItemTooltip("the model is the other side of the bundle: its inputs and outputs swapped");
+            TableNextColumn();
+            SetNextItemWidth(-1);
+            if (input_string("##prefix", g.prefix)) changed = true;
+            SetItemTooltip("the model's ports of the fields start with this, empty for %s_", g.name.c_str());
+            TableNextColumn();
+            SetNextItemWidth(-1);
+            int side = g.side == model::direction::input ? 0 : 1;
+            if (Combo("##side", &side, "left\0right\0")) {
+                g.side = side == 0 ? model::direction::input : model::direction::output;
+                changed = true;
+            }
+            SetItemTooltip("the side of the generated symbol");
+            TableNextColumn();
+            if (SmallButton("x")) remove = k;
+            SetItemTooltip("back to the model's ports");
+            PopID();
+        }
+        EndTable();
+    }
+    if (remove >= 0) {
+        groups->erase(groups->begin() + remove);
+        changed = true;
+    }
+
+    // prefixes whose ports fit a bundle type, in either view
+    if (Button("Find bundle ports")) OpenPopup("find_groups");
+    SetItemTooltip("Look for ports of the model that make up a bundle type");
+    if (BeginPopup("find_groups")) {
+        auto& leaves = c.model_ports();
+        bool any = false;
+        for (auto& l : ctx.ws.libraries) {
+            for (auto& b : l->bundles) {
+                for (bool flipped : {false, true}) {
+                    auto layout = ctx.ws.layout_of(b->id, flipped);
+                    if (!layout || layout.leaves.empty()) continue;
+                    // ports ending in the first field give the prefixes
+                    auto first = layout.leaves[0].path;
+                    std::replace(first.begin(), first.end(), '.', '_');
+                    for (auto& p : leaves) {
+                        if (p.name.size() <= first.size() || p.name.compare(p.name.size() - first.size(), first.size(), first) != 0) continue;
+                        model::port_group g;
+                        g.prefix = p.name.substr(0, p.name.size() - first.size());
+                        g.name = g.prefix.size() > 1 && g.prefix.back() == '_' ? g.prefix.substr(0, g.prefix.size() - 1) : g.prefix;
+                        if (g.name.empty()) g.name = b->name;
+                        if (g.prefix == g.name + "_") g.prefix.clear();
+                        g.bundle = b->id;
+                        g.flipped = flipped;
+                        g.side = flipped ? model::direction::input : model::direction::output;
+                        // all fields there and not in a group yet
+                        auto others = *groups;
+                        others.push_back(g);
+                        if (!ctx.ws.group_ports(leaves, others).problems.empty()) continue;
+                        any = true;
+                        auto label = g.name + " : " + ctx.ws.bundle_label(b->id, flipped);
+                        if (MenuItem(label.c_str())) {
+                            groups->push_back(g);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        if (!any) TextDisabled("no ports of the model make up a bundle type");
+        EndPopup();
+    }
+    SameLine();
+    if (Button("Add bundle port")) {
+        model::port_group g;
+        g.name = "bus";
+        for (auto& l : ctx.ws.libraries)
+            if (!l->bundles.empty() && g.bundle == model::no_id) g.bundle = l->bundles.front()->id;
+        groups->push_back(g);
+        changed = true;
+    }
+
+    if (changed) {
+        ctx.ws.apply_groups(c);
+        ctx.modified();
+    }
+    if (!groups->empty())
+        for (auto& p : ctx.ws.group_ports(c.model_ports(), *groups).problems)
+            TextColored({1, 0.6f, 0.2f, 1}, "%s", p.c_str());
 }
 
 void model_editor::params_table()

@@ -185,6 +185,77 @@ model::id id_from_string(const std::string& s)
     return i;
 }
 
+namespace {
+
+json port_to_json(const port& p)
+{
+    json j{
+        {"id", p.id},
+        {"name", p.name},
+        {"dir", to_string(p.dir)},
+        {"width", p.width},
+        {"pos", vec(p.pos)},
+    };
+    if (!p.description.empty()) j["description"] = p.description;
+    if (p.bundle != no_id) {
+        j["bundle"] = id_to_string(p.bundle);
+        if (p.flipped) j["flipped"] = true;
+    }
+    return j;
+}
+
+port port_from_json(const json& j)
+{
+    port r;
+    r.id = j.at("id");
+    r.name = j.at("name");
+    r.dir = direction_from_string(j.at("dir"));
+    r.width = j.value("width", 1);
+    r.pos = vec(j.at("pos"));
+    r.description = j.value("description", "");
+    if (j.contains("bundle")) {
+        r.bundle = id_from_string(j.at("bundle"));
+        r.flipped = j.value("flipped", false);
+    }
+    return r;
+}
+
+// the port groups and the model's ports of an external cell, only if there
+// are groups
+void groups_to_json(json& impl, const std::vector<port_group>& groups, const std::vector<port>& leaves)
+{
+    if (groups.empty()) return;
+    auto& a = impl["groups"] = json::array();
+    for (auto& g : groups) {
+        json jg{{"name", g.name}, {"bundle", id_to_string(g.bundle)}, {"side", to_string(g.side)}};
+        if (g.flipped) jg["flipped"] = true;
+        if (!g.prefix.empty()) jg["prefix"] = g.prefix;
+        if (!g.description.empty()) jg["description"] = g.description;
+        a.push_back(std::move(jg));
+    }
+    auto& l = impl["leaf_ports"] = json::array();
+    for (auto& p : leaves)
+        l.push_back(port_to_json(p));
+}
+
+void groups_from_json(const json& impl, std::vector<port_group>& groups, std::vector<port>& leaves)
+{
+    for (auto& jg : impl.value("groups", json::array())) {
+        port_group g;
+        g.name = jg.at("name");
+        g.bundle = id_from_string(jg.at("bundle"));
+        g.flipped = jg.value("flipped", false);
+        g.prefix = jg.value("prefix", "");
+        g.side = direction_from_string(jg.value("side", "output"));
+        g.description = jg.value("description", "");
+        groups.push_back(std::move(g));
+    }
+    for (auto& p : impl.value("leaf_ports", json::array()))
+        leaves.push_back(port_from_json(p));
+}
+
+}
+
 json to_json(const cell& c)
 {
     json j;
@@ -194,17 +265,8 @@ json to_json(const cell& c)
     j["next_id"] = c.next_id;
 
     j["ports"] = json::array();
-    for (auto& p : c.ports) {
-        json jp{
-            {"id", p.id},
-            {"name", p.name},
-            {"dir", to_string(p.dir)},
-            {"width", p.width},
-            {"pos", vec(p.pos)},
-        };
-        if (!p.description.empty()) jp["description"] = p.description;
-        j["ports"].push_back(std::move(jp));
-    }
+    for (auto& p : c.ports)
+        j["ports"].push_back(port_to_json(p));
 
     auto& sym = j["symbol"];
     sym["shapes"] = json::array();
@@ -244,6 +306,7 @@ json to_json(const cell& c)
         impl["plugin"] = m->plugin;
         impl["model"] = m->model;
         impl["params"] = params_to_json(m->params);
+        groups_to_json(impl, m->groups, m->leaf_ports);
     } else if (auto h = std::get_if<hdl_impl>(&c.impl)) {
         impl["type"] = "hdl";
         impl["language"] = to_string(h->language);
@@ -254,6 +317,7 @@ json to_json(const cell& c)
         if (!h->defines.empty()) impl["defines"] = h->defines;
         if (!h->args.empty()) impl["args"] = h->args;
         impl["params"] = params_to_json(h->params);
+        groups_to_json(impl, h->groups, h->leaf_ports);
     } else if (auto u = std::get_if<unknown_impl>(&c.impl)) {
         impl = json::parse(u->json);
     }
@@ -308,16 +372,8 @@ cell cell_from_json(const json& j)
     c.name = j.at("name");
     c.next_id = j.at("next_id");
 
-    for (auto& p : j.at("ports")) {
-        port r;
-        r.id = p.at("id");
-        r.name = p.at("name");
-        r.dir = direction_from_string(p.at("dir"));
-        r.width = p.value("width", 1);
-        r.pos = vec(p.at("pos"));
-        r.description = p.value("description", "");
-        c.ports.push_back(std::move(r));
-    }
+    for (auto& p : j.at("ports"))
+        c.ports.push_back(port_from_json(p));
 
     auto& sym = j.at("symbol");
     for (auto& s : sym.at("shapes"))
@@ -355,6 +411,7 @@ cell cell_from_json(const json& j)
         m.plugin = impl.at("plugin");
         m.model = impl.at("model");
         m.params = params_from_json(impl.value("params", json::array()));
+        groups_from_json(impl, m.groups, m.leaf_ports);
         c.impl = std::move(m);
     } else if (type == "hdl") {
         hdl_impl h;
@@ -366,6 +423,7 @@ cell cell_from_json(const json& j)
         h.defines = impl.value("defines", std::vector<std::string>{});
         h.args = impl.value("args", "");
         h.params = params_from_json(impl.value("params", json::array()));
+        groups_from_json(impl, h.groups, h.leaf_ports);
         c.impl = std::move(h);
     } else {
         // from a newer version, kept as it is
@@ -373,6 +431,55 @@ cell cell_from_json(const json& j)
     }
 
     return c;
+}
+
+json to_json(const bundle_type& b)
+{
+    json j;
+    j["format"] = format_version;
+    j["id"] = id_to_string(b.id);
+    j["name"] = b.name;
+    if (!b.description.empty()) j["description"] = b.description;
+    j["fields"] = json::array();
+    for (auto& f : b.fields) {
+        json jf{{"name", f.name}};
+        if (f.bundle != no_id) {
+            jf["bundle"] = id_to_string(f.bundle);
+            if (f.flipped) jf["flipped"] = true;
+        } else {
+            jf["dir"] = to_string(f.dir);
+            jf["width"] = f.width;
+        }
+        if (!f.description.empty()) jf["description"] = f.description;
+        j["fields"].push_back(std::move(jf));
+    }
+    return j;
+}
+
+bundle_type bundle_from_json(const json& j)
+{
+    int format = j.at("format");
+    if (format > format_version)
+        throw std::runtime_error("file format " + std::to_string(format) + " is newer than supported (" + std::to_string(format_version) + ")");
+
+    bundle_type b;
+    b.id = id_from_string(j.at("id"));
+    b.name = j.at("name");
+    b.description = j.value("description", "");
+    for (auto& jf : j.at("fields")) {
+        bundle_field f;
+        f.name = jf.at("name");
+        f.description = jf.value("description", "");
+        if (jf.contains("bundle")) {
+            f.bundle = id_from_string(jf.at("bundle"));
+            f.flipped = jf.value("flipped", false);
+        } else {
+            f.dir = direction_from_string(jf.at("dir"));
+            f.width = std::clamp(jf.value("width", 1), 1, max_width);
+        }
+        b.fields.push_back(std::move(f));
+    }
+    return b;
 }
 
 }

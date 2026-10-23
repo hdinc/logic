@@ -44,6 +44,7 @@ add_library(logic_core STATIC
     src/model/symbol.cpp
     src/model/schematic.cpp
     src/model/cell.cpp
+    src/model/bundle.cpp
     src/model/library.cpp
     src/model/workspace.cpp
     src/model/history.cpp
@@ -125,6 +126,8 @@ add_executable(logic
     src/editor/cell_editor.cpp
     src/editor/model_editor.cpp
     src/editor/param_editor.cpp
+    src/editor/bundle_ui.cpp
+    src/editor/bundle_editor.cpp
     src/editor/sim_session.cpp
     src/editor/sim_view.cpp
 )

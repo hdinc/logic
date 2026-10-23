@@ -93,6 +93,39 @@ std::vector<param_def>* cell::external_params()
     return nullptr;
 }
 
+std::string field_port_name(const port_group& g, const std::string& path)
+{
+    auto r = g.field_prefix() + path;
+    std::replace(r.begin(), r.end(), '.', '_');
+    return r;
+}
+
+const std::vector<port_group>* cell::port_groups() const
+{
+    return const_cast<cell*>(this)->port_groups();
+}
+
+std::vector<port_group>* cell::port_groups()
+{
+    if (auto c = std::get_if<c_model_impl>(&impl)) return &c->groups;
+    if (auto h = std::get_if<hdl_impl>(&impl)) return &h->groups;
+    return nullptr;
+}
+
+std::vector<port>* cell::leaf_ports()
+{
+    if (auto c = std::get_if<c_model_impl>(&impl)) return &c->leaf_ports;
+    if (auto h = std::get_if<hdl_impl>(&impl)) return &h->leaf_ports;
+    return nullptr;
+}
+
+const std::vector<port>& cell::model_ports() const
+{
+    auto g = port_groups();
+    auto l = const_cast<cell*>(this)->leaf_ports();
+    return g && !g->empty() && l ? *l : ports;
+}
+
 const char* to_string(hdl_language l)
 {
     switch (l) {
@@ -187,7 +220,8 @@ void cell::generate_symbol(pin_order order)
         int y = first;
         for (auto p : side) {
             glm::ivec2 pin_pos{x + stub, y};
-            symbol.shapes.push_back({new_id(), line{{x, y}, pin_pos}, p->width > 1 ? bus_stroke : 0.0f});
+            symbol.shapes.push_back({new_id(), line{{x, y}, pin_pos}, p->bundle != no_id ? bundle_stroke : p->width > 1 ? bus_stroke
+                                                                                                                        : 0.0f});
             symbol.pins.push_back({new_id(), p->id, pin_pos});
             int lx = is_left ? x + 3 : x - 3 - (int)std::ceil(p->name.size() * label_size * 0.6f);
             symbol.shapes.push_back({new_id(), text{{lx, y - 2}, p->name, label_size}});

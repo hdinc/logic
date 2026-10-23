@@ -27,6 +27,13 @@ struct net {
     int width = 0;
     // ports of different widths are connected
     bool width_error = false;
+
+    // the bundle type of the connected ports, no_id for plain bits. a bundle
+    // and plain bits of the same width, or two bundle types, are a type
+    // error. the views (flipped or not) aren't checked, a net can connect a
+    // master to several slaves.
+    model::id bundle = model::no_id;
+    bool type_error = false;
 };
 
 struct netlist {

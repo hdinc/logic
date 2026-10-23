@@ -6,6 +6,7 @@
 #include "../src/io/storage.h"
 #include "../src/model/history.h"
 #include "../src/model/workspace.h"
+#include "../src/netlist/netlist.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -619,6 +620,172 @@ static void test_external_cells(const std::filesystem::path& dir)
     CHECK(h.symbol != custom && h.symbol.pins.size() == 2 && h.check().empty());
 }
 
+// a field of a nested bundle
+static model::bundle_field sub_field(std::string name, model::id bundle, bool flipped = false)
+{
+    model::bundle_field f;
+    f.name = std::move(name);
+    f.bundle = bundle;
+    f.flipped = flipped;
+    return f;
+}
+
+// a handshake (valid and data out, ready in) and a bus with two of them, one
+// flipped, and an input
+struct bundle_fixture {
+    model::workspace ws;
+    model::library* lib;
+    model::bundle_type* hs;
+    model::bundle_type* bus;
+
+    bundle_fixture()
+    {
+        lib = &ws.add_library("work");
+        hs = &ws.create_bundle(*lib, "hs");
+        hs->fields = {{"valid", "", 1, model::direction::output}, {"ready", "", 1, model::direction::input}, {"data", "", 8, model::direction::output}};
+        bus = &ws.create_bundle(*lib, "bus");
+        bus->fields = {sub_field("a", hs->id), sub_field("b", hs->id, true), {"irq", "", 1, model::direction::input}};
+    }
+};
+
+static void test_bundles(const std::filesystem::path& dir)
+{
+    using model::direction;
+    bundle_fixture f;
+    auto& ws = f.ws;
+
+    // fields take the bits in order, nested flips combine
+    auto l = ws.layout_of(f.bus->id);
+    CHECK(l && l.width == 21);
+    CHECK(l.leaves.size() == 7);
+    CHECK((l.leaves[0] == model::bundle_leaf{"a.valid", direction::output, 0, 1}));
+    CHECK((l.leaves[1] == model::bundle_leaf{"a.ready", direction::input, 1, 1}));
+    CHECK((l.leaves[2] == model::bundle_leaf{"a.data", direction::output, 2, 8}));
+    CHECK((l.leaves[3] == model::bundle_leaf{"b.valid", direction::input, 10, 1}));
+    CHECK((l.leaves[4] == model::bundle_leaf{"b.ready", direction::output, 11, 1}));
+    CHECK((l.leaves[6] == model::bundle_leaf{"irq", direction::input, 20, 1}));
+    // nodes: a, its 3 fields, b, its 3 fields, irq
+    CHECK(l.nodes.size() == 9);
+    auto b = l.find("b");
+    CHECK(b && b->bundle == f.hs->id && b->flipped && b->offset == 10 && b->width == 10 && b->depth == 0);
+    CHECK(l.find("b.data") && l.find("b.data")->depth == 1);
+
+    // the flipped view swaps every direction, twice flipped is normal again
+    auto fl = ws.layout_of(f.bus->id, true);
+    CHECK(fl.leaves[0].dir == direction::input && fl.leaves[3].dir == direction::output && fl.leaves[6].dir == direction::output);
+    CHECK(fl.find("b") && !fl.find("b")->flipped);
+    CHECK(ws.bundle_label(f.bus->id, true) == "~bus");
+
+    // a bundle can't contain itself, also not through another one
+    CHECK(ws.would_create_bundle_cycle(f.hs->id, f.hs->id));
+    CHECK(ws.would_create_bundle_cycle(f.hs->id, f.bus->id));
+    CHECK(!ws.would_create_bundle_cycle(f.bus->id, f.hs->id));
+    f.hs->fields.push_back(sub_field("loop", f.bus->id));
+    CHECK(!ws.layout_of(f.bus->id) && ws.layout_of(f.bus->id).leaves.empty());
+    f.hs->fields.pop_back();
+    CHECK(!ws.layout_of(12345));
+
+    std::string err;
+    CHECK(!model::workspace::valid_bundle_name(*f.lib, "hs", err));
+    CHECK(model::workspace::valid_bundle_name(*f.lib, "axi lite", err));
+
+    // ports of a bundle type follow its width
+    auto& sub = ws.create_cell(*f.lib, "sub");
+    auto& m = sub.add_port(direction::output, {0, 0});
+    m.name = "m";
+    m.bundle = f.bus->id;
+    auto m_id = m.id;
+    sub.symbol.pins.push_back({sub.new_id(), m_id, {0, 0}});
+    ws.bundles_changed();
+    CHECK(sub.find_port(m_id)->width == 21);
+    f.hs->fields[2].width = 4;
+    auto rev = ws.bundle_revision();
+    ws.bundles_changed();
+    CHECK(ws.bundle_revision() == rev + 1);
+    CHECK(sub.find_port(m_id)->width == 13);
+    f.hs->fields[2].width = 8;
+    ws.bundles_changed();
+
+    // a bundle pin connected to the same bundle is fine, to plain bits or
+    // another bundle of the same width a type error
+    auto& top = ws.create_cell(*f.lib, "top");
+    auto& in = top.add_port(direction::input, {80, 0});
+    in.width = 21;
+    in.bundle = f.bus->id;
+    in.flipped = true;
+    top.get_schematic()->instances.push_back({top.new_id(), sub.id, "U1", {100, 0}, {}, {}});
+    auto nl = netlist::extract(ws, top);
+    CHECK(nl.problems.empty());
+    CHECK(nl.nets.size() == 1 && nl.nets[0].bundle == f.bus->id && !nl.nets[0].type_error);
+
+    top.ports[0].bundle = model::no_id;
+    nl = netlist::extract(ws, top);
+    CHECK(nl.nets.size() == 1 && nl.nets[0].type_error && !nl.nets[0].width_error);
+    CHECK(nl.problems.size() == 1 && nl.problems[0].find("type mismatch") != std::string::npos);
+
+    // a missing type is reported, the port keeps its width
+    top.ports[0].bundle = 12345;
+    ws.bundles_changed();
+    CHECK(top.ports[0].width == 21);
+    nl = netlist::extract(ws, top);
+    CHECK(nl.problems.size() == 2);
+    top.ports[0].bundle = f.bus->id;
+
+    // an hdl cell grouping its ports into a bundle port
+    model::hdl_impl h;
+    h.top = "m";
+    auto& hc = ws.create_cell(*f.lib, "hdl", h);
+    for (auto [name, dir, w] : {std::tuple{"s_valid", direction::input, 1}, {"s_ready", direction::output, 1}, {"s_data", direction::input, 8}}) {
+        auto& p = hc.add_port(dir, {0, 0});
+        p.name = name;
+        p.width = w;
+    }
+    model::port_group g;
+    g.name = "s";
+    g.bundle = f.hs->id;
+    g.flipped = true;
+    hc.port_groups()->push_back(g);
+    CHECK(ws.apply_groups(hc).empty());
+    CHECK(hc.ports.size() == 1 && hc.model_ports().size() == 3);
+    CHECK(model::field_port_name(g, "aw.valid") == "s_aw_valid");
+
+    // bundles and bundle ports are saved and loaded
+    std::filesystem::remove_all(dir);
+    io::save_library(*f.lib, dir);
+    CHECK(std::filesystem::exists(dir / "work" / "bundles" / "hs.json"));
+    model::workspace loaded;
+    auto errors = io::load_workspace(loaded, dir);
+    CHECK(errors.empty());
+    auto ll = loaded.find_library("work");
+    CHECK(ll && ll->bundles.size() == 2 && !ll->dirty);
+    if (ll) {
+        CHECK(*ll->find_bundle("bus") == *f.bus);
+        CHECK(*ll->find_bundle("hs") == *f.hs);
+        CHECK(io::to_json(*ll->find_cell("top")) == io::to_json(top));
+        CHECK(ll->find_cell("top")->ports[0].flipped);
+        CHECK(ll->find_cell("hdl")->impl == hc.impl);
+        CHECK(ll->find_cell("hdl")->ports == hc.ports);
+    }
+
+    // a stored width from before the type changed is updated on loading:
+    // the port is saved with 21 bits, with 2 bits of data both handshakes
+    // are 4 bits
+    f.hs->fields[2].width = 2;
+    io::save_library(*f.lib, dir);
+    model::workspace changed;
+    io::load_workspace(changed, dir);
+    CHECK(changed.find_library("work")->find_cell("sub")->ports[0].width == 9);
+    f.hs->fields[2].width = 8;
+
+    // a deleted bundle removes its file
+    ws.delete_bundle(f.bus->id);
+    CHECK(!ws.find_bundle(f.bus->id));
+    io::save_library(*f.lib, dir);
+    CHECK(!std::filesystem::exists(dir / "work" / "bundles" / "bus.json"));
+    CHECK(std::filesystem::exists(dir / "work" / "bundles" / "hs.json"));
+    std::filesystem::remove_all(dir);
+}
+
 int main(int argc, char** argv)
 {
     auto dir = std::filesystem::path(argc > 1 ? argv[1] : ".") / "model_test_workspace";
@@ -636,6 +803,7 @@ int main(int argc, char** argv)
     test_builtins();
     test_save_load(dir);
     test_external_cells(dir);
+    test_bundles(dir);
 
     if (failures) {
         std::printf("%d check(s) failed\n", failures);

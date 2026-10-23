@@ -12,13 +12,15 @@ namespace logic::io {
 //
 //   <root>/<library>/library.json
 //   <root>/<library>/cells/<cell name>.json
+//   <root>/<library>/bundles/<bundle name>.json
 //
 // loads every library in root into ws. problems with single files are
-// returned as messages and the rest is still loaded.
+// returned as messages and the rest is still loaded. the widths of bundle
+// ports are updated to their types.
 std::vector<std::string> load_workspace(model::workspace& ws, const std::filesystem::path& root);
 
-// writes the library and removes files of cells that no longer exist (deleted
-// or renamed). throws std::runtime_error on failure.
+// writes the library and removes files of cells and bundles that no longer
+// exist (deleted or renamed). throws std::runtime_error on failure.
 void save_library(model::library& lib, const std::filesystem::path& root);
 
 // writes the edited symbols of a read only library with a symbols folder

@@ -276,6 +276,10 @@ void app::draw_gui()
         if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_V)) e->paste();
         if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y) || IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z)) e->redo();
     }
+    if (auto b = find_bundle_editor(active_bundle); b && !GetIO().WantTextInput) {
+        if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z)) b->undo();
+        if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y) || IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z)) b->redo();
+    }
     if (IsKeyPressed(ImGuiKey_F1)) show_demo = !show_demo;
     if (show_demo) ShowDemoWindow(&show_demo);
 
@@ -412,8 +416,13 @@ void app::menu_bar()
 
         if (BeginMenu("Edit")) {
             auto e = find_editor(active_cell);
-            if (MenuItem("Undo", "Ctrl+Z", false, e && e->can_undo())) e->undo();
-            if (MenuItem("Redo", "Ctrl+Y", false, e && e->can_redo())) e->redo();
+            if (auto b = find_bundle_editor(active_bundle)) {
+                if (MenuItem("Undo", "Ctrl+Z", false, b->can_undo())) b->undo();
+                if (MenuItem("Redo", "Ctrl+Y", false, b->can_redo())) b->redo();
+            } else {
+                if (MenuItem("Undo", "Ctrl+Z", false, e && e->can_undo())) e->undo();
+                if (MenuItem("Redo", "Ctrl+Y", false, e && e->can_redo())) e->redo();
+            }
             Separator();
             if (MenuItem("Cut", "Ctrl+X", false, e && e->can_copy() && !e->locked())) e->cut();
             if (MenuItem("Copy", "Ctrl+C", false, e && e->can_copy())) e->copy();
@@ -531,50 +540,22 @@ void app::library_panel()
 
         if (!open) continue;
 
-        if (lib->cells.empty()) TextDisabled("empty");
+        if (lib->cells.empty() && lib->bundles.empty()) TextDisabled("empty");
 
         for (auto& c : lib->cells) {
             PushID((void*)c.get());
 
             if (renaming == c->id) {
-                if (rename_focus) {
-                    SetKeyboardFocusHere();
-                    rename_focus = false;
-                }
-                editor::input_string("##rename", rename_buf, ImGuiInputTextFlags_AutoSelectAll);
-
-                if (IsItemDeactivated()) {
-                    if (IsKeyPressed(ImGuiKey_Escape) || rename_buf == c->name) {
-                        renaming = model::no_id;
-                    } else if (model::workspace::valid_cell_name(*lib, rename_buf, rename_error)) {
-                        c->name = rename_buf;
-                        lib->dirty = true;
-                        renaming = model::no_id;
-                    } else {
-                        // keep editing until the name is valid or esc
-                        rename_focus = true;
-                    }
-                }
-                if (renaming == c->id && !rename_error.empty()) TextColored({1, 0.4f, 0.4f, 1}, "%s", rename_error.c_str());
+                rename_input(*lib, c->name, false);
             } else {
                 if (Selectable(c->name.c_str(), active_cell == c->id)) open_editor(*c);
 
-                if (!lib->read_only && IsItemHovered() && IsKeyPressed(ImGuiKey_F2)) {
-                    renaming = c->id;
-                    rename_buf = c->name;
-                    rename_error.clear();
-                    rename_focus = true;
-                }
+                if (!lib->read_only && IsItemHovered() && IsKeyPressed(ImGuiKey_F2)) start_rename(c->id, c->name);
 
                 if (BeginPopupContextItem()) {
                     if (Selectable("Open")) open_editor(*c);
                     if (!lib->read_only) {
-                        if (Selectable("Rename (F2)")) {
-                            renaming = c->id;
-                            rename_buf = c->name;
-                            rename_error.clear();
-                            rename_focus = true;
-                        }
+                        if (Selectable("Rename (F2)")) start_rename(c->id, c->name);
                         if (Selectable("Delete")) deleting = c->id;
                     }
                     EndPopup();
@@ -584,6 +565,7 @@ void app::library_panel()
             PopID();
         }
 
+        library_bundles(*lib);
         TreePop();
     }
 
@@ -622,7 +604,127 @@ void app::library_panel()
         EndPopup();
     }
 
+    if (deleting_bundle != model::no_id) OpenPopup("Delete bundle");
+    if (BeginPopupModal("Delete bundle", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        auto b = ws.find_bundle(deleting_bundle);
+        auto users = ws.bundle_users(deleting_bundle);
+
+        if (!b) {
+            deleting_bundle = model::no_id;
+            CloseCurrentPopup();
+        } else if (!users.empty()) {
+            Text("'%s' is used by:", b->name.c_str());
+            for (auto& u : users)
+                BulletText("%s", u.c_str());
+            TextUnformatted("Change those first.");
+            if (Button("Close")) {
+                deleting_bundle = model::no_id;
+                CloseCurrentPopup();
+            }
+        } else {
+            Text("Delete the bundle type '%s'? The file is removed on the next save.", b->name.c_str());
+            if (Button("Delete")) {
+                std::erase_if(bundle_editors, [&](auto& e) { return e->bundle().id == deleting_bundle; });
+                ws.delete_bundle(deleting_bundle);
+                deleting_bundle = model::no_id;
+                CloseCurrentPopup();
+            }
+            SameLine();
+            if (Button("Cancel")) {
+                deleting_bundle = model::no_id;
+                CloseCurrentPopup();
+            }
+        }
+        EndPopup();
+    }
+
     End();
+}
+
+void app::rename_input(model::library& lib, std::string& name, bool bundle)
+{
+    using namespace ImGui;
+
+    if (rename_focus) {
+        SetKeyboardFocusHere();
+        rename_focus = false;
+    }
+    editor::input_string("##rename", rename_buf, ImGuiInputTextFlags_AutoSelectAll);
+
+    if (IsItemDeactivated()) {
+        bool valid = bundle ? model::workspace::valid_bundle_name(lib, rename_buf, rename_error) : model::workspace::valid_cell_name(lib, rename_buf, rename_error);
+        if (IsKeyPressed(ImGuiKey_Escape) || rename_buf == name) {
+            renaming = model::no_id;
+        } else if (valid) {
+            name = rename_buf;
+            lib.dirty = true;
+            renaming = model::no_id;
+        } else {
+            // keep editing until the name is valid or esc
+            rename_focus = true;
+        }
+    }
+    if (renaming != model::no_id && !rename_error.empty()) TextColored({1, 0.4f, 0.4f, 1}, "%s", rename_error.c_str());
+}
+
+void app::start_rename(model::id item, const std::string& name)
+{
+    renaming = item;
+    rename_buf = name;
+    rename_error.clear();
+    rename_focus = true;
+}
+
+void app::library_bundles(model::library& lib)
+{
+    using namespace ImGui;
+
+    if (lib.bundles.empty()) return;
+    if (!TreeNodeEx("Bundles", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    SetItemTooltip("Bundle types: named wires that go together, for bundle ports and wires");
+
+    for (auto& b : lib.bundles) {
+        PushID((void*)b.get());
+        if (renaming == b->id) {
+            rename_input(lib, b->name, true);
+        } else {
+            if (Selectable(b->name.c_str(), active_bundle == b->id)) open_bundle_editor(lib, *b);
+            if (!b->description.empty()) SetItemTooltip("%s", b->description.c_str());
+            if (!lib.read_only && IsItemHovered() && IsKeyPressed(ImGuiKey_F2)) start_rename(b->id, b->name);
+
+            if (BeginPopupContextItem()) {
+                if (Selectable("Open")) open_bundle_editor(lib, *b);
+                if (!lib.read_only) {
+                    if (Selectable("Rename (F2)")) start_rename(b->id, b->name);
+                    if (Selectable("Delete")) deleting_bundle = b->id;
+                }
+                EndPopup();
+            }
+        }
+        PopID();
+    }
+    TreePop();
+}
+
+void app::open_bundle_editor(model::library& lib, model::bundle_type& b)
+{
+    select_tab = b.id;
+    if (find_bundle_editor(b.id)) return;
+    bundle_editors.push_back(std::make_unique<editor::bundle_editor>(ws, lib, b));
+}
+
+editor::bundle_editor* app::find_bundle_editor(model::id bundle)
+{
+    for (auto& e : bundle_editors)
+        if (e->bundle().id == bundle) return e.get();
+    return nullptr;
+}
+
+void app::new_bundle(model::library& lib)
+{
+    auto& b = ws.create_bundle(lib, lib.unique_bundle_name("bundle"));
+    open_bundle_editor(lib, b);
+    start_rename(b.id, b.name);
 }
 
 void app::editor_panel()
@@ -631,17 +733,19 @@ void app::editor_panel()
 
     Begin("Editor", nullptr, ImGuiWindowFlags_NoCollapse);
 
-    if (editors.empty() && instance_tabs.empty()) {
+    if (editors.empty() && instance_tabs.empty() && bundle_editors.empty()) {
         TextDisabled("Open a cell from the library panel, or create one with 'New cell'.");
     }
 
     active_cell = model::no_id;
+    active_bundle = model::no_id;
     active_view = nullptr;
     active_instance_tab = nullptr;
     model::id close = model::no_id;
+    model::id close_bundle = model::no_id;
     int close_instance = 0;
 
-    if ((!editors.empty() || !instance_tabs.empty()) && BeginTabBar("editors", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs)) {
+    if ((!editors.empty() || !instance_tabs.empty() || !bundle_editors.empty()) && BeginTabBar("editors", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs)) {
         for (auto& e : editors) {
             auto id = e->cell().id;
             // the ### part keeps the tab when the cell is renamed
@@ -661,6 +765,29 @@ void app::editor_panel()
                 EndTabItem();
             }
             if (!open) close = id;
+        }
+
+        // bundle types can't change under a running simulation
+        bool simulating = std::any_of(editors.begin(), editors.end(), [](auto& e) { return e->simulating(); });
+        for (auto& e : bundle_editors) {
+            auto id = e->bundle().id;
+            auto label = e->bundle().name + " (bundle)###bundle" + std::to_string(id);
+
+            ImGuiTabItemFlags flags = 0;
+            if (select_tab == id) {
+                flags |= ImGuiTabItemFlags_SetSelected;
+                select_tab = model::no_id;
+            }
+
+            bool open = true;
+            if (BeginTabItem(label.c_str(), &open, flags)) {
+                active_bundle = id;
+                BeginChild("bundle");
+                e->gui(simulating);
+                EndChild();
+                EndTabItem();
+            }
+            if (!open) close_bundle = id;
         }
 
         for (auto& t : instance_tabs) {
@@ -688,6 +815,7 @@ void app::editor_panel()
     }
 
     if (close != model::no_id) close_editor(close);
+    if (close_bundle != model::no_id) std::erase_if(bundle_editors, [&](auto& e) { return e->bundle().id == close_bundle; });
     if (close_instance) std::erase_if(instance_tabs, [&](auto& t) { return t.id == close_instance; });
 
     End();
@@ -838,6 +966,9 @@ void app::new_cell_items(model::library& lib)
     SetItemTooltip("A part simulated by a model in a plugin, e.g. a microcontroller");
     if (MenuItem("New HDL cell")) new_cell(lib, model::hdl_impl{});
     SetItemTooltip("A part written in Verilog, SystemVerilog or VHDL");
+    Separator();
+    if (MenuItem("New bundle type")) new_bundle(lib);
+    SetItemTooltip("Named wires that go together, like an interface in SystemVerilog");
 }
 
 void app::new_cell(model::library& lib, model::implementation impl)
@@ -847,10 +978,7 @@ void app::new_cell(model::library& lib, model::implementation impl)
     if (external) c.generate_symbol(model::pin_order::declaration);
     open_editor(c);
 
-    renaming = c.id;
-    rename_buf = c.name;
-    rename_error.clear();
-    rename_focus = true;
+    start_rename(c.id, c.name);
 }
 
 void app::save_all()

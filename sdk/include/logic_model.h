@@ -361,6 +361,23 @@ typedef struct logic_model_desc {
      *    "pins": [{"port": "clk", "pos": [-30, 0]}, ...]}
      * coordinates are y up, one grid is 10. every port needs a pin. */
     const char* symbol;
+
+    /* bundle ports as json text, null for none. bundle types are named
+     * fields with their own directions; a bundle port groups the model's
+     * ports named <prefix><field> (nested fields joined with '_') into one
+     * port of the cell. the model still sees its own ports in the order of
+     * get_ports. directions are those of the normal view, a flipped port is
+     * the other side:
+     *   {"types": [{"name": "handshake", "fields": [
+     *        {"name": "valid", "dir": "output"},
+     *        {"name": "ready", "dir": "input"},
+     *        {"name": "data", "dir": "output", "width": 8}]}],
+     *    "ports": [{"name": "s", "type": "handshake", "flipped": true,
+     *               "prefix": "s_", "side": "left"}]}
+     * a field can be another type of the plugin: {"name": "w", "type": "x",
+     * "flipped": false}. prefix defaults to <name>_, side (of the generated
+     * symbol) to "right". the symbol's pins name the bundle ports. */
+    const char* bundles;
 } logic_model_desc;
 
 /* the part of logic_model_desc every plugin has */

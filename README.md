@@ -12,6 +12,12 @@ standalone VCD viewer, `logic-wave`.
 - **Schematic editor**: wires, buses and splitters, copy/paste, undo/redo,
   rotate and mirror, symbols for subcircuits. Pan and zoom with the right or
   middle mouse button and the wheel.
+- **Bundles**: named wires that go together, like SystemVerilog interfaces.
+  A bundle type has fields with their own directions, nested bundles and a
+  flipped view for the other side. Ports and wires can carry a whole
+  bundle; a breakout part shows the chosen fields and a tap picks one field
+  off a bundle wire. HDL and C model cells group their ports (`m0_valid`,
+  `m0_data`, ...) into bundle ports.
 - **Builtin parts**: constants, clocks, logic gates, tristate buffers,
   registers, RAM, ROM, pull resistors, buttons, switches, LEDs, hex displays
   and a serial terminal.

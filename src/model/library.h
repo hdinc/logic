@@ -25,6 +25,7 @@ struct library {
     std::filesystem::path dir;
 
     std::vector<std::unique_ptr<cell>> cells;
+    std::vector<std::unique_ptr<bundle_type>> bundles;
 
     // a read only library made from a plugin still lets its symbols be
     // edited: they're saved to this folder as cell files. empty otherwise.
@@ -38,8 +39,11 @@ struct library {
 
     cell* find_cell(id i);
     cell* find_cell(const std::string& name);
+    bundle_type* find_bundle(id i);
+    bundle_type* find_bundle(const std::string& name);
 
     std::string unique_cell_name(const std::string& prefix) const;
+    std::string unique_bundle_name(const std::string& prefix) const;
 };
 
 }

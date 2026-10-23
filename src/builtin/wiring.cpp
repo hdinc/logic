@@ -1,8 +1,11 @@
+#include "../model/workspace.h"
 #include "builder.h"
 #include "builtin.h"
 
 #include <cctype>
+#include <cmath>
 #include <optional>
+#include <set>
 
 namespace logic::builtin {
 
@@ -188,11 +191,211 @@ public:
     std::unique_ptr<sim::component> create(const model::param_values&) const override { return nullptr; }
 };
 
+// the bundle type of a breakout or tap and the fields it shows
+struct bundle_view {
+    model::id id = model::no_id;
+    bool flipped = false;
+    model::bundle_layout layout;
+    // the fields in the order of the parameter, unknown and repeated ones
+    // dropped
+    std::vector<const model::bundle_node*> ends;
+    std::vector<std::string> unknown;
+    // the type is set and found
+    bool valid = false;
+
+    bundle_view(const model::param_values& v, const model::build_context& ctx, bool one)
+    {
+        id = model::parse_bundle_ref(model::get_string(v, "bundle"));
+        flipped = model::get_bool(v, "flipped");
+        if (id == model::no_id || !ctx.ws) return;
+        layout = ctx.ws->layout_of(id, flipped);
+        if (!layout) return;
+        valid = true;
+
+        auto paths = model::split_fields(model::get_string(v, one ? "field" : "fields"));
+        if (one && paths.size() > 1) paths.resize(1);
+        // all fields of the bundle itself
+        if (paths.empty() && !one) {
+            for (auto& n : layout.nodes)
+                if (n.depth == 0) ends.push_back(&n);
+            return;
+        }
+        std::set<std::string> seen;
+        for (auto& p : paths) {
+            auto n = layout.find(p);
+            if (!n)
+                unknown.push_back(p);
+            else if (seen.insert(p).second)
+                ends.push_back(n);
+        }
+    }
+
+    // a problem to show for the parameters, empty if there is none
+    std::string check(const model::build_context& ctx, bool one) const
+    {
+        if (id == model::no_id) return "choose a bundle type";
+        if (!ctx.ws) return {};
+        if (!layout) return layout.error;
+        if (!unknown.empty()) return "the bundle has no field " + model::join_fields(unknown);
+        if (one && ends.empty()) return "choose a field";
+        return {};
+    }
+
+    // the bundle side of the part, plain bits if the type is unknown
+    model::port& bundle_port(builder& b, const model::build_context& ctx, glm::ivec2 pin) const
+    {
+        auto label = ctx.ws && id != model::no_id ? ctx.ws->bundle_label(id, flipped) : std::string("bundle");
+        auto& p = b.port("bundle", direction::inout, valid ? std::max(layout.width, 1) : 1, pin, "the whole bundle, " + label);
+        if (valid) {
+            p.bundle = id;
+            p.flipped = flipped;
+        }
+        return p;
+    }
+
+    // an end for a field: the field's bits, or a bundle port of a nested bundle
+    void end_port(builder& b, const model::build_context& ctx, const model::bundle_node& n, glm::ivec2 pin) const
+    {
+        std::string what = n.bundle != model::no_id ? "bundle " + ctx.ws->bundle_label(n.bundle, n.flipped) : std::string(model::to_string(n.dir));
+        auto& p = b.port(n.path, direction::inout, std::max(n.width, 1), pin, "field " + n.path + ", " + what);
+        if (n.bundle != model::no_id) {
+            p.bundle = n.bundle;
+            p.flipped = n.flipped;
+        }
+    }
+};
+
+// lines of a field as thick as its wires
+float stroke(const model::bundle_node& n)
+{
+    return n.bundle != model::no_id ? model::bundle_stroke : n.width > 1 ? model::bus_stroke
+                                                                         : 0.0f;
+}
+
+// approximate width of a label, the model doesn't know font metrics
+int label_grids(const std::string& s, float size)
+{
+    return std::max(1, (int)std::ceil((s.size() * size * 0.6f + 6.0f) / grid));
+}
+
+std::vector<model::param_def> bundle_params(bool one)
+{
+    std::vector<model::param_def> r{
+        model::bundle_param("bundle", "Bundle", "the bundle type"),
+        model::bool_param("flipped", "Flipped", false, "the flipped view of the bundle, inputs and outputs swapped"),
+    };
+    if (one)
+        r.push_back(model::fields_param("field", "Field", "bundle", true, "the field to tap, e.g. \"valid\" or \"aw.ready\""));
+    else
+        r.push_back(model::fields_param("fields", "Fields", "bundle", false, "the fields to show, separated by ',', e.g. \"valid, data\" or \"aw.valid\". empty for all fields of the bundle"));
+    return r;
+}
+
+// connects fields of a bundle to their own ends, or puts a bundle together
+// from them. it's only wiring like a splitter.
+class breakout : public primitive {
+public:
+    std::string kind() const override { return "breakout"; }
+    std::string name() const override { return "Bundle breakout"; }
+    std::string category() const override { return "Wiring"; }
+    std::string description() const override { return "connects fields of a bundle to their own ends, works in both directions"; }
+
+    std::vector<model::param_def> params() const override { return bundle_params(false); }
+    bool uses_bundles() const override { return true; }
+
+    model::cell_interface build(const model::param_values& v) const override { return build(v, {}); }
+
+    model::cell_interface build(const model::param_values& v, const model::build_context& ctx) const override
+    {
+        bundle_view view(v, ctx, false);
+        int n = (int)view.ends.size();
+        constexpr float label_size = 5.0f;
+
+        // bundle on the left, a spine going down, the ends to the right as
+        // long as their labels
+        int len = 1;
+        for (auto e : view.ends)
+            len = std::max(len, label_grids(e->path, label_size));
+
+        builder b;
+        b.line({0, 0}, {grid, -grid}, model::bundle_stroke);
+        if (n > 1) b.line({grid, -grid}, {grid, -n * grid}, model::bundle_stroke);
+        // the type under the bundle pin, clear of the instance name above
+        auto type = ctx.ws && view.id != model::no_id ? ctx.ws->bundle_label(view.id, view.flipped) : std::string("bundle");
+        b.text({-label_grids(type, label_size) * grid + 4, -8}, type, label_size);
+        view.bundle_port(b, ctx, {0, 0});
+
+        for (int k = 0; k < n; k++) {
+            int y = -(k + 1) * grid;
+            auto e = view.ends[k];
+            b.line({grid, y}, {(1 + len) * grid, y}, stroke(*e));
+            b.text({grid + 3, y + 3}, e->path, label_size);
+            view.end_port(b, ctx, *e, {(1 + len) * grid, y});
+        }
+
+        auto r = b.finish();
+        for (int k = 0; k < n; k++)
+            r.links.push_back({0, view.ends[k]->offset, k + 1, 0, view.ends[k]->width});
+        return r;
+    }
+
+    std::string check(const model::param_values& v, const model::build_context& ctx) const override { return bundle_view(v, ctx, false).check(ctx, false); }
+
+    // pure wiring, see the links
+    std::unique_ptr<sim::component> create(const model::param_values&) const override { return nullptr; }
+};
+
+// one field of a bundle, placed on a bundle wire
+class tap : public primitive {
+public:
+    std::string kind() const override { return "tap"; }
+    std::string name() const override { return "Bundle tap"; }
+    std::string category() const override { return "Wiring"; }
+    std::string description() const override { return "connects one field of a bundle wire, works in both directions"; }
+
+    std::vector<model::param_def> params() const override { return bundle_params(true); }
+    bool uses_bundles() const override { return true; }
+
+    model::cell_interface build(const model::param_values& v) const override { return build(v, {}); }
+
+    model::cell_interface build(const model::param_values& v, const model::build_context& ctx) const override
+    {
+        bundle_view view(v, ctx, true);
+        constexpr float label_size = 5.0f;
+
+        // a dot on the bundle wire, a short diagonal and the field's end
+        builder b;
+        b.circle({0, 0}, 2.5f);
+        view.bundle_port(b, ctx, {0, 0});
+        if (view.ends.empty()) {
+            b.text({3, 3}, "?", label_size);
+            return b.finish();
+        }
+
+        auto e = view.ends[0];
+        auto label = "." + e->path;
+        int len = label_grids(label, label_size);
+        b.line({0, 0}, {grid, grid}, stroke(*e));
+        b.line({grid, grid}, {(1 + len) * grid, grid}, stroke(*e));
+        b.text({grid + 3, grid + 3}, label, label_size);
+        view.end_port(b, ctx, *e, {(1 + len) * grid, grid});
+
+        auto r = b.finish();
+        r.links.push_back({0, e->offset, 1, 0, e->width});
+        return r;
+    }
+
+    std::string check(const model::param_values& v, const model::build_context& ctx) const override { return bundle_view(v, ctx, true).check(ctx, true); }
+
+    std::unique_ptr<sim::component> create(const model::param_values&) const override { return nullptr; }
+};
 }
 
 void add_wiring(model::primitive_registry& r)
 {
     r.add(std::make_unique<splitter>());
+    r.add(std::make_unique<breakout>());
+    r.add(std::make_unique<tap>());
     r.add(std::make_unique<pull_resistor>());
 }
 

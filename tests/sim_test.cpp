@@ -1481,6 +1481,317 @@ static void test_waveforms()
     CHECK(r.sim().waveforms.snapshot().traces[0].size() == 1);
 }
 
+// a handshake (valid and data out, ready in) and a bus with a handshake each
+// way and an input
+struct bundle_fixture : fixture {
+    model::bundle_type* hs;
+    model::bundle_type* bus;
+
+    bundle_fixture()
+    {
+        auto& lib = *ws.find_library("work");
+        hs = &ws.create_bundle(lib, "hs");
+        hs->fields = {{"valid", "", 1, model::direction::output}, {"ready", "", 1, model::direction::input}, {"data", "", 8, model::direction::output}};
+        bus = &ws.create_bundle(lib, "bus");
+        model::bundle_field a, b;
+        a.name = "a";
+        a.bundle = hs->id;
+        b.name = "b";
+        b.bundle = hs->id;
+        b.flipped = true;
+        bus->fields = {a, b, {"irq", "", 1, model::direction::input}};
+        ws.bundles_changed();
+    }
+
+    // a port of the bundle type, see fixture::port
+    int bundle_port(model::direction dir, glm::ivec2 connect_at, model::bundle_type& t, bool flipped = false)
+    {
+        int k = port(dir, connect_at, ws.layout_of(t.id).width);
+        top->ports[k].bundle = t.id;
+        top->ports[k].flipped = flipped;
+        return k;
+    }
+
+    static model::param_values params(model::bundle_type& t, std::string fields = {}, bool one = false, bool flipped = false)
+    {
+        model::param_values v{{"bundle", model::bundle_ref(t.id)}, {"flipped", flipped}};
+        if (!fields.empty()) v[one ? "field" : "fields"] = fields;
+        return v;
+    }
+};
+
+static void print_problems(const sim::simulator& s)
+{
+    for (auto& p : s.problems())
+        std::printf("  %s\n", p.c_str());
+}
+
+static void test_bundles()
+{
+    using model::direction;
+
+    // a breakout splits a bundle into its fields. the top's port is the
+    // flipped view, so valid and data are its inputs: only they are driven.
+    {
+        bundle_fixture f;
+        f.place("breakout", {0, 0}, f.params(*f.hs));
+        CHECK(f.ws.interface_of(f.sch().instances[0]).ports->size() == 4);
+        int in = f.bundle_port(direction::input, {0, 0}, *f.hs, true);
+        int valid = f.port(direction::output, instance_pin(f, 0, 1));
+        int ready = f.port(direction::input, instance_pin(f, 0, 2));
+        int data = f.port(direction::output, instance_pin(f, 0, 3), 8);
+
+        sim::simulator s(f.ws, *f.top, builtin::factory());
+        print_problems(s);
+        CHECK(s.problems().empty());
+        // bits: valid 0, ready 1, data 2..9
+        s.set_input(in, sim::known(0xAB << 2 | 0b11, 10));
+        CHECK(s.port_value(valid) == bit(true));
+        CHECK(s.port_value(data) == sim::known(0xAB, 8));
+
+        // the fields of a bundle are recorded as bits of its net
+        int net = s.net_of_port(s.root(), in);
+        s.waveforms.add(s, net, "in.data", 2, 8);
+        s.waveforms.add(s, net, "in.valid", 0, 1);
+        s.waveforms.add(s, net, "too wide", 4, 8);
+        CHECK(s.waveforms.size() == 2 && s.waveforms.contains(net));
+        auto rec = s.waveforms.snapshot();
+        CHECK(rec.signals[0].width == 8 && rec.signals[0].key != net);
+        CHECK(sim::waveform_recorder::net_of(rec.signals[0].key) == net);
+        CHECK(rec.traces[0].value(0) == sim::known(0xAB, 8));
+        s.set_input(in, sim::known(0x12 << 2 | 0b01, 10));
+        s.waveforms.capture(s);
+        rec = s.waveforms.snapshot();
+        CHECK(rec.traces[0].value(rec.traces[0].size() - 1) == sim::known(0x12, 8));
+        s.waveforms.remove(rec.signals[0].key);
+        CHECK(s.waveforms.size() == 1);
+        // ready comes from the other side, not from the bundle port
+        s.set_input(ready, bit(false));
+        CHECK(s.port_value(in).slice(1, 1) == bit(false));
+        s.set_input(ready, bit(true));
+        CHECK(s.port_value(in).slice(1, 1) == bit(true));
+    }
+
+    // a mirrored breakout builds a bundle from single signals: valid and
+    // data go into it, ready comes out of it
+    {
+        bundle_fixture f;
+        f.place("breakout", {100, 0}, f.params(*f.hs));
+        f.sch().instances[0].xf.mirror = true;
+        CHECK(instance_pin(f, 0, 0) == glm::ivec2(100, 0) && instance_pin(f, 0, 1).x < 100);
+        int valid = f.port(direction::input, instance_pin(f, 0, 1));
+        int ready = f.port(direction::output, instance_pin(f, 0, 2));
+        int data = f.port(direction::input, instance_pin(f, 0, 3), 8);
+        // the master's view: the outside drives only ready
+        int out = f.bundle_port(direction::output, {100, 0}, *f.hs);
+
+        sim::simulator s(f.ws, *f.top, builtin::factory());
+        print_problems(s);
+        CHECK(s.problems().empty());
+        s.set_input(valid, bit(true));
+        s.set_input(data, sim::known(0xC3, 8));
+        auto v = s.port_value(out);
+        CHECK(v.slice(0, 1) == bit(true) && v.slice(2, 8) == sim::known(0xC3, 8));
+        // the outside drives ready, 0 at the start
+        CHECK(v.slice(1, 1) == sim::known(0, 1));
+        s.set_input(out, sim::known(1 << 1, 10));
+        CHECK(s.port_value(ready) == bit(true));
+        // the port's input doesn't override valid and data
+        CHECK(s.port_value(out) == sim::known(0xC3 << 2 | 0b11, 10));
+    }
+
+    // only the chosen fields get an end, a tap picks one field off the
+    // bundle wire, also of a nested bundle
+    {
+        bundle_fixture f;
+        f.place("breakout", {0, 0}, f.params(*f.bus, "b.data, irq"));
+        f.place("tap", {0, 0}, f.params(*f.bus, "a.data", true));
+        CHECK(f.ws.interface_of(f.sch().instances[0]).ports->size() == 3);
+        CHECK(f.ws.check_instance(f.sch().instances[0]).empty());
+        int in = f.bundle_port(direction::input, {0, 0}, *f.bus, true);
+        int bdata = f.port(direction::output, instance_pin(f, 0, 1), 8);
+        int irq = f.port(direction::output, instance_pin(f, 0, 2));
+        int adata = f.port(direction::output, instance_pin(f, 1, 1), 8);
+
+        sim::simulator s(f.ws, *f.top, builtin::factory());
+        print_problems(s);
+        CHECK(s.problems().empty());
+        // in the flipped view a.data is an input, b.data and irq are
+        // driven by the bundle's other side, which nothing is
+        auto v = sim::floating(21);
+        v.insert(2, sim::known(0x5A, 8));
+        v.insert(12, sim::known(0xFF, 8));
+        v.insert(20, bit(true));
+        s.set_input(in, v);
+        CHECK(s.port_value(adata) == sim::known(0x5A, 8));
+        CHECK(s.port_value(irq) == sim::floating(1));
+        CHECK(s.port_value(bdata) == sim::floating(8));
+    }
+
+    // a breakout end of a nested bundle is a bundle port of that type,
+    // breakouts chain
+    {
+        bundle_fixture f;
+        f.place("breakout", {0, 0}, f.params(*f.bus, "b"));
+        auto end = (*f.ws.interface_of(f.sch().instances[0]).ports)[1];
+        CHECK(end.bundle == f.hs->id && end.flipped && end.width == 10);
+        auto at = instance_pin(f, 0, 1);
+        f.place("breakout", at, f.params(*f.hs, "valid", false, true));
+        CHECK(f.ws.check_instance(f.sch().instances[1]).empty());
+        int in = f.bundle_port(direction::input, {0, 0}, *f.bus);
+        int valid = f.port(direction::output, instance_pin(f, 1, 1));
+
+        sim::simulator s(f.ws, *f.top, builtin::factory());
+        print_problems(s);
+        CHECK(s.problems().empty());
+        // b is flipped in bus, so b.valid (bit 10) is an input of the port
+        s.set_input(in, sim::known(1 << 10, 21));
+        CHECK(s.port_value(valid) == bit(true));
+    }
+
+    // a bundle through a subcircuit: the consumer taps data off its port
+    {
+        bundle_fixture f;
+        auto& sub = f.new_cell("consumer");
+        int m = f.bundle_port(direction::input, {0, 0}, *f.hs, true);
+        f.place("tap", {0, 0}, f.params(*f.hs, "data", true));
+        int d = f.port(direction::output, instance_pin(f, 0, 1), 8);
+        sub.symbol.pins.push_back({sub.new_id(), sub.ports[m].id, {-20, 0}});
+        sub.symbol.pins.push_back({sub.new_id(), sub.ports[d].id, {20, 0}});
+
+        f.new_cell("top2");
+        int in = f.bundle_port(direction::input, {-20, 0}, *f.hs, true);
+        f.place_cell(sub.id, {0, 0});
+        int out = f.port(direction::output, {20, 0}, 8);
+
+        sim::simulator s(f.ws, *f.top, builtin::factory());
+        print_problems(s);
+        CHECK(s.problems().empty());
+        s.set_input(in, sim::known(0x3C << 2, 10));
+        CHECK(s.port_value(out) == sim::known(0x3C, 8));
+        // the scope of the consumer sees the bundle
+        auto child = s.root().child(0);
+        CHECK(child && s.port_value(*child, m) == s.port_value(in));
+    }
+
+    // a bundle on plain bits of the same width is a type mismatch, the
+    // bits still connect
+    {
+        bundle_fixture f;
+        f.place("breakout", {0, 0}, f.params(*f.hs));
+        int in = f.port(direction::input, {0, 0}, 10);
+        int data = f.port(direction::output, instance_pin(f, 0, 3), 8);
+        sim::simulator s(f.ws, *f.top, builtin::factory());
+        CHECK(s.problems().size() == 1 && s.problems()[0].find("type mismatch") != std::string::npos);
+        s.set_input(in, sim::known(0x77 << 2, 10));
+        CHECK(s.port_value(data) == sim::known(0x77, 8));
+    }
+
+    // a breakout without a type or with unknown fields says so, a changed
+    // type rebuilds it
+    {
+        bundle_fixture f;
+        f.place("breakout", {0, 0});
+        CHECK(f.ws.check_instance(f.sch().instances[0]) == "choose a bundle type");
+        f.place("breakout", {0, 100}, f.params(*f.hs, "valid, nope"));
+        CHECK(f.ws.check_instance(f.sch().instances[1]).find("nope") != std::string::npos);
+        f.place("tap", {0, 200}, f.params(*f.hs));
+        CHECK(f.ws.check_instance(f.sch().instances[2]) == "choose a field");
+        f.place("breakout", {0, 300}, f.params(*f.hs));
+        CHECK(f.ws.interface_of(f.sch().instances[3]).ports->size() == 4);
+        f.hs->fields.push_back({"last", "", 1, direction::input});
+        f.ws.bundles_changed();
+        CHECK(f.ws.interface_of(f.sch().instances[3]).ports->size() == 5);
+        CHECK((*f.ws.interface_of(f.sch().instances[3]).ports)[0].width == 11);
+        sim::simulator s(f.ws, *f.top, builtin::factory());
+        // only the parameter problems, as instance messages they aren't
+        // simulation problems
+        print_problems(s);
+        CHECK(s.problems().empty());
+    }
+}
+
+// a c model cell "sink" whose model takes a handshake: x_ready (always 1),
+// x_valid, x_data and seen (data while valid, else 0), in that order
+struct sink_component : sim::component {
+    void eval(std::span<value> ports, sim::context&) override
+    {
+        ports[0] = sim::known(1, 1);
+        bool valid = ports[1] == sim::known(1, 1);
+        ports[3] = valid ? ports[2] : sim::known(0, 8);
+    }
+};
+
+struct sink_factory : sim::component_factory {
+    std::unique_ptr<sim::component> create(const sim::create_info& info, std::string& error) const override
+    {
+        auto m = std::get_if<model::c_model_impl>(&info.cell.impl);
+        if (!m || m->model != "sink") return builtin::factory().create(info, error);
+        return std::make_unique<sink_component>();
+    }
+};
+
+static void test_bundle_groups()
+{
+    using model::direction;
+    bundle_fixture f;
+    auto& sink = f.ws.create_cell(*f.ws.find_library("work"), "sink", model::c_model_impl{"test", "sink", {}, {}, {}});
+    auto leaf = [&](const char* name, direction d, int w) {
+        auto& p = sink.add_port(d, {0, 0});
+        p.name = name;
+        p.width = w;
+    };
+    leaf("x_ready", direction::output, 1);
+    leaf("x_valid", direction::input, 1);
+    leaf("x_data", direction::input, 8);
+    leaf("seen", direction::output, 8);
+
+    // the sink is the other side of the handshake
+    model::port_group g;
+    g.name = "x";
+    g.bundle = f.hs->id;
+    g.flipped = true;
+    g.side = direction::input;
+    sink.port_groups()->push_back(g);
+    CHECK(f.ws.apply_groups(sink).empty());
+    sink.generate_symbol(model::pin_order::declaration);
+    CHECK(sink.ports.size() == 2 && sink.ports[0].name == "x" && sink.ports[0].bundle == f.hs->id && sink.ports[0].width == 10);
+    CHECK(sink.model_ports().size() == 4 && sink.check().empty());
+
+    // the model sees its four ports, the schematic one bundle
+    f.place_cell(sink.id, {0, 0});
+    auto iface = f.ws.interface_of(f.sch().instances[0]);
+    CHECK(iface.ports->size() == 2 && iface.model_ports->size() == 4);
+    CHECK((*iface.model_ports)[0].of == 0 && (*iface.model_ports)[0].bit == 1);
+    CHECK((*iface.model_ports)[2].bit == 2 && (*iface.model_ports)[3].of == 1);
+
+    int in = f.bundle_port(direction::input, instance_pin(f, 0, 0), *f.hs, true);
+    int seen = f.port(direction::output, instance_pin(f, 0, 1), 8);
+    sink_factory factory;
+    sim::simulator s(f.ws, *f.top, factory);
+    print_problems(s);
+    CHECK(s.problems().empty());
+    // valid and data from the top, ready from the sink
+    s.set_input(in, sim::known(0x5A << 2 | 1, 10));
+    CHECK(s.port_value(seen) == sim::known(0x5A, 8));
+    CHECK(s.port_value(in).slice(1, 1) == bit(true));
+    s.set_input(in, sim::known(0x5A << 2, 10));
+    CHECK(s.port_value(seen) == sim::known(0, 8));
+
+    // a model port that doesn't fit leaves the group out
+    sink.leaf_ports()->at(2).width = 4;
+    auto problems = f.ws.apply_groups(sink);
+    CHECK(problems.size() == 1 && problems[0].find("x_data") != std::string::npos);
+    CHECK(sink.ports.size() == 4);
+    sink.leaf_ports()->at(2).width = 8;
+    CHECK(f.ws.apply_groups(sink).empty() && sink.ports.size() == 2);
+
+    // without groups the model's ports come back
+    sink.port_groups()->clear();
+    f.ws.apply_groups(sink);
+    CHECK(sink.ports.size() == 4 && sink.leaf_ports()->empty());
+}
+
 int main()
 {
     test_values();
@@ -1497,6 +1808,8 @@ int main()
     test_shorted_ports();
     test_splitter();
     test_splitter_params();
+    test_bundles();
+    test_bundle_groups();
     test_wide_values();
     test_wide_circuits();
     test_time();

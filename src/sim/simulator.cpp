@@ -30,8 +30,21 @@ simulator::simulator(const model::workspace& w, const model::cell& top, const co
 
     for (int k = 0; k < (int)top_ports.size(); k++) {
         auto& p = top_ports[k];
-        cur.inputs.push_back(p.dir == model::direction::input ? known(0, p.width) : floating(p.width));
         int n = net_of_port(*m_root, k);
+        auto layout = p.bundle != model::no_id ? ws.layout_of(p.bundle, p.flipped) : model::bundle_layout{};
+        if (layout && layout.width == p.width) {
+            // the outside drives the fields that are inputs of the cell,
+            // inouts start released
+            value v = floating(p.width);
+            for (auto& l : layout.leaves) {
+                if (l.dir == model::direction::output) continue;
+                if (l.dir == model::direction::input) v.insert(l.offset, known(0, l.width));
+                if (n >= 0) add_driver(n, -1, k, l.offset, l.width);
+            }
+            cur.inputs.push_back(std::move(v));
+            continue;
+        }
+        cur.inputs.push_back(p.dir == model::direction::input ? known(0, p.width) : floating(p.width));
         if (n >= 0 && p.dir != model::direction::output) add_driver(n, -1, k);
     }
 
@@ -126,14 +139,40 @@ void simulator::elaborate(scope& s, const model::cell& c, const std::vector<int>
                 add_instance(s, i, std::move(comp), *iface.ports, pins, s.path.empty() ? inst.name : s.path + "/" + inst.name);
             else if (!error.empty())
                 m_problems.push_back(where(inst) + ": " + error);
-            else if (links.empty() && iface.pulls->empty())
+            else if (links.empty() && iface.pulls->empty() && !prim->uses_bundles())
                 m_problems.push_back(where(inst) + ": '" + cell->name + "' has no simulation model");
         } else if (auto defs = cell->external_params()) {
+            auto groups = cell->port_groups();
+            auto& model_ports = *iface.model_ports;
+            if (groups && !groups->empty() && model_ports.empty()) {
+                m_problems.push_back(where(inst) + ": the bundle ports of '" + cell->name + "' don't fit its model, refresh its interface");
+                continue;
+            }
+
+            // the model's ports are bits of the instance's ports, e.g. the
+            // fields of a bundle port: their own nets joined to those bits
+            const std::vector<model::port>* ports = iface.ports;
+            std::vector<model::port> leaves;
+            if (!model_ports.empty()) {
+                std::vector<int> leaf_pins;
+                for (auto& m : model_ports) {
+                    leaves.push_back(m.port);
+                    int net = -1;
+                    if (pins[m.of] >= 0) {
+                        net = new_net(m.port.width, false);
+                        aliases.push_back({net, 0, pins[m.of], m.bit, m.port.width});
+                    }
+                    leaf_pins.push_back(net);
+                }
+                ports = &leaves;
+                pins = std::move(leaf_pins);
+            }
+
             std::string error;
             auto values = model::resolve_params(*defs, inst.params);
             auto comp = factory.create({*cell, values, dir}, error);
             if (comp)
-                add_instance(s, i, std::move(comp), *iface.ports, pins, s.path.empty() ? inst.name : s.path + "/" + inst.name);
+                add_instance(s, i, std::move(comp), *ports, pins, s.path.empty() ? inst.name : s.path + "/" + inst.name);
             else
                 m_problems.push_back(where(inst) + ": " + (error.empty() ? "nothing can simulate '" + cell->name + "'" : error));
         } else if (cell->get_schematic()) {
@@ -308,6 +347,14 @@ void simulator::add_driver(int net, int instance, int port)
 {
     for (auto& sl : nets[net].slices)
         nodes[sl.node].drivers.push_back({instance, port, sl.net_bit, sl.node_bit, sl.width});
+}
+
+void simulator::add_driver(int net, int instance, int port, int lo, int width)
+{
+    for (auto& sl : nets[net].slices) {
+        int a = std::max(lo, sl.net_bit), b = std::min(lo + width, sl.net_bit + sl.width);
+        if (a < b) nodes[sl.node].drivers.push_back({instance, port, a, sl.node_bit + a - sl.net_bit, b - a});
+    }
 }
 
 value simulator::net_value(const state& st, int n) const

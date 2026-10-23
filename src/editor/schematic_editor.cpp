@@ -1,5 +1,6 @@
 #include "schematic_editor.h"
 #include "../render/live.h"
+#include "bundle_ui.h"
 #include "param_editor.h"
 
 #include <imgui_internal.h>
@@ -379,8 +380,21 @@ model::id schematic_editor::wire_at(glm::vec2 p) const
 
 namespace {
 
-// name, direction, width and description of a port, the value if there is one
-void port_tooltip(const std::string& name, const model::port& p, const sim::value* v)
+// what a tooltip shows of a bundle: its name and its fields
+struct bundle_info {
+    std::string label;
+    model::bundle_layout layout;
+};
+
+std::optional<bundle_info> bundle_info_of(const model::workspace& ws, model::id bundle, bool flipped)
+{
+    if (bundle == model::no_id) return std::nullopt;
+    return bundle_info{ws.bundle_label(bundle, flipped), ws.layout_of(bundle, flipped)};
+}
+
+// name, direction, width and description of a port, the value if there is
+// one. bundle ports list their fields.
+void port_tooltip(const std::string& name, const model::port& p, const sim::value* v, const std::optional<bundle_info>& b)
 {
     using namespace ImGui;
 
@@ -388,9 +402,14 @@ void port_tooltip(const std::string& name, const model::port& p, const sim::valu
     PushTextWrapPos(GetFontSize() * 24);
     TextUnformatted(name.c_str());
     SameLine();
-    TextDisabled(p.width == 1 ? "%s, %d bit" : "%s, %d bits", model::to_string(p.dir), p.width);
+    if (b)
+        TextDisabled(p.width == 1 ? "%s, %d bit" : "%s, %d bits", b->label.c_str(), p.width);
+    else
+        TextDisabled(p.width == 1 ? "%s, %d bit" : "%s, %d bits", model::to_string(p.dir), p.width);
     if (!p.description.empty()) TextUnformatted(p.description.c_str());
-    if (v) {
+    if (b) {
+        bundle_fields_table(b->layout, v);
+    } else if (v) {
         auto c = render::value_color(*v);
         auto str = sim::to_string(*v);
         if (p.width > 1 && p.width <= 64 && v->fully_known()) str += " (" + std::to_string(v->to_u64()) + ")";
@@ -413,7 +432,8 @@ schematic_editor::hover_target schematic_editor::hover_at(glm::vec2 m) const
         if (!near) continue;
         std::optional<sim::value> v;
         if (sim) v = sim->port_value(*sim_scope, k);
-        return {"port " + std::to_string(p.id), [p, v] { port_tooltip(p.name, p, v ? &*v : nullptr); }};
+        auto b = bundle_info_of(ctx.ws, p.bundle, p.flipped);
+        return {"port " + std::to_string(p.id), [p, v, b] { port_tooltip(p.name, p, v ? &*v : nullptr, b); }};
     }
 
     // pins of instances
@@ -434,7 +454,8 @@ schematic_editor::hover_target schematic_editor::hover_at(glm::vec2 m) const
                     if (local >= 0) v = sim->net_value(sim_scope->flat_net[local]);
                 }
                 auto name = inst.name + "." + p.name;
-                return {"pin " + std::to_string(inst.id) + " " + std::to_string(p.id), [name, p, v] { port_tooltip(name, p, v ? &*v : nullptr); }};
+                auto b = bundle_info_of(ctx.ws, p.bundle, p.flipped);
+                return {"pin " + std::to_string(inst.id) + " " + std::to_string(p.id), [name, p, v, b] { port_tooltip(name, p, v ? &*v : nullptr, b); }};
             }
         }
     }
@@ -448,6 +469,16 @@ schematic_editor::hover_target schematic_editor::hover_at(glm::vec2 m) const
         if (n < 0) return {};
         int width = sim->net_width(n);
         auto v = sim->net_value(n);
+        int local = sim_scope->nets->net_of_wire(w);
+        if (auto b = local >= 0 ? bundle_info_of(ctx.ws, sim_scope->nets->nets[local].bundle, false) : std::nullopt) {
+            return {"net " + std::to_string(n), [b, v] {
+                        using namespace ImGui;
+                        BeginTooltip();
+                        Text("%s, %d bits", b->label.c_str(), v.width());
+                        bundle_fields_table(b->layout, &v);
+                        EndTooltip();
+                    }};
+        }
         return {"net " + std::to_string(n), [width, v] {
                     using namespace ImGui;
                     if (width > 1 && width <= 64 && v.fully_known())
@@ -462,10 +493,21 @@ schematic_editor::hover_target schematic_editor::hover_at(glm::vec2 m) const
     int n = nets.net_of_wire(w);
     if (n < 0) return {};
     auto net = nets.nets[n];
+    if (auto b = !net.width_error && !net.type_error ? bundle_info_of(ctx.ws, net.bundle, false) : std::nullopt) {
+        return {"net " + std::to_string(n), [b, net] {
+                    using namespace ImGui;
+                    BeginTooltip();
+                    Text("%s, %d bits", b->label.c_str(), net.width);
+                    bundle_fields_table(b->layout);
+                    EndTooltip();
+                }};
+    }
     return {"net " + std::to_string(n), [net] {
                 using namespace ImGui;
                 if (net.width_error)
                     SetTooltip("ports of different widths are connected");
+                else if (net.type_error)
+                    SetTooltip("ports of different types are connected");
                 else if (net.width == 0)
                     SetTooltip("not connected to a port");
                 else
@@ -722,30 +764,43 @@ void schematic_editor::draw()
     std::map<glm::ivec2, glm::vec4, ivec2_less> junction_color;
     std::set<glm::ivec2, ivec2_less> bus_junction;
 
+    // the local nets know the bundle types, also while simulating
+    auto& local_nets = sim ? *sim_scope->nets : nets;
+    std::set<glm::ivec2, ivec2_less> bundle_junction;
+
     for (auto& w : sch.wires) {
         bool sel = is_selected({handle::wire_a, w.id}) && is_selected({handle::wire_b, w.id});
-        auto color = sel ? c.selection : c.wire;
         bool bus = false;
+        int local = local_nets.net_of_wire(w.id);
+        bool bundle = local >= 0 && local_nets.nets[local].bundle != model::no_id;
+        // buses and bundles have their own colors while editing
+        glm::vec4 base = c.wire;
+        glm::vec4 color;
         if (sim) {
             int n = sim->net_of_wire(*sim_scope, w.id);
-            color = n < 0 ? c.floating : render::value_color(sim->net_value(n));
+            color = n < 0 ? c.floating : render::value_color(sim->net_value(n), bundle);
             bus = n >= 0 && sim->net_width(n) > 1;
-        } else if (int n = nets.net_of_wire(w.id); n >= 0) {
-            auto& net = nets.nets[n];
-            if (net.width_error && !sel) color = c.width_error;
-            bus = net.width > 1;
+        } else {
+            if (local >= 0) bus = nets.nets[local].width > 1;
+            base = bundle ? c.bundle_wire : bus ? c.bus_wire
+                                                : c.wire;
+            color = sel ? c.selection : base;
+            if (local >= 0 && (nets.nets[local].width_error || nets.nets[local].type_error) && !sel) color = c.width_error;
         }
-        render::draw_wire(r, w, color, bus);
+        render::draw_wire(r, w, color, bus, bundle);
         endpoint_count[w.a]++;
         endpoint_count[w.b]++;
-        junction_color[w.a] = junction_color[w.b] = sim ? color : c.wire;
+        junction_color[w.a] = junction_color[w.b] = sim ? color : base;
         if (bus) bus_junction.insert({w.a, w.b});
+        if (bundle) bundle_junction.insert({w.a, w.b});
     }
 
     // junction dots where three or more wires meet
     for (auto& [p, n] : endpoint_count) {
         if (n < 3) continue;
-        r.circle(p, bus_junction.count(p) ? 3.0f : 2.0f, junction_color[p]);
+        float radius = bundle_junction.count(p) ? render::bundle_width * 0.8f : bus_junction.count(p) ? 3.0f
+                                                                                                      : 2.0f;
+        r.circle(p, radius, junction_color[p]);
     }
 
     // pins without a wire or another pin get a circle
@@ -762,7 +817,7 @@ void schematic_editor::draw()
         bool sel = is_selected({handle::port, p.id});
         auto& port_nets = sim ? sim_scope->nets->port_nets : nets.port_nets;
         bool connected = k < (int)port_nets.size() && port_nets[k] >= 0;
-        render::draw_port(r, p, sel ? c.selection : c.symbol, connected);
+        render::draw_port(r, p, sel ? c.selection : c.symbol, connected, p.bundle != model::no_id ? ctx.ws.bundle_label(p.bundle, p.flipped) : std::string());
         if (sim) render::draw_port_value(r, p, sim->port_value(*sim_scope, k));
     }
 
@@ -843,7 +898,7 @@ void schematic_editor::selection_properties(const std::vector<handle>& elements)
             if (auto it = insts[0]->params.find(d.name); it != insts[0]->params.end()) one[d.name] = it->second;
             PushID(d.name.c_str());
             PushItemFlag(ImGuiItemFlags_MixedValue, !same);
-            bool changed = edit_params({d}, one, ctx.lib.dir);
+            bool changed = edit_params({d}, one, ctx.lib.dir, &ctx.ws);
             PopItemFlag();
             if (!same) {
                 SameLine();
@@ -881,8 +936,9 @@ void schematic_editor::selection_properties(const std::vector<handle>& elements)
         int w = ports[0]->width;
         if (InputInt("Width", &w)) {
             w = glm::clamp(w, 1, model::max_width);
+            // bundle ports have the width of their type
             for (auto p : ports)
-                p->width = w;
+                if (p->bundle == model::no_id) p->width = w;
             ctx.modified();
         }
         if (!same_width) {
@@ -931,7 +987,7 @@ void schematic_editor::property_panel()
 
         if (auto defs = ctx.ws.params_of(*i); !defs.empty()) {
             SeparatorText("Parameters");
-            if (edit_params(defs, i->params, ctx.lib.dir)) {
+            if (edit_params(defs, i->params, ctx.lib.dir, &ctx.ws)) {
                 ctx.modified();
                 // pins may have moved or appeared
                 normalize();
@@ -956,7 +1012,39 @@ void schematic_editor::property_panel()
             normalize();
         }
 
-        if (InputInt("Width", &p->width)) {
+        // plain bits or a bundle type
+        auto type = p->bundle == model::no_id ? std::string("bits") : ctx.ws.bundle_label(p->bundle);
+        if (BeginCombo("Type", type.c_str())) {
+            if (Selectable("bits", p->bundle == model::no_id) && p->bundle != model::no_id) {
+                p->bundle = model::no_id;
+                p->flipped = false;
+                ctx.modified();
+            }
+            for (auto& l : ctx.ws.libraries) {
+                if (l->bundles.empty()) continue;
+                SeparatorText(l->name.c_str());
+                for (auto& b : l->bundles) {
+                    PushID(b.get());
+                    if (Selectable(b->name.c_str(), p->bundle == b->id)) {
+                        p->bundle = b->id;
+                        auto layout = ctx.ws.layout_of(b->id);
+                        if (layout) p->width = std::max(layout.width, 1);
+                        ctx.modified();
+                    }
+                    if (!b->description.empty()) SetItemTooltip("%s", b->description.c_str());
+                    PopID();
+                }
+            }
+            EndCombo();
+        }
+        SetItemTooltip("plain bits, or a bundle of named fields");
+
+        if (p->bundle != model::no_id) {
+            if (Checkbox("Flipped", &p->flipped)) ctx.modified();
+            SetItemTooltip("the other view of the bundle, its inputs and outputs swapped");
+            TextDisabled("%d bits", p->width);
+            bundle_fields_table(ctx.ws.layout_of(p->bundle, p->flipped));
+        } else if (InputInt("Width", &p->width)) {
             p->width = glm::clamp(p->width, 1, model::max_width);
             ctx.modified();
         }
@@ -988,7 +1076,10 @@ void schematic_editor::property_panel()
             TableNextColumn();
             TextUnformatted(model::to_string(p.dir));
             TableNextColumn();
-            Text("%d", p.width);
+            if (p.bundle != model::no_id)
+                Text("%s (%d)", ctx.ws.bundle_label(p.bundle, p.flipped).c_str(), p.width);
+            else
+                Text("%d", p.width);
         }
         EndTable();
     }

@@ -18,11 +18,34 @@ cell* library::find_cell(const std::string& name)
     return nullptr;
 }
 
+bundle_type* library::find_bundle(id i)
+{
+    for (auto& b : bundles)
+        if (b->id == i) return b.get();
+    return nullptr;
+}
+
+bundle_type* library::find_bundle(const std::string& name)
+{
+    for (auto& b : bundles)
+        if (b->name == name) return b.get();
+    return nullptr;
+}
+
 std::string library::unique_cell_name(const std::string& prefix) const
 {
     for (int n = 1;; n++) {
         auto name = prefix + std::to_string(n);
         if (std::none_of(cells.begin(), cells.end(), [&](auto& c) { return c->name == name; }))
+            return name;
+    }
+}
+
+std::string library::unique_bundle_name(const std::string& prefix) const
+{
+    for (int n = 1;; n++) {
+        auto name = prefix + std::to_string(n);
+        if (std::none_of(bundles.begin(), bundles.end(), [&](auto& b) { return b->name == name; }))
             return name;
     }
 }

@@ -1,6 +1,7 @@
 #include "libraries.h"
 #include "../io/json.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <fstream>
 
@@ -52,6 +53,69 @@ void choose_symbol(model::library& lib, model::cell& c, const logic_model_desc& 
     else messages.push_back(file.string() + " doesn't fit the model, using the default symbol: " + error);
 }
 
+// the id of a bundle type declared by a plugin, the same in every run
+model::id plugin_bundle_id(const std::string& plugin, const std::string& name)
+{
+    return model_cell_id(plugin, "bundle/" + name);
+}
+
+// the bundle types (into the plugin's library) and port groups of a model's
+// bundles json, false with an error
+bool parse_bundles(model::library& lib, const std::string& plugin, const std::string& text, std::vector<model::port_group>& groups, std::string& error)
+{
+    try {
+        auto j = nlohmann::json::parse(text);
+        auto dir = [](const std::string& s) {
+            if (s == "input") return model::direction::input;
+            if (s == "output") return model::direction::output;
+            if (s == "inout") return model::direction::inout;
+            throw std::runtime_error("invalid direction '" + s + "'");
+        };
+        for (auto& jt : j.value("types", nlohmann::json::array())) {
+            std::string name = jt.at("name");
+            auto id = plugin_bundle_id(plugin, name);
+            auto b = lib.find_bundle(id);
+            if (!b) {
+                lib.bundles.push_back(std::make_unique<model::bundle_type>());
+                b = lib.bundles.back().get();
+                b->id = id;
+            }
+            b->name = name;
+            b->description = jt.value("description", "");
+            b->fields.clear();
+            for (auto& jf : jt.at("fields")) {
+                model::bundle_field f;
+                f.name = jf.at("name");
+                f.description = jf.value("description", "");
+                if (jf.contains("type")) {
+                    f.bundle = plugin_bundle_id(plugin, jf.at("type"));
+                    f.flipped = jf.value("flipped", false);
+                } else {
+                    f.dir = dir(jf.value("dir", "output"));
+                    f.width = std::clamp(jf.value("width", 1), 1, model::max_width);
+                }
+                b->fields.push_back(std::move(f));
+            }
+        }
+        for (auto& jp : j.value("ports", nlohmann::json::array())) {
+            model::port_group g;
+            g.name = jp.at("name");
+            std::string type = jp.at("type");
+            g.bundle = plugin_bundle_id(plugin, type);
+            if (!lib.find_bundle(g.bundle)) throw std::runtime_error("port " + g.name + ": no bundle type '" + type + "'");
+            g.flipped = jp.value("flipped", false);
+            g.prefix = jp.value("prefix", "");
+            g.side = jp.value("side", "right") == "left" ? model::direction::input : model::direction::output;
+            g.description = jp.value("description", "");
+            groups.push_back(std::move(g));
+        }
+        return true;
+    } catch (const std::exception& e) {
+        error = e.what();
+        return false;
+    }
+}
+
 }
 
 model::id model_cell_id(const std::string& plugin, const std::string& model)
@@ -97,7 +161,7 @@ std::vector<std::string> sync_libraries(model::workspace& ws, const registry& re
                 auto n = std::make_unique<model::cell>();
                 n->id = id;
                 n->name = d.name;
-                n->impl = model::c_model_impl{a.name, d.name, {}};
+                n->impl = model::c_model_impl{a.name, d.name, {}, {}, {}};
                 lib->cells.push_back(std::move(n));
                 c = lib->cells.back().get();
             }
@@ -107,8 +171,20 @@ std::vector<std::string> sync_libraries(model::workspace& ws, const registry& re
                 messages.push_back(a.name + "/" + d.name + ": " + error);
                 continue;
             }
-            c->set_ports(ports);
-            std::get<model::c_model_impl>(c->impl).params = std::move(params);
+            // bundle ports made of the model's ports
+            auto& impl = std::get<model::c_model_impl>(c->impl);
+            impl.groups.clear();
+            impl.leaf_ports.clear();
+            if (HAS_FIELD(d, bundles) && !parse_bundles(*lib, a.name, d.bundles, impl.groups, error))
+                messages.push_back("the bundles of " + a.name + "/" + d.name + " are broken: " + error);
+            if (impl.groups.empty()) {
+                c->set_ports(ports);
+            } else {
+                impl.leaf_ports = std::move(ports);
+                for (auto& p : ws.apply_groups(*c))
+                    messages.push_back(a.name + "/" + d.name + ": " + p);
+            }
+            impl.params = std::move(params);
             lib->categories[id] = d.category ? d.category : "";
             choose_symbol(*lib, *c, d, a.name, messages);
         }
@@ -116,6 +192,10 @@ std::vector<std::string> sync_libraries(model::workspace& ws, const registry& re
         lib->dirty = false;
         lib->changed_symbols.clear();
     }
+    // the plugins' bundle types may have changed
+    ws.bundles_changed();
+    for (auto& l : ws.libraries)
+        if (!l->symbols_dir.empty()) l->dirty = false;
     return messages;
 }
 

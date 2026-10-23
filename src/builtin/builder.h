@@ -22,8 +22,9 @@ public:
     void polyline(std::initializer_list<glm::ivec2> points);
     void rect(glm::ivec2 min, glm::ivec2 max);
 
-    // a port and the pin connecting to it
-    void port(std::string name, model::direction dir, int width, glm::ivec2 pin, std::string description = {});
+    // a port and the pin connecting to it. the reference is valid until the
+    // next port.
+    model::port& port(std::string name, model::direction dir, int width, glm::ivec2 pin, std::string description = {});
 
     model::cell_interface finish() { return std::move(r); }
 

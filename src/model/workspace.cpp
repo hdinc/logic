@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
 #include <random>
 
 namespace logic::model {
@@ -104,7 +105,10 @@ bool workspace::would_create_cycle(id user, id used) const
     return false;
 }
 
-bool workspace::valid_cell_name(const library& lib, const std::string& name, std::string& error)
+namespace {
+
+// usable as a file name
+bool valid_file_name(const std::string& name, std::string& error)
 {
     if (name.empty()) {
         error = "name is empty";
@@ -123,6 +127,15 @@ bool workspace::valid_cell_name(const library& lib, const std::string& name, std
         return false;
     }
 
+    return true;
+}
+
+}
+
+bool workspace::valid_cell_name(const library& lib, const std::string& name, std::string& error)
+{
+    if (!valid_file_name(name, error)) return false;
+
     for (auto& c : lib.cells) {
         if (c->name == name) {
             error = "a cell with this name already exists";
@@ -131,6 +144,311 @@ bool workspace::valid_cell_name(const library& lib, const std::string& name, std
     }
 
     return true;
+}
+
+bool workspace::valid_bundle_name(const library& lib, const std::string& name, std::string& error)
+{
+    if (!valid_file_name(name, error)) return false;
+
+    for (auto& b : lib.bundles) {
+        if (b->name == name) {
+            error = "a bundle with this name already exists";
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bundle_type* workspace::find_bundle(id i)
+{
+    for (auto& l : libraries)
+        if (auto b = l->find_bundle(i)) return b;
+    return nullptr;
+}
+
+const bundle_type* workspace::find_bundle(id i) const
+{
+    return const_cast<workspace*>(this)->find_bundle(i);
+}
+
+library* workspace::library_of_bundle(id bundle)
+{
+    for (auto& l : libraries)
+        if (l->find_bundle(bundle)) return l.get();
+    return nullptr;
+}
+
+const library* workspace::library_of_bundle(id bundle) const
+{
+    return const_cast<workspace*>(this)->library_of_bundle(bundle);
+}
+
+bundle_type& workspace::create_bundle(library& lib, const std::string& name)
+{
+    auto b = std::make_unique<bundle_type>();
+    do {
+        b->id = random_id();
+    } while (find_bundle(b->id) || find_cell(b->id));
+    b->name = name;
+    lib.bundles.push_back(std::move(b));
+    lib.dirty = true;
+    return *lib.bundles.back();
+}
+
+void workspace::delete_bundle(id bundle)
+{
+    for (auto& l : libraries) {
+        auto n = std::erase_if(l->bundles, [&](auto& b) { return b->id == bundle; });
+        if (n) l->dirty = true;
+    }
+    bundles_changed();
+}
+
+std::vector<std::string> workspace::bundle_users(id bundle) const
+{
+    std::vector<std::string> r;
+    auto ref = bundle_ref(bundle);
+    for (auto& l : libraries) {
+        for (auto& b : l->bundles)
+            for (auto& f : b->fields)
+                if (f.bundle == bundle) r.push_back("field " + f.name + " of bundle " + b->name);
+        for (auto& c : l->cells) {
+            for (auto& p : c->ports)
+                if (p.bundle == bundle) r.push_back("port " + p.name + " of " + c->name);
+            auto s = c->get_schematic();
+            if (!s) continue;
+            for (auto& i : s->instances) {
+                for (auto& d : params_of(i)) {
+                    auto v = i.params.find(d.name);
+                    if (d.role != param_def::bundle || v == i.params.end() || v->second != param_value(ref)) continue;
+                    r.push_back("instance " + i.name + " in " + c->name);
+                    break;
+                }
+            }
+        }
+    }
+    return r;
+}
+
+bool workspace::would_create_bundle_cycle(id outer, id inner) const
+{
+    // cycle if `outer` is reachable from `inner` (or they are the same)
+    std::vector<id> stack{inner};
+    std::vector<id> visited;
+
+    while (!stack.empty()) {
+        id b = stack.back();
+        stack.pop_back();
+
+        if (b == outer) return true;
+        if (std::find(visited.begin(), visited.end(), b) != visited.end()) continue;
+        visited.push_back(b);
+
+        if (auto t = find_bundle(b))
+            for (auto& f : t->fields)
+                if (f.bundle != no_id) stack.push_back(f.bundle);
+    }
+
+    return false;
+}
+
+bundle_layout workspace::layout_of(id bundle, bool flipped) const
+{
+    bundle_layout r;
+    std::vector<id> open;
+
+    // adds the fields of the type at bit offset, false on an error
+    std::function<bool(id, bool, const std::string&, int, int&)> add = [&](id b, bool flip_view, const std::string& prefix, int depth, int& offset) {
+        auto t = find_bundle(b);
+        if (!t) {
+            r.error = "bundle type " + bundle_label(b) + " is missing";
+            return false;
+        }
+        if (std::find(open.begin(), open.end(), b) != open.end()) {
+            r.error = "bundle '" + t->name + "' contains itself";
+            return false;
+        }
+        open.push_back(b);
+
+        for (auto& f : t->fields) {
+            bundle_node n;
+            n.name = f.name;
+            n.path = prefix + f.name;
+            n.depth = depth;
+            n.offset = offset;
+            if (f.bundle != no_id) {
+                n.bundle = f.bundle;
+                n.flipped = flip_view != f.flipped;
+                size_t at = r.nodes.size();
+                r.nodes.push_back(n);
+                if (!add(f.bundle, n.flipped, n.path + ".", depth + 1, offset)) return false;
+                r.nodes[at].width = offset - n.offset;
+            } else {
+                n.width = std::clamp(f.width, 1, max_width);
+                n.dir = flip_view ? flip(f.dir) : f.dir;
+                r.nodes.push_back(n);
+                r.leaves.push_back({n.path, n.dir, offset, n.width});
+                offset += n.width;
+            }
+            if (offset > max_width) {
+                r.error = "bundle '" + t->name + "' has more than " + std::to_string(max_width) + " bits";
+                return false;
+            }
+        }
+
+        open.pop_back();
+        return true;
+    };
+
+    int width = 0;
+    if (!add(bundle, flipped, "", 0, width)) {
+        auto error = std::move(r.error);
+        r = {};
+        r.error = std::move(error);
+        return r;
+    }
+    r.width = width;
+    return r;
+}
+
+std::string workspace::bundle_label(id bundle, bool flipped) const
+{
+    auto t = find_bundle(bundle);
+    return view_name(t ? t->name : "#" + std::to_string(bundle), flipped);
+}
+
+workspace::grouping workspace::group_ports(const std::vector<port>& leaves, const std::vector<port_group>& groups) const
+{
+    grouping r;
+    // per leaf the group it's in and its offset there, -1 for none
+    std::vector<int> group_of(leaves.size(), -1);
+    std::vector<int> bit_of(leaves.size(), 0);
+    std::vector<int> width_of(groups.size(), 0);
+
+    for (int g = 0; g < (int)groups.size(); g++) {
+        auto& grp = groups[g];
+        auto layout = layout_of(grp.bundle, grp.flipped);
+        auto what = "bundle port " + grp.name + ": ";
+        if (!layout) {
+            r.problems.push_back(what + layout.error);
+            continue;
+        }
+        if (layout.leaves.empty()) {
+            r.problems.push_back(what + "the bundle has no fields");
+            continue;
+        }
+        std::vector<std::pair<int, int>> found;
+        std::string problem;
+        for (auto& f : layout.leaves) {
+            auto name = field_port_name(grp, f.path);
+            auto it = std::find_if(leaves.begin(), leaves.end(), [&](const port& p) { return p.name == name; });
+            int k = (int)(it - leaves.begin());
+            if (it == leaves.end())
+                problem = "the model has no port " + name;
+            else if (group_of[k] >= 0)
+                problem = name + " is already in bundle port " + groups[group_of[k]].name;
+            else if (it->width != f.width)
+                problem = name + " has " + std::to_string(it->width) + " bits, the field " + std::to_string(f.width);
+            else if (it->dir != f.dir)
+                problem = name + " is an " + to_string(it->dir) + ", the field an " + to_string(f.dir);
+            if (!problem.empty()) break;
+            found.push_back({k, f.offset});
+        }
+        if (!problem.empty()) {
+            r.problems.push_back(what + problem);
+            continue;
+        }
+        for (auto [k, bit] : found) {
+            group_of[k] = g;
+            bit_of[k] = bit;
+        }
+        width_of[g] = layout.width;
+    }
+
+    // the bundle port where its first field was
+    std::vector<int> port_of_group(groups.size(), -1);
+    r.model_ports.resize(leaves.size());
+    for (int k = 0; k < (int)leaves.size(); k++) {
+        int g = group_of[k];
+        if (g < 0) {
+            r.model_ports[k] = {leaves[k], (int)r.ports.size(), 0};
+            r.ports.push_back(leaves[k]);
+            continue;
+        }
+        if (port_of_group[g] < 0) {
+            auto& grp = groups[g];
+            port p;
+            p.name = grp.name;
+            p.dir = grp.side;
+            p.width = width_of[g];
+            p.description = grp.description;
+            p.bundle = grp.bundle;
+            p.flipped = grp.flipped;
+            port_of_group[g] = (int)r.ports.size();
+            r.ports.push_back(p);
+        }
+        r.model_ports[k] = {leaves[k], port_of_group[g], bit_of[k]};
+    }
+    return r;
+}
+
+std::vector<std::string> workspace::apply_groups(cell& c)
+{
+    auto groups = c.port_groups();
+    auto leaves = c.leaf_ports();
+    if (!groups || !leaves) return {};
+    auto before = c.ports;
+
+    if (groups->empty()) {
+        // back to the model's ports
+        if (!leaves->empty()) c.set_ports(*leaves);
+        leaves->clear();
+    } else {
+        if (leaves->empty()) *leaves = c.ports;
+        auto g = group_ports(*leaves, *groups);
+        c.set_ports(g.ports);
+        if (c.ports != before)
+            if (auto l = library_of(c.id)) l->dirty = true;
+        return g.problems;
+    }
+    if (c.ports != before)
+        if (auto l = library_of(c.id)) l->dirty = true;
+    return {};
+}
+
+std::vector<model_port> workspace::map_model_ports(const std::vector<port>& ports, const std::vector<port>& leaves, const std::vector<port_group>& groups) const
+{
+    auto g = group_ports(leaves, groups);
+    std::vector<model_port> r;
+    for (auto& m : g.model_ports) {
+        auto& name = g.ports[m.of].name;
+        auto it = std::find_if(ports.begin(), ports.end(), [&](const port& p) { return p.name == name; });
+        // the ports are from before a change of the groups or bundles
+        if (it == ports.end() || it->width < m.bit + m.port.width) return {};
+        r.push_back({m.port, (int)(it - ports.begin()), m.bit});
+    }
+    return r;
+}
+
+void workspace::bundles_changed()
+{
+    m_bundle_revision++;
+
+    for (auto& l : libraries) {
+        for (auto& c : l->cells) {
+            if (auto g = c->port_groups(); g && !g->empty()) apply_groups(*c);
+            for (auto& p : c->ports) {
+                if (p.bundle == no_id) continue;
+                auto layout = layout_of(p.bundle);
+                // an empty bundle still needs a bit for the net
+                int w = layout ? std::max(layout.width, 1) : p.width;
+                if (p.width == w) continue;
+                p.width = w;
+                l->dirty = true;
+            }
+        }
+    }
 }
 
 library& workspace::add_builtin_library(const primitive_registry& r, const std::string& name)
@@ -166,16 +484,29 @@ interface_view workspace::interface_of(const instance& i) const
     auto p = primitive_of(*c);
     static const std::vector<bit_link> no_links;
     static const std::vector<pull> no_pulls;
+    static const std::vector<model_port> no_model_ports;
     if (!p) {
-        if (auto e = external_interface(*c, i)) return {&e->iface.ports, &e->iface.symbol, &no_links, &no_pulls};
-        return {&c->ports, &c->symbol, &no_links, &no_pulls};
+        if (auto e = external_interface(*c, i)) return {&e->iface.ports, &e->iface.symbol, &no_links, &no_pulls, &e->iface.model_ports};
+        auto groups = c->port_groups();
+        if (!groups || groups->empty()) return {&c->ports, &c->symbol, &no_links, &no_pulls, &no_model_ports};
+
+        // the model's ports of the grouped ones
+        auto& e = group_cache[c->id];
+        if (e.ports != c->ports || e.leaves != c->model_ports() || e.revision != m_bundle_revision) {
+            e.ports = c->ports;
+            e.leaves = c->model_ports();
+            e.revision = m_bundle_revision;
+            e.model_ports = map_model_ports(c->ports, e.leaves, *groups);
+        }
+        return {&c->ports, &c->symbol, &no_links, &no_pulls, &e.model_ports};
     }
 
     auto values = resolve_params(p->params(), i.params);
     auto key = p->kind() + '\n' + params_key(values);
+    if (p->uses_bundles()) key += '\n' + std::to_string(m_bundle_revision);
     auto it = interface_cache.find(key);
-    if (it == interface_cache.end()) it = interface_cache.emplace(key, p->build(values)).first;
-    return {&it->second.ports, &it->second.symbol, &it->second.links, &it->second.pulls};
+    if (it == interface_cache.end()) it = interface_cache.emplace(key, p->build(values, build_context{this})).first;
+    return {&it->second.ports, &it->second.symbol, &it->second.links, &it->second.pulls, &it->second.model_ports};
 }
 
 std::vector<param_def> workspace::params_of(const instance& i) const
@@ -191,7 +522,7 @@ std::string workspace::check_instance(const instance& i) const
 {
     auto c = find_cell(i.cell);
     if (!c) return {};
-    if (auto p = primitive_of(*c)) return p->check(resolve_params(p->params(), i.params));
+    if (auto p = primitive_of(*c)) return p->check(resolve_params(p->params(), i.params), build_context{this});
     if (auto e = external_interface(*c, i)) return e->error;
     return {};
 }
@@ -226,7 +557,12 @@ bool workspace::refresh_interface(cell& c, std::string& error)
     std::vector<param_def> defs;
     if (!p->describe(c, lib ? lib->dir : std::filesystem::path{}, ports, defs, error)) return false;
 
-    c.set_ports(ports);
+    if (auto groups = c.port_groups(); groups && !groups->empty()) {
+        *c.leaf_ports() = std::move(ports);
+        apply_groups(c);
+    } else {
+        c.set_ports(ports);
+    }
     *params = std::move(defs);
     if (lib) lib->dirty = true;
     return true;
@@ -243,11 +579,13 @@ const workspace::external_entry* workspace::external_interface(const cell& c, co
 
     auto key = std::to_string(c.id) + '\n' + params_key(values);
     auto it = external_cache.find(key);
-    if (it != external_cache.end() && it->second.cell_ports == c.ports && it->second.cell_symbol == c.symbol) return &it->second;
+    if (it != external_cache.end() && it->second.cell_ports == c.ports && it->second.cell_symbol == c.symbol && it->second.revision == m_bundle_revision)
+        return &it->second;
 
     external_entry e;
     e.cell_ports = c.ports;
     e.cell_symbol = c.symbol;
+    e.revision = m_bundle_revision;
     e.iface.ports = c.ports;
     e.iface.symbol = c.symbol;
 
@@ -265,7 +603,15 @@ const workspace::external_entry* workspace::external_interface(const cell& c, co
         tmp.symbol = c.symbol;
         tmp.next_id = c.next_id;
         tmp.name = c.name;
-        tmp.set_ports(ports);
+        auto groups = c.port_groups();
+        if (groups && !groups->empty()) {
+            // the model's ports for these parameters, grouped
+            auto g = group_ports(ports, *groups);
+            tmp.set_ports(g.ports);
+            e.iface.model_ports = map_model_ports(tmp.ports, ports, *groups);
+        } else {
+            tmp.set_ports(ports);
+        }
         e.iface.ports = std::move(tmp.ports);
         e.iface.symbol = std::move(tmp.symbol);
     }

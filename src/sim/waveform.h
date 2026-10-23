@@ -13,7 +13,8 @@ class simulator;
 
 // Written on the simulation thread, read by the GUI. Records settled values
 // at every point in time, independently of runner's throttled display
-// snapshots. Signal keys are nets, times picoseconds.
+// snapshots. Signal keys are nets, or bits of a net (e.g. a field of a
+// bundle, see key_of), times picoseconds.
 class waveform_recorder {
 public:
     waveform_recorder();
@@ -22,13 +23,20 @@ public:
     static constexpr size_t max_signals = 64;
     static constexpr size_t max_samples = 10000; // per signal, retain newest
 
+    // the key of bits [lo, lo + width) of a net, the net itself for width 0
+    // (the whole net)
+    static int64_t key_of(int net, int lo = 0, int width = 0);
+    static int net_of(int64_t key);
+
     // Mutations are called on the simulation thread (through runner::query).
-    void add(const simulator& s, int net, std::string name);
-    void remove(int net);
+    // width 0 records the whole net, otherwise bits [lo, lo + width).
+    void add(const simulator& s, int net, std::string name, int lo = 0, int width = 0);
+    void remove(int64_t key);
     // starts the history over from the current values
     void clear(const simulator& s);
     void capture(const simulator& s);
 
+    // a signal of the net, the whole net or bits of it
     bool contains(int net) const;
     size_t size() const;
     // a copy of everything recorded

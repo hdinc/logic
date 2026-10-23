@@ -10,6 +10,8 @@
 
 namespace logic::model {
 
+class workspace;
+
 // bits of two ports wired together inside a primitive, e.g. by a splitter.
 // the simulator joins them like a wire, without delay and in both directions.
 struct bit_link {
@@ -28,12 +30,30 @@ struct pull {
     bool up = false;
 };
 
+// a port of the simulation model that is bits [bit, bit + port.width) of
+// port `of` of the interface, e.g. a field of a bundle port
+struct model_port {
+    model::port port;
+    int of = 0;
+    int bit = 0;
+};
+
 // what an instance looks like from outside: its ports and symbol
 struct cell_interface {
     std::vector<port> ports;
     model::symbol symbol;
     std::vector<bit_link> links;
     std::vector<pull> pulls;
+    // the ports the simulation model sees when they differ from ports (see
+    // port_group), in the model's order. empty if they are the ports.
+    std::vector<model_port> model_ports;
+};
+
+// what a primitive may look up while building its interface besides its
+// parameters. the workspace is null when there is none, e.g. for the cells
+// of the builtin library.
+struct build_context {
+    const workspace* ws = nullptr;
 };
 
 // a cell implemented in code, e.g. a gate or a register. its ports and symbol
@@ -56,9 +76,15 @@ public:
     // values are resolved: every parameter has a valid value
     virtual cell_interface build(const param_values& values) const = 0;
 
+    // primitives whose interface depends on bundle types override this and
+    // uses_bundles. the interface is rebuilt when a bundle type changes.
+    virtual cell_interface build(const param_values& values, const build_context&) const { return build(values); }
+    virtual bool uses_bundles() const { return false; }
+
     // problem with a combination of resolved values that build() works
     // around, shown to the user. empty if there is none.
     virtual std::string check(const param_values&) const { return {}; }
+    virtual std::string check(const param_values& values, const build_context&) const { return check(values); }
 };
 
 class primitive_registry {

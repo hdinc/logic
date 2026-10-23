@@ -33,6 +33,19 @@ struct param_def {
     // hex, s-records, elf or binary), relative to the library folder
     bool file = false;
 
+    // what else a text means, for the editor
+    enum role_t {
+        plain,
+        // the id of a bundle type, see bundle_ref
+        bundle,
+        // paths of fields of the bundle in bundle_param, separated by ','
+        fields,
+        // the path of one field of the bundle in bundle_param
+        field
+    };
+    role_t role = plain;
+    std::string bundle_param;
+
     std::string description;
 
     bool operator==(const param_def&) const = default;
@@ -44,6 +57,10 @@ param_def choice_param(std::string name, std::string label, std::vector<std::str
 param_def text_param(std::string name, std::string label, std::string def, std::string description = {});
 // a text parameter holding a file path, empty by default
 param_def file_param(std::string name, std::string label, std::string description = {});
+// a text parameter holding a bundle type id, empty by default
+param_def bundle_param(std::string name, std::string label, std::string description = {});
+// text parameters holding fields of the bundle in parameter `bundle`
+param_def fields_param(std::string name, std::string label, std::string bundle, bool one, std::string description = {});
 
 // a value for every definition: the stored one if it is valid (right type,
 // integers in range, a known choice), otherwise the default. values without a

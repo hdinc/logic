@@ -6,7 +6,88 @@
 
 namespace logic::editor {
 
-bool edit_params(const std::vector<model::param_def>& defs, model::param_values& values, const std::filesystem::path& base)
+namespace {
+
+// a combo of the bundle types of the workspace, grouped by library
+bool edit_bundle(const char* label, std::string& value, const model::workspace& ws)
+{
+    using namespace ImGui;
+    auto id = model::parse_bundle_ref(value);
+    auto preview = id == model::no_id ? std::string("(none)") : ws.bundle_label(id);
+    bool edited = false;
+    if (BeginCombo(label, preview.c_str())) {
+        if (Selectable("(none)", id == model::no_id)) {
+            value.clear();
+            edited = true;
+        }
+        for (auto& l : ws.libraries) {
+            if (l->bundles.empty()) continue;
+            SeparatorText(l->name.c_str());
+            for (auto& b : l->bundles) {
+                PushID(b.get());
+                if (Selectable(b->name.c_str(), b->id == id)) {
+                    value = model::bundle_ref(b->id);
+                    edited = true;
+                }
+                if (!b->description.empty()) SetItemTooltip("%s", b->description.c_str());
+                PopID();
+            }
+        }
+        EndCombo();
+    }
+    return edited;
+}
+
+// the fields of the layout as a tree: checkboxes for several, selectables for
+// one field. nested bundles can be chosen as a whole too.
+bool edit_fields(const char* label, std::string& value, const model::bundle_layout& layout, bool one)
+{
+    using namespace ImGui;
+    auto paths = model::split_fields(value);
+    auto chosen = [&](const std::string& p) { return std::find(paths.begin(), paths.end(), p) != paths.end(); };
+
+    std::string preview = value.empty() ? (one ? "(none)" : "(all fields)") : value;
+    bool edited = false;
+    if (BeginCombo(label, preview.c_str(), ImGuiComboFlags_HeightLarge)) {
+        if (!one && Selectable("(all fields)", value.empty(), ImGuiSelectableFlags_NoAutoClosePopups)) {
+            paths.clear();
+            edited = true;
+        }
+        for (auto& n : layout.nodes) {
+            PushID(n.path.c_str());
+            // Indent(0) would indent by the default spacing
+            float indent = n.depth * GetStyle().IndentSpacing;
+            if (indent > 0) Indent(indent);
+            auto text = n.name + (n.bundle != model::no_id ? "  (bundle)" : n.width > 1 ? "  [" + std::to_string(n.width) + "]"
+                                                                                        : "");
+            if (one) {
+                if (Selectable(text.c_str(), chosen(n.path))) {
+                    paths = {n.path};
+                    edited = true;
+                }
+            } else {
+                bool on = chosen(n.path);
+                if (Checkbox(text.c_str(), &on)) {
+                    if (on)
+                        paths.push_back(n.path);
+                    else
+                        std::erase(paths, n.path);
+                    edited = true;
+                }
+            }
+            if (n.bundle == model::no_id) SetItemTooltip("%s, bits %d..%d", model::to_string(n.dir), n.offset, n.offset + n.width - 1);
+            if (indent > 0) Unindent(indent);
+            PopID();
+        }
+        EndCombo();
+    }
+    if (edited) value = model::join_fields(paths);
+    return edited;
+}
+
+}
+
+bool edit_params(const std::vector<model::param_def>& defs, model::param_values& values, const std::filesystem::path& base, const model::workspace* ws)
 {
     using namespace ImGui;
 
@@ -62,6 +143,16 @@ bool edit_params(const std::vector<model::param_def>& defs, model::param_values&
                 edited |= browse_button("browse", s, base, firmware_files);
                 SameLine(0, style.ItemInnerSpacing.x);
                 TextUnformatted(d.label.c_str());
+            } else if (ws && d.role == model::param_def::bundle) {
+                edited = edit_bundle(d.label.c_str(), s, *ws);
+            } else if (ws && (d.role == model::param_def::fields || d.role == model::param_def::field) && resolved.count(d.bundle_param)) {
+                auto bundle = model::parse_bundle_ref(std::get<std::string>(resolved.at(d.bundle_param)));
+                auto flipped = resolved.find("flipped");
+                auto layout = ws->layout_of(bundle, flipped != resolved.end() && std::holds_alternative<bool>(flipped->second) && std::get<bool>(flipped->second));
+                if (layout)
+                    edited = edit_fields(d.label.c_str(), s, layout, d.role == model::param_def::field);
+                else
+                    edited = input_string(d.label.c_str(), s);
             } else {
                 edited = input_string(d.label.c_str(), s);
             }

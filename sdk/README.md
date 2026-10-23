@@ -44,9 +44,17 @@ Optional parts (a model built with an older header simply doesn't have them):
   `logic_model.h` for the format, `examples.cpp` has one for the 7 segment
   decoder). The easiest way to make one: edit the symbol of the model's
   cell in the program and copy the file it saves.
+- `bundles`: bundle ports as JSON text. The model declares bundle types
+  (named fields with their own directions, like a SystemVerilog interface)
+  and which of its ports make up a bundle port: `s_valid`, `s_ready` and
+  `s_data` become one port `s` of the cell. `get_ports` and `eval` keep the
+  model's own ports, so nothing else changes. The types appear in the
+  plugin's library. See `logic_model.h` for the format and the handshake
+  sink in `examples.cpp`.
 
 See `examples/` for a counter in C, a 7 segment decoder, a timed UART
-transmitter and a tiny processor with a debugger interface in C++.
+transmitter, a handshake sink with a bundle port and a tiny processor with
+a debugger interface in C++.
 
 ## Building
 

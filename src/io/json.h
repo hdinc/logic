@@ -31,6 +31,11 @@ std::optional<model::cell> from_clipboard(const std::string& text, const std::st
 // exception) on invalid input or when a port of c has no pin.
 model::symbol symbol_for(model::cell& c, const nlohmann::json& j);
 
+// bundle type files, see storage.h
+nlohmann::json to_json(const model::bundle_type& b);
+// throws like cell_from_json
+model::bundle_type bundle_from_json(const nlohmann::json& j);
+
 std::string id_to_string(model::id i);
 model::id id_from_string(const std::string& s);
 

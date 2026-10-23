@@ -277,7 +277,7 @@ std::unique_ptr<sim::component> manager::create(const sim::create_info& info, st
         fs::path bridge;
         if (!ghdl_bridge(ghdl(), cache_root, bridge, error)) return nullptr;
         // the ports for these generics
-        std::vector<model::port> ports = c.ports;
+        std::vector<model::port> ports = c.model_ports();
         if (values != model::resolve_params(*c.external_params(), {}) && !ports_for(c, dir_of(c), values, ports, error)) return nullptr;
         return cosim::component::start(c.name, ports, ghdl_launch(ghdl(), j, path, bridge), log, error);
     }
@@ -301,9 +301,10 @@ std::unique_ptr<sim::component> manager::create(const sim::create_info& info, st
     }
     // the ports of the instance: the cell's own for the defaults
     if (values == model::resolve_params(*c.external_params(), {})) {
-        bool same = design.ports.size() == c.ports.size();
-        for (size_t k = 0; same && k < c.ports.size(); k++)
-            same = design.ports[k].name == c.ports[k].name && design.ports[k].dir == c.ports[k].dir && design.ports[k].width == c.ports[k].width;
+        auto& own = c.model_ports();
+        bool same = design.ports.size() == own.size();
+        for (size_t k = 0; same && k < own.size(); k++)
+            same = design.ports[k].name == own[k].name && design.ports[k].dir == own[k].dir && design.ports[k].width == own[k].width;
         if (!same) {
             error = "the ports of '" + c.name + "' changed in the sources, refresh its interface";
             return nullptr;

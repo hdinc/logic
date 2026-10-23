@@ -148,6 +148,46 @@ int uart_ports(const logic_params*, const logic_port_sink* s)
     return 1;
 }
 
+// the receiving side of a valid/ready handshake as a bundle port: always
+// ready, shows the data while valid
+class handshake_sink : public logic_sdk::instance {
+public:
+    handshake_sink(const logic_params&, const logic_host&) { }
+
+    void eval(logic_value* ports, logic_context&) override
+    {
+        logic_set_u64(&ports[1], 1);
+        bool valid = logic_is_known(&ports[0]) && logic_get_u64(&ports[0]) == 1;
+        logic_set_u64(&ports[3], valid ? logic_get_u64(&ports[2]) : 0);
+    }
+};
+
+int sink_ports(const logic_params*, const logic_port_sink* s)
+{
+    logic_sdk::add_port(s, "s_valid", LOGIC_INPUT, 1, nullptr);
+    logic_sdk::add_port(s, "s_ready", LOGIC_OUTPUT, 1, nullptr);
+    logic_sdk::add_port(s, "s_data", LOGIC_INPUT, 8, nullptr);
+    logic_sdk::add_port(s, "seen", LOGIC_OUTPUT, 8, "the data while valid, else 0");
+    return 1;
+}
+
+// s_valid, s_ready and s_data are the port s, the sink is the flipped
+// (receiving) side of the handshake
+const char* const sink_bundles = R"({
+    "types": [{"name": "handshake", "description": "valid/ready with a byte", "fields": [
+        {"name": "valid", "dir": "output"},
+        {"name": "ready", "dir": "input"},
+        {"name": "data", "dir": "output", "width": 8}]}],
+    "ports": [{"name": "s", "type": "handshake", "flipped": true, "side": "left"}]
+})";
+
+logic_model_desc sink_model()
+{
+    auto d = logic_sdk::make_model<handshake_sink>("handshake_sink", "takes bytes over a valid/ready handshake", "Examples", nullptr, 0, sink_ports);
+    d.bundles = sink_bundles;
+    return d;
+}
+
 const logic_plugin* plugin()
 {
     static const logic_model_desc models[] = {
@@ -155,6 +195,7 @@ const logic_plugin* plugin()
         seg7_model(),
         logic_sdk::make_model<uart_tx>("uart_tx", "sends bytes over a serial line", "Examples", uart_params, 1, uart_ports),
         example_toy_cpu(),
+        sink_model(),
     };
     static const logic_plugin p = {LOGIC_MODEL_ABI_VERSION, "logic_examples", models, sizeof(models) / sizeof(models[0])};
     return &p;

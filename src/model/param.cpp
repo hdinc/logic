@@ -47,6 +47,21 @@ param_def file_param(std::string name, std::string label, std::string descriptio
     return d;
 }
 
+param_def bundle_param(std::string name, std::string label, std::string description)
+{
+    auto d = text_param(std::move(name), std::move(label), "", std::move(description));
+    d.role = param_def::bundle;
+    return d;
+}
+
+param_def fields_param(std::string name, std::string label, std::string bundle, bool one, std::string description)
+{
+    auto d = text_param(std::move(name), std::move(label), "", std::move(description));
+    d.role = one ? param_def::field : param_def::fields;
+    d.bundle_param = std::move(bundle);
+    return d;
+}
+
 param_def text_param(std::string name, std::string label, std::string def, std::string description)
 {
     param_def d;

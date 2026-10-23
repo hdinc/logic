@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bundle.h"
 #include "param.h"
 #include "schematic.h"
 #include "symbol.h"
@@ -18,6 +19,13 @@ struct port {
     // shown when hovering the pin of an instance
     std::string description;
 
+    // a port of a bundle type: width is the bundle's total width (kept up to
+    // date by the workspace) and the fields have their own directions. dir
+    // only says on which side the port sits. flipped is the other view, its
+    // inputs and outputs are swapped.
+    model::id bundle = no_id;
+    bool flipped = false;
+
     // position of the port's connector inside the schematic. unused for cells
     // that are not implemented by a schematic.
     glm::ivec2 pos{0, 0};
@@ -26,6 +34,28 @@ struct port {
 
 // where wires connect to the port's connector in the schematic
 glm::ivec2 connection_point(const port& p);
+
+// a bundle port of a c model or hdl cell made of the model's own ports: the
+// ports named prefix + the field's path, with '_' for '.', are the fields,
+// e.g. m0_aw_valid for field aw.valid with prefix "m0_". the model sees its
+// ports as they are.
+struct port_group {
+    // of the bundle port
+    std::string name;
+    model::id bundle = no_id;
+    bool flipped = false;
+    // empty for name + "_"
+    std::string prefix;
+    // the side of the generated symbol: inputs left, the others right
+    direction side = direction::output;
+    std::string description;
+
+    std::string field_prefix() const { return prefix.empty() ? name + "_" : prefix; }
+    bool operator==(const port_group&) const = default;
+};
+
+// the model's port for a field of a port group
+std::string field_port_name(const port_group& g, const std::string& path);
 
 // cell implemented in c++ by the simulator, identified by kind
 struct builtin_impl {
@@ -56,6 +86,10 @@ struct c_model_impl {
     std::string model;
     // declared by the model, found when the interface is refreshed
     std::vector<param_def> params;
+    // bundle ports made of the model's ports. the cell's ports are then the
+    // grouped ones, leaf_ports the model's.
+    std::vector<port_group> groups;
+    std::vector<port> leaf_ports;
     bool operator==(const c_model_impl&) const = default;
 };
 
@@ -75,6 +109,9 @@ struct hdl_impl {
     std::string args;
     // parameters (verilog) or generics (vhdl) of the top
     std::vector<param_def> params;
+    // see c_model_impl
+    std::vector<port_group> groups;
+    std::vector<port> leaf_ports;
     bool operator==(const hdl_impl&) const = default;
 };
 
@@ -127,6 +164,14 @@ struct cell {
     // parameters of a c model or hdl cell, null for other cells
     const std::vector<param_def>* external_params() const;
     std::vector<param_def>* external_params();
+    // bundle ports made of the model's ports, null for cells that are not
+    // external
+    const std::vector<port_group>* port_groups() const;
+    std::vector<port_group>* port_groups();
+    // the ports as the simulation model has them: the model's own ports of
+    // an external cell with port groups, the cell's ports otherwise
+    const std::vector<port>& model_ports() const;
+    std::vector<port>* leaf_ports();
 
     // the returned reference is invalidated by the next add_port
     port& add_port(direction dir, glm::ivec2 pos);
@@ -136,7 +181,7 @@ struct cell {
     std::string unique_port_name(const std::string& prefix) const;
 
     // replaces the symbol with a box, inputs on the left, outputs and inouts
-    // on the right. buses get thick stubs.
+    // on the right. buses get thick stubs, bundles thicker ones.
     void generate_symbol(pin_order order = pin_order::position);
 
     // replaces the ports with the given ones, e.g. found in a model. ports

@@ -25,6 +25,8 @@ const theme& dark_theme()
         .grid = rgb(0x6a7080, 0.8f),
         .symbol = rgb(0xe4e7eb),
         .wire = rgb(0xa2a9b3),
+        .bus_wire = rgb(0x6fa8dc),
+        .bundle_wire = rgb(0xb98ae6),
         .label = rgb(0x8a919c),
         .selection = rgb(0xffc533),
         .guide = rgb(0x6f8a33),
@@ -38,6 +40,7 @@ const theme& dark_theme()
         .unknown = rgb(0xff4d4d),
         .floating = rgb(0x5a8cff),
         .bus = rgb(0x8cc8f2),
+        .bundle = rgb(0xd2b0f5),
     };
     return t;
 }
@@ -49,6 +52,8 @@ const theme& light_theme()
         .grid = rgb(0x9aa0ab, 0.8f),
         .symbol = rgb(0x1e2126),
         .wire = rgb(0x4d545e),
+        .bus_wire = rgb(0x2f6fb5),
+        .bundle_wire = rgb(0x8a3fc4),
         .label = rgb(0x737a85),
         .selection = rgb(0xf08c00),
         .guide = rgb(0x8ca640),
@@ -62,6 +67,7 @@ const theme& light_theme()
         .unknown = rgb(0xe01b1b),
         .floating = rgb(0x2966f0),
         .bus = rgb(0x1f7acc),
+        .bundle = rgb(0x9b4fd9),
     };
     return t;
 }
@@ -213,7 +219,7 @@ void draw_instance(renderer& r, const model::workspace& ws, const model::instanc
     }
 }
 
-void draw_port(renderer& r, const model::port& p, glm::vec4 color, bool connected)
+void draw_port(renderer& r, const model::port& p, glm::vec4 color, bool connected, const std::string& type)
 {
     glm::vec2 pos = p.pos;
     glm::vec2 cp = model::connection_point(p);
@@ -229,30 +235,33 @@ void draw_port(renderer& r, const model::port& p, glm::vec4 color, bool connecte
     if (p.dir == model::direction::inout) r.rect_outline(pos - glm::vec2{5, 5}, pos + glm::vec2{5, 5}, color, stroke, 1.5f);
     if (!connected) draw_pin(r, cp, color);
 
-    std::string label = p.width > 1 ? p.name + "[" + std::to_string(p.width) + "]" : p.name;
+    std::string label = !type.empty() ? p.name + " : " + type : p.width > 1 ? p.name + "[" + std::to_string(p.width) + "]"
+                                                                            : p.name;
     if (p.dir == model::direction::input)
         r.text_middle(label, pos + glm::vec2{-8, 0}, 10.0f, color, align::right);
     else
         r.text_middle(label, pos + glm::vec2{8, 0}, 10.0f, color, align::left);
 }
 
-void draw_wire(renderer& r, const model::wire& w, glm::vec4 color, bool bus)
+void draw_wire(renderer& r, const model::wire& w, glm::vec4 color, bool bus, bool bundle)
 {
-    r.line(w.a, w.b, color, bus ? bus_width : wire_width);
+    r.line(w.a, w.b, color, bundle ? bundle_width : bus ? bus_width
+                                                        : wire_width);
 }
 
-glm::vec4 value_color(const sim::value& v)
+glm::vec4 value_color(const sim::value& v, bool bundle)
 {
     auto& c = colors();
     if (v.fully_floating()) return c.floating;
     if (!v.fully_known()) return c.unknown;
+    if (bundle) return c.bundle;
     if (v.width() > 1) return c.bus;
     return (v.to_u64() & 1) ? c.high : c.low;
 }
 
 void draw_port_value(renderer& r, const model::port& p, const sim::value& v)
 {
-    auto color = value_color(v);
+    auto color = value_color(v, p.bundle != model::no_id);
     auto str = sim::to_string(v);
     glm::vec2 pos = p.pos;
     if (p.width == 1)

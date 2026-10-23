@@ -122,8 +122,7 @@ public:
     }
     void removed(int64_t key) override
     {
-        int net = (int)key;
-        run.query([net](sim::simulator& s) { s.waveforms.remove(net); });
+        run.query([key](sim::simulator& s) { s.waveforms.remove(key); });
     }
     bool rows_follow_signals() const override { return true; }
     bool live() const override { return true; }

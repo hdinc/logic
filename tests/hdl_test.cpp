@@ -437,6 +437,41 @@ static void test_runner()
     CHECK(r.view().port_value(q) == sim::known((t + 500 * sim::ns) / sim::us, 32));
 }
 
+// a handshake bundle port made of the design's s_valid, s_ready and s_data
+static void test_bundle_port()
+{
+    fixture f;
+    auto& hs = f.ws.create_bundle(*f.lib, "handshake");
+    hs.fields = {{"valid", "", 1, model::direction::output}, {"ready", "", 1, model::direction::input}, {"data", "", 8, model::direction::output}};
+    auto& c = f.hdl_cell("sink");
+    model::port_group g;
+    g.name = "s";
+    g.bundle = hs.id;
+    g.flipped = true;
+    c.port_groups()->push_back(g);
+    CHECK(f.ws.apply_groups(c).empty());
+    CHECK(c.ports.size() == 2 && c.ports[0].bundle == hs.id && c.model_ports().size() == 4);
+
+    // refreshing keeps the grouping
+    std::string error;
+    CHECK(f.ws.refresh_interface(c, error));
+    CHECK(c.ports.size() == 2 && c.model_ports().size() == 4 && c.check().empty());
+
+    int u = f.place(c.id, {0, 0});
+    int in = f.port(model::direction::input, f.pin(u, "s"), 10);
+    f.top->ports[in].bundle = hs.id;
+    f.top->ports[in].flipped = true;
+    int seen = f.port(model::direction::output, f.pin(u, "seen"), 8);
+    auto s = f.simulate();
+    CHECK(s.problems().empty());
+    s.set_input(in, sim::known(0x3C << 2 | 1, 10));
+    CHECK(s.port_value(seen) == sim::known(0x3C, 8));
+    // ready comes from the design
+    CHECK(s.port_value(in) == sim::known(0x3C << 2 | 0b11, 10));
+    s.set_input(in, sim::known(0x3C << 2, 10));
+    CHECK(s.port_value(seen) == sim::known(0, 8));
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 3) {
@@ -477,6 +512,7 @@ int main(int argc, char** argv)
         test_describe();
         test_counter();
         test_wide();
+        test_bundle_port();
         test_delay_and_finish();
         test_background_build();
         test_runner();

@@ -608,3 +608,321 @@ tested. No code changed.
 - Check the Windows build: MSDF and outlines without FreeType, and with
   FreeType.
 - Watch the outline shader's cost on weaker GPUs.
+
+## 2026-10-23 11:23 +0300
+
+### Changes made
+
+- **Bundles**, like SystemVerilog interfaces: named wires that go together,
+  carried by one port or wire.
+- **Port fields:** `model::port` has a bundle type and a flipped view. A
+  bundle port's `width` is the type's total width, kept up to date by the
+  workspace. Its `dir` only says which side of the symbol it sits on; the
+  fields have their own directions.
+- **Netlist:** a bundle and plain bits of the same width, or two bundle
+  types, on one net are a `type mismatch` (`net::type_error`). The wire is
+  drawn in the width-error color. The bits still connect.
+- **Simulator:**
+  - The top cell's bundle ports drive only the fields that are inputs or
+    inouts in the port's view.
+  - Model ports of grouped external cells are joined to their bits of the
+    bundle pin.
+- **Waveform recorder:** a signal can be bits of a net. Its key holds the
+  net and the bit range (`waveform_recorder::key_of`).
+- **Cell undo** ignores the widths of bundle ports. They follow the type,
+  which has its own undo.
+- **Breakout labels:** the bundle type label sits below the bundle pin,
+  clear of the instance name.
+- **Bundle editor:** its button column is wide enough for the arrows and
+  the remove button.
+- **Plugin examples:** `logic_examples` has a fifth model,
+  `handshake_sink`.
+- **READMEs:** the main README and `sdk/README.md` describe bundles.
+
+### Features implemented
+
+- **Bundle types:**
+  - Fields with a width and a direction, or a nested bundle (optionally
+    flipped).
+  - The flipped view swaps inputs and outputs.
+  - Cycle detection.
+  - Saved as `<library>/bundles/<name>.json`.
+- **Library panel:**
+  - Bundles appear under "Bundles" in each library.
+  - New bundle type, open, rename (F2) and delete. Delete is refused while
+    anything uses the type, and the users are listed.
+- **Bundle editor tab:**
+  - A field table: name, type (direction or bundle), width or flipped,
+    description, reorder and remove.
+  - The layout with bit ranges, problems (duplicate or invalid names,
+    cycles) and "Used by".
+  - Its own undo (Ctrl+Z/Y and the Edit menu).
+  - Read-only while a simulation runs.
+- **Bundle ports on schematic cells:**
+  - The port properties get a Type (bits or a bundle type) and Flipped.
+  - Labels read `m : ~hs`.
+  - Generated symbols give bundle pins a thicker stub.
+- **Bundle wires:**
+  - Drawn hollow (a double stroke) with hollow junctions (filled with
+    their own color since 12:04).
+  - Tooltips on wires and pins list the fields with their bits and, while
+    simulating, their values.
+- **Bundle breakout:**
+  - A Wiring part with one end per chosen field. The fields picker is a
+    checkbox tree; empty means all top-level fields.
+  - An end can be a nested bundle (a bundle port), so breakouts chain.
+  - It works both ways, so it also puts a bundle together.
+- **Bundle tap:** one field, placed on a bundle wire, labelled
+  `.aw.valid`.
+- **Simulation view:**
+  - A bundle top port is a field list: checkboxes and hex inputs for the
+    driven fields, values for the others.
+  - Recording a bundle wire records each field as its own trace
+    (`wire 30.valid`, ...).
+- **HDL and C model cells:**
+  - "Bundle ports" groups the model's ports `<prefix><field>` (nested paths
+    joined with `_`, prefix `<name>_` by default) into one bundle port.
+  - "Find bundle ports" suggests prefixes whose ports fit a bundle type in
+    either view.
+  - When ports are grouped, the ports table edits the model's own ports.
+- **C SDK:** an optional `bundles` JSON field at the end of
+  `logic_model_desc` declares bundle types and bundle ports. The types go
+  into the plugin's library. No ABI break: it's read only if
+  `struct_size` covers it.
+
+### How it works
+
+- **One wide net per bundle:**
+  - A bundle wire is a net of the type's total width. The fields are bit
+    ranges, in declaration order from bit 0.
+  - The simulator needed no new net type. Breakouts and taps are
+    splitter-like primitives whose `bit_link`s come from the layout.
+  - **Rejected:** a net per field. It would have changed the netlist,
+    simulator, waveforms and hover code throughout.
+- **`model/bundle.{h,cpp}`:**
+  - `bundle_type`, `bundle_field`, the flattened `bundle_layout` (leaves
+    with path, direction, offset, width; nodes for the tree UI).
+  - `bundle_ref`/`parse_bundle_ref` (ids as parameter text) and
+    `split_fields`.
+- **Workspace** (`model/workspace.cpp`):
+  - `layout_of(id, flipped)` flattens recursively. A nested field's flip is
+    combined with the outer view. A missing type, a cycle or more than
+    `max_width` bits give an error and an empty layout.
+  - `bundles_changed()` bumps `bundle_revision()`, sets the widths of
+    bundle ports, and regroups external cells.
+  - Also: `bundle_users`, `would_create_bundle_cycle` and
+    `valid_bundle_name`.
+  - **Layouts aren't cached:** computing one is cheap, and a cache could go
+    stale when a type is edited without `bundles_changed()`.
+- **Primitives that depend on bundle types:**
+  - They override `build(values, build_context)` and `uses_bundles()`. The
+    context gives the workspace, and builtin library cells get none.
+  - `interface_of` adds the bundle revision to their cache key, so an edit
+    rebuilds them.
+  - Parameters stay text, with a `param_def::role` (`bundle`, `fields`,
+    `field`) for the editor's pickers (`editor/param_editor.cpp`).
+  - **Rejected:** new parameter types. They would have changed every
+    switch over parameter types and the saved C-model parameter format.
+- **Breakout and tap** (`builtin/wiring.cpp`, `bundle_view`):
+  - They resolve the type and the chosen fields, and drop unknown or
+    repeated ones. `check()` reports the problems.
+  - The simulator doesn't call them "no simulation model" when they have no
+    links yet.
+- **Types live in libraries,** so they are shared across cells and saved
+  like cells. Ids are random (plugin types use a stable hash of plugin and
+  name), so renaming keeps references.
+- **Port groups** (`model::port_group`, in `c_model_impl` and `hdl_impl`):
+  - The cell's `ports` are the visible ones, bundle ports included, so the
+    symbol, netlist and editors work unchanged.
+  - The model's own ports go to `leaf_ports`, and `cell::model_ports()`
+    returns them.
+  - `workspace::group_ports` matches fields to ports by name, width and
+    direction. A group that doesn't fit stays its plain ports, with a
+    problem. The bundle port takes the place of its first field.
+    `apply_groups` sets the ports through `set_ports`, which keeps ids by
+    name.
+  - **Rejected:** keeping `ports` as the model's ports and deriving the
+    visible ones. Symbol pins, `check()` and the symbol editor would all
+    have needed to know about groups.
+  - **Rejected:** SystemVerilog `interface` ports on the HDL top. Verilator
+    doesn't allow them on the top module, and Icarus and GHDL's VPI can't
+    reach them.
+- **Simulating port groups:**
+  - `cell_interface::model_ports` / `interface_view::model_ports` give each
+    model port its visible port and first bit. For default parameters they
+    are cached per cell (`group_cache`). For other parameters they come
+    from the provider's `ports_for`, grouped the same way.
+  - In `simulator::elaborate` each model port gets its own net, aliased to
+    its bits of the visible pin's net, and keeps its own in/out kind.
+  - The Verilator, Icarus and GHDL components and the plugin registry
+    compare against `cell::model_ports()`, so the models see their ports in
+    their order.
+- **Plugins** (`plugin/libraries.cpp`, `parse_bundles`): the types are
+  created or updated in the plugin's read-only library. Groups are set
+  before the symbol is chosen, so plugin symbols can name bundle ports.
+- **Top-level bundle inputs** (`simulator::add_driver(net, -1, port, lo,
+  width)`): one driver per input or inout field, intersected with the
+  net's node slices. Output fields are left to the circuit.
+- **Drawing:**
+  - Bundle wires: `render::draw_wire(..., bundle)` draws the outline, then
+    `draw_bundle_inside` the inside of all bundle wires in a second pass.
+    Otherwise round caps would close the hollow where wires join.
+  - `editor/bundle_ui.{h,cpp}` has the field table for tooltips and panels,
+    and the input editor for the simulation view.
+  - Wire tooltips show the bundle in its normal view: a net doesn't have a
+    view, only its ports do.
+- **Bundle editor** (`editor/bundle_editor.{h,cpp}`):
+  - Snapshots of the type for undo. Renaming isn't an undo step.
+  - Every edit calls `bundles_changed()`.
+  - It is read-only while any simulation runs, because the simulator holds
+    the cells, and so their widths, fixed.
+- **Files:**
+  - Ports save `"bundle"` (id) and `"flipped"`, and keep `"width"`, so an
+    older program reads a bundle port as a plain bus.
+  - External cells save `"groups"` and `"leaf_ports"` only when they have
+    groups.
+  - Loading resyncs bundle port widths without marking the libraries
+    changed.
+
+### Testing
+
+- **model_test** (`test_bundles`):
+  - Layout offsets and directions of a nested bus with one flipped
+    handshake, the flipped view, cycles and a missing type.
+  - Name rules.
+  - Port widths following their type, and the revision counter.
+  - Netlist type matching and mismatch, and a missing type.
+  - Saving and loading bundles, bundle ports and an HDL cell's groups,
+    widths resynced on loading, and removing the file of a deleted type.
+- **sim_test:**
+  - `test_bundles`:
+    - A breakout splitting a bundle, with only the input fields driven by
+      the top.
+    - Chosen fields and a tap on a nested field.
+    - A chained breakout on a nested bundle end, and a bundle through a
+      subcircuit with a tap inside.
+    - A type mismatch that still connects the bits.
+    - Breakout and tap parameter problems, and a rebuild after a type
+      change.
+    - Waveform field signals (keys, values, capture, remove).
+  - `test_bundle_groups`: an external cell whose model ports are
+    interleaved (ready before valid) grouped into a flipped bundle port,
+    simulated with a test component factory. Also a group that doesn't fit
+    and removing the groups.
+- **plugin_test:** the examples plugin's `handshake_sink` brings its
+  `handshake` type and bundle port `s`. Placed and simulated with the real
+  plugin.
+- **hdl_test** (`test_bundle_port`): `tests/hdl/sink.sv` and `sink.vhd`
+  grouped into a bundle port, kept across a refresh, simulated on
+  Verilator 5.052, Icarus 13.0 and GHDL 6.0.
+- **GUI** (scratch workspace, a private Xvnc display, xdotool and ffmpeg
+  screenshots):
+  - The library's Bundles group and the bundle editor table and layout.
+  - Hollow bundle wires, the breakout, the tap and `m : ~hs` port labels.
+  - The wire tooltip with fields, and the breakout's bundle picker and
+    fields picker (choosing only `data` left one end).
+  - Simulating: field inputs, `ready` coming back into the bundle, and
+    tapped and broken-out values.
+  - Waveforms of a bundle wire as three field traces.
+  - An HDL cell's "Find bundle ports" suggestions and the generated symbol
+    with a bundle stub.
+  - The GUI check found the clipped buttons in the bundle editor and the
+    overlapping breakout label. Both are fixed.
+- All 7 ctest suites pass.
+
+### Recommended features
+
+- Arrays of fields or bundles (`lanes[4]`).
+- A generated SystemVerilog wrapper, so HDL tops can use real `interface`
+  ports with Verilator.
+- Mapping VHDL records to bundles.
+- Net labels (connecting by name), which go well with bundles.
+- Checking views: a warning when two drivers of the same output field share
+  a bundle net.
+- A bundle port tool in the schematic editor (like I/O), and dragging a
+  type from the library onto a port.
+
+### Outstanding issues
+
+- Wire tooltips show the normal view of a bundle. The view of the port a
+  wire comes from isn't tracked per net.
+- Editing a bundle type rebuilds every breakout and tap with a new cache
+  entry. Old entries stay in `interface_cache` until the program exits,
+  because pointers into it may still be held during a frame.
+- If a type edit makes a port group stop fitting, the cell falls back to
+  its plain ports, and `set_ports` regenerates a symbol whose port names
+  changed. A customized symbol of that cell is lost.
+- Undo in a cell doesn't undo bundle type changes, and the other way
+  round. The two histories are separate.
+- The plugin bundle types are matched only by plugin and name. Two plugins
+  declaring a `handshake` give two different types.
+- The breakout's end labels use an approximate text width (no font
+  metrics), like the generated symbols.
+
+### Next steps
+
+- Try bundles on a larger design (e.g. a memory bus between the 6502 and a
+  RAM) and adjust the breakout and tap layouts from that use.
+- Add a bundle port to the schematic editor's tools and the component bar's
+  search.
+- Look at arrays of bundles and the SystemVerilog wrapper for HDL tops.
+
+## 2026-10-23 12:04 +0300
+
+### Changes made
+
+- **Wire colors:** bundle wires and buses have their own colors, so the
+  two are easy to tell apart.
+  - **While editing:** bundles are violet, buses blue and single wires grey
+    as before. Junction dots take the color of their wires.
+  - **While simulating:** a bundle with a known value is light violet,
+    including the value shown at a bundle port. A known bus stays blue.
+    Floating, unknown and single-bit values keep their colors.
+- **Bundle wires are filled:** a solid line as thick as the bundle stubs of
+  symbols (`model::bundle_stroke`). They were hollow before. The hollow
+  look and its second drawing pass (`draw_bundle_inside`) are gone.
+- **Test:** building a bundle from single signals with a mirrored
+  breakout.
+
+### How it works
+
+- `render::theme` has new colors `bus_wire` and `bundle_wire` (editing) and
+  `bundle` (a known bundle value), in the dark and light themes.
+- `render::value_color(v, bundle)` picks the bundle color for known
+  values. `draw_port_value` passes it for bundle ports.
+- `schematic_editor::draw` picks a wire's base color from its local net
+  (bundle, bus or single). Selection and width or type errors still
+  override it.
+- **Why color and not only thickness:** a bundle and a wide bus could look
+  alike at small zoom. Color tells them apart at any size, and filled lines
+  read better than the hollow ones, which looked like two thin wires when
+  zoomed out.
+
+### Testing
+
+- `sim_test`, new case in `test_bundles`:
+  - A mirrored breakout gets `valid` and `data` from single input ports.
+  - The bundle on an output port carries them.
+  - `ready` set from the bundle port reaches its single output port, and
+    doesn't override `valid` and `data`.
+- **GUI** (private Xvnc, screenshots):
+  - **Editing:** the bundle wire is filled violet, buses blue, single
+    wires grey.
+  - **Simulating:** the bundle wire and its port value are light violet,
+    buses light blue.
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed.
+
+### Recommended features
+
+- Colors for bundles and buses in the Settings window.
+
+### Outstanding issues
+
+- Symbol stubs of bus and bundle pins are still drawn in the symbol color,
+  not the wire colors.
+
+### Next steps
+
+- Use the wire colors for the bus and bundle stubs of instance symbols, so
+  pins match their wires.

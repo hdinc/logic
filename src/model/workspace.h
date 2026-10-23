@@ -19,6 +19,8 @@ struct interface_view {
     const std::vector<bit_link>* links = nullptr;
     // never null when the view is valid, empty for schematic cells
     const std::vector<pull>* pulls = nullptr;
+    // never null when the view is valid, see cell_interface::model_ports
+    const std::vector<model_port>* model_ports = nullptr;
 
     explicit operator bool() const { return symbol != nullptr; }
 };
@@ -47,6 +49,56 @@ public:
 
     // checks that a cell name is usable as a file name and unique in lib
     static bool valid_cell_name(const library& lib, const std::string& name, std::string& error);
+
+    // bundle types, see bundle.h. their ids are unique in the workspace,
+    // like the ids of cells.
+    bundle_type* find_bundle(id i);
+    const bundle_type* find_bundle(id i) const;
+    library* library_of_bundle(id bundle);
+    const library* library_of_bundle(id bundle) const;
+    bundle_type& create_bundle(library& lib, const std::string& name);
+    // ports and fields of the type keep its id, they are reported as
+    // missing a type
+    void delete_bundle(id bundle);
+    // the same rules as cell names, unique among the bundles of lib
+    static bool valid_bundle_name(const library& lib, const std::string& name, std::string& error);
+
+    // what uses the bundle type: ports, fields of other bundles and
+    // instances (e.g. breakouts) whose parameters name it, as text
+    std::vector<std::string> bundle_users(id bundle) const;
+
+    // true if a field of type `inner` in `outer` would make a bundle contain
+    // itself
+    bool would_create_bundle_cycle(id outer, id inner) const;
+
+    // the fields of the bundle type flattened for the view
+    bundle_layout layout_of(id bundle, bool flipped = false) const;
+    // "axi_lite" or "~axi_lite", the id if the type is missing
+    std::string bundle_label(id bundle, bool flipped = false) const;
+
+    // call after a bundle type changed: updates the widths of the ports of
+    // that type and the port groups of external cells (marking their
+    // libraries dirty) and rebuilds the interfaces of primitives that show
+    // bundles
+    void bundles_changed();
+
+    // the model's ports (leaves) with the port groups applied: the grouped
+    // ports replace their fields, at the place of the first one. a group
+    // whose fields aren't all there with their width and direction is
+    // left out with a problem.
+    struct grouping {
+        std::vector<port> ports;
+        // per leaf: the port it's part of
+        std::vector<model_port> model_ports;
+        std::vector<std::string> problems;
+    };
+    grouping group_ports(const std::vector<port>& leaves, const std::vector<port_group>& groups) const;
+    // sets the ports of an external cell from its model's ports (the leaf
+    // ports, or the ports if there are none yet) and its groups, see
+    // cell::set_ports. returns the problems of the grouping.
+    std::vector<std::string> apply_groups(cell& c);
+    // increased by bundles_changed
+    uint64_t bundle_revision() const { return m_bundle_revision; }
 
     static id random_id();
 
@@ -94,12 +146,27 @@ private:
         cell_interface iface;
         std::vector<port> cell_ports;
         model::symbol cell_symbol;
+        uint64_t revision = 0;
         std::string error;
     };
     mutable std::map<std::string, external_entry> external_cache;
     const external_entry* external_interface(const cell& c, const instance& i) const;
 
     std::vector<const external_provider*> providers;
+
+    uint64_t m_bundle_revision = 0;
+
+    // the model ports of external cells with groups and default
+    // parameters, rebuilt when the cell's ports changed
+    struct group_entry {
+        std::vector<port> ports;
+        std::vector<port> leaves;
+        uint64_t revision = 0;
+        std::vector<model_port> model_ports;
+    };
+    mutable std::map<id, group_entry> group_cache;
+    // the model ports for the cell's ports from its leaves, by port name
+    std::vector<model_port> map_model_ports(const std::vector<port>& ports, const std::vector<port>& leaves, const std::vector<port_group>& groups) const;
 };
 
 }

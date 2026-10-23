@@ -20,18 +20,45 @@ waveform_recorder::waveform_recorder(waveform_recorder&& other)
     other.empty = true;
 }
 
-void waveform_recorder::add(const simulator& s, int net, std::string name)
+int64_t waveform_recorder::key_of(int net, int lo, int width)
+{
+    if (width == 0) return net;
+    // net in the low 32 bits, lo + 1 and the width above. max_width fits.
+    return (int64_t)(uint32_t)net | (int64_t)(lo + 1) << 32 | (int64_t)width << 48;
+}
+
+int waveform_recorder::net_of(int64_t key)
+{
+    return (int)(uint32_t)key;
+}
+
+namespace {
+
+// the value of a signal's key
+value value_of(const simulator& s, int64_t key)
+{
+    auto v = s.net_value(waveform_recorder::net_of(key));
+    int lo = (int)((key >> 32) & 0xFFFF) - 1;
+    if (lo < 0) return v;
+    return v.slice(lo, (int)(key >> 48));
+}
+
+}
+
+void waveform_recorder::add(const simulator& s, int net, std::string name, int lo, int width)
 {
     if (net < 0 || s.net_width(net) == 0) return;
+    if (width && (lo < 0 || width < 0 || lo + width > s.net_width(net))) return;
+    auto key = key_of(net, lo, width);
     std::lock_guard lock(mutex);
     for (auto& signal : data.signals)
-        if (signal.key == net) return;
+        if (signal.key == key) return;
     if (data.signals.size() >= max_signals) return;
-    int width = s.net_width(net);
-    wave::trace t(wave::kind::digital, width);
-    t.push(s.now(), s.net_value(net));
+    int w = width ? width : s.net_width(net);
+    wave::trace t(wave::kind::digital, w);
+    t.push(s.now(), value_of(s, key));
     if (data.signals.empty()) data.begin = s.now();
-    data.signals.push_back({net, std::move(name), width, wave::kind::digital, (int)data.traces.size()});
+    data.signals.push_back({key, std::move(name), w, wave::kind::digital, (int)data.traces.size()});
     data.traces.push_back(std::move(t));
     dropped.push_back(0);
     data.end = s.now();
@@ -39,11 +66,11 @@ void waveform_recorder::add(const simulator& s, int net, std::string name)
     empty = false;
 }
 
-void waveform_recorder::remove(int net)
+void waveform_recorder::remove(int64_t key)
 {
     std::lock_guard lock(mutex);
     for (size_t k = 0; k < data.signals.size(); k++) {
-        if (data.signals[k].key != net) continue;
+        if (data.signals[k].key != key) continue;
         data.signals.erase(data.signals.begin() + k);
         data.traces.erase(data.traces.begin() + k);
         dropped.erase(dropped.begin() + k);
@@ -61,7 +88,7 @@ void waveform_recorder::clear(const simulator& s)
     for (size_t k = 0; k < data.signals.size(); k++) {
         auto& t = data.traces[k];
         t.clear();
-        t.push(s.now(), s.net_value(data.signals[k].key));
+        t.push(s.now(), value_of(s, data.signals[k].key));
         dropped[k] = 0;
     }
     data.begin = data.end = s.now();
@@ -84,7 +111,7 @@ void waveform_recorder::capture(const simulator& s)
     for (size_t k = 0; k < data.signals.size(); k++) {
         auto& t = data.traces[k];
         // several changes at one time keep the last value, see trace::push
-        t.push(s.now(), s.net_value(data.signals[k].key));
+        t.push(s.now(), value_of(s, data.signals[k].key));
         if (t.size() > max_samples) {
             dropped[k] += t.size() - max_samples;
             t.drop_front(t.size() - max_samples);
@@ -97,7 +124,7 @@ void waveform_recorder::capture(const simulator& s)
 bool waveform_recorder::contains(int net) const
 {
     std::lock_guard lock(mutex);
-    return std::any_of(data.signals.begin(), data.signals.end(), [net](auto& s) { return s.key == net; });
+    return std::any_of(data.signals.begin(), data.signals.end(), [net](auto& s) { return net_of(s.key) == net; });
 }
 
 size_t waveform_recorder::size() const

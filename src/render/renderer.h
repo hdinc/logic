@@ -18,6 +18,9 @@ struct theme {
     glm::vec4 grid;
     glm::vec4 symbol;
     glm::vec4 wire;
+    // buses and bundles while editing
+    glm::vec4 bus_wire;
+    glm::vec4 bundle_wire;
     glm::vec4 label; // instance names
     glm::vec4 selection;
     glm::vec4 guide;
@@ -34,6 +37,8 @@ struct theme {
     glm::vec4 unknown;
     glm::vec4 floating;
     glm::vec4 bus;
+    // a known value of a bundle
+    glm::vec4 bundle;
 };
 
 const theme& dark_theme();
@@ -118,17 +123,20 @@ void draw_instance(renderer& r, const model::workspace& ws, const model::instanc
     const std::vector<int>* pin_nets = nullptr);
 
 // connector of a port inside its cell's schematic. the connection point
-// gets a dot like an instance pin if nothing is connected to it.
-void draw_port(renderer& r, const model::port& p, glm::vec4 color, bool connected = false);
+// gets a dot like an instance pin if nothing is connected to it. type is
+// the bundle type shown after the name, e.g. "~axi", empty for plain bits.
+void draw_port(renderer& r, const model::port& p, glm::vec4 color, bool connected = false, const std::string& type = {});
 
 // color of a wire carrying the value. a net without ports has width 0, it
-// counts as floating.
-glm::vec4 value_color(const sim::value& v);
+// counts as floating. known values of bundles have their own color.
+glm::vec4 value_color(const sim::value& v, bool bundle = false);
 
 // value of a port while simulating: inside the connector for single bits,
 // above it for buses
 void draw_port_value(renderer& r, const model::port& p, const sim::value& v);
 
-void draw_wire(renderer& r, const model::wire& w, glm::vec4 color, bool bus = false);
+// bundles are thicker than buses
+void draw_wire(renderer& r, const model::wire& w, glm::vec4 color, bool bus = false, bool bundle = false);
+constexpr float bundle_width = model::bundle_stroke;
 
 }

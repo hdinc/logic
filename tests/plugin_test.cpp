@@ -57,7 +57,7 @@ struct fixture {
     // a refreshed c model cell of the example plugin
     model::cell& model_cell(const std::string& model, const std::string& plugin = "logic_examples")
     {
-        auto& c = ws.create_cell(*lib, model, model::c_model_impl{plugin, model, {}});
+        auto& c = ws.create_cell(*lib, model, model::c_model_impl{plugin, model, {}, {}, {}});
         std::string error;
         if (!ws.refresh_interface(c, error)) {
             std::printf("refresh of %s failed: %s\n", model.c_str(), error.c_str());
@@ -118,7 +118,7 @@ static void test_discovery()
 
     std::string error;
     auto p = f.plugins.load("logic_examples", {}, error);
-    CHECK(p && p->info->model_count == 4);
+    CHECK(p && p->info->model_count == 5);
     CHECK(p && p->find("counter") && p->find("uart_tx") && !p->find("x"));
     // loaded once while unchanged
     CHECK(f.plugins.load("logic_examples", {}, error) == p);
@@ -250,15 +250,15 @@ static void test_errors()
     std::string error;
 
     // missing plugin and model
-    auto& missing = f.ws.create_cell(*f.lib, "missing", model::c_model_impl{"no_such_plugin", "counter", {}});
+    auto& missing = f.ws.create_cell(*f.lib, "missing", model::c_model_impl{"no_such_plugin", "counter", {}, {}, {}});
     CHECK(!f.ws.refresh_interface(missing, error));
     CHECK(error.find("not found") != std::string::npos);
-    auto& wrong = f.ws.create_cell(*f.lib, "wrong", model::c_model_impl{"logic_examples", "no_such_model", {}});
+    auto& wrong = f.ws.create_cell(*f.lib, "wrong", model::c_model_impl{"logic_examples", "no_such_model", {}, {}, {}});
     CHECK(!f.ws.refresh_interface(wrong, error));
     CHECK(error.find("no model") != std::string::npos);
 
     // a plugin that doesn't support this abi, by path
-    auto& bad = f.ws.create_cell(*f.lib, "bad", model::c_model_impl{bad_path.string(), "x", {}});
+    auto& bad = f.ws.create_cell(*f.lib, "bad", model::c_model_impl{bad_path.string(), "x", {}, {}, {}});
     CHECK(!f.ws.refresh_interface(bad, error));
     CHECK(error.find("abi") != std::string::npos);
 
@@ -949,6 +949,28 @@ static void test_plugin_libraries()
         CHECK(s.problems().empty());
         s.run_until(10 * sim::ms);
         CHECK(s.port_value(q) == sim::known(10, 8));
+    }
+
+    // a model with a bundle port: the plugin's library gets the type, the
+    // cell one bundle port for the model's s_valid, s_ready and s_data
+    auto hs = lib->find_bundle("handshake");
+    auto sink = lib->find_cell("handshake_sink");
+    CHECK(hs && hs->fields.size() == 3);
+    CHECK(sink && sink->ports.size() == 2 && sink->model_ports().size() == 4 && sink->check().empty());
+    if (hs && sink) {
+        CHECK(sink->ports[0].name == "s" && sink->ports[0].bundle == hs->id && sink->ports[0].flipped && sink->ports[0].width == 10);
+        // placed: the top drives valid and data, the model ready
+        f.top = &f.ws.create_cell(*f.lib, "sink_top");
+        int u = f.place(sink->id, {0, 0});
+        int in = f.port(model::direction::input, f.pin(u, "s"), 10);
+        f.top->ports[in].bundle = hs->id;
+        f.top->ports[in].flipped = true;
+        int seen = f.port(model::direction::output, f.pin(u, "seen"), 8);
+        auto s = f.simulate();
+        CHECK(s.problems().empty());
+        s.set_input(in, sim::known(0x42 << 2 | 1, 10));
+        CHECK(s.port_value(seen) == sim::known(0x42, 8));
+        CHECK(s.port_value(in) == sim::known(0x42 << 2 | 0b11, 10));
     }
 
     // an edited symbol is saved and used the next time

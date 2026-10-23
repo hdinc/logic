@@ -1,4 +1,5 @@
 #include "sim_view.h"
+#include "bundle_ui.h"
 #include "../ui/fonts.h"
 
 #include <imgui_internal.h>
@@ -343,8 +344,23 @@ void sim_view::record_signal(int net, const std::string& name)
     if (net < 0 || s->sim().net_width(net) == 0) return;
     auto& sc = current();
     auto label = s->sim().root().cell->name + "/" + (sc.path.empty() ? "" : sc.path + "/") + name;
+
+    // a bundle is recorded field by field
+    std::vector<model::bundle_leaf> fields;
+    for (size_t local = 0; local < sc.flat_net.size(); local++) {
+        auto& n = sc.nets->nets[local];
+        if (sc.flat_net[local] != net || n.bundle == model::no_id || n.type_error || n.width_error) continue;
+        auto layout = ws.layout_of(n.bundle);
+        if (layout && layout.width == s->sim().net_width(net)) fields = layout.leaves;
+        break;
+    }
+
     // only the recorder changes, real time running goes on undisturbed
-    s->run.query([net, label](sim::simulator& sim) { sim.waveforms.add(sim, net, label); });
+    s->run.query([net, label, fields](sim::simulator& sim) {
+        if (fields.empty()) sim.waveforms.add(sim, net, label);
+        for (auto& f : fields)
+            sim.waveforms.add(sim, net, label + "." + f.path, f.offset, f.width);
+    });
     s->waveforms_visible = true;
 }
 
@@ -472,6 +488,20 @@ void sim_view::property_panel()
         SeparatorText("Inputs");
         for (int k = 0; k < (int)ports.size(); k++) {
             auto& p = ports[k];
+            // bundles have inputs whatever side they're on
+            if (p.bundle != model::no_id) {
+                auto layout = ws.layout_of(p.bundle, p.flipped);
+                if (layout && layout.width == p.width) {
+                    PushID(k);
+                    if (TreeNodeEx(p.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen, "%s : %s", p.name.c_str(), ws.bundle_label(p.bundle, p.flipped).c_str())) {
+                        auto v = sim.input_value(k);
+                        if (edit_bundle_value(layout, v, sim.port_value(k))) s->run.set_input(k, v);
+                        TreePop();
+                    }
+                    PopID();
+                    continue;
+                }
+            }
             if (p.dir == model::direction::output) continue;
             PushID(k);
             auto v = sim.input_value(k);
@@ -518,12 +548,19 @@ void sim_view::property_panel()
     if (BeginTable("ports", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
         for (int k = 0; k < (int)ports.size(); k++) {
             auto& p = ports[k];
-            if (!sc.parent && p.dir == model::direction::input) continue;
+            // the top's bundles are with the inputs
+            if (!sc.parent && (p.dir == model::direction::input || p.bundle != model::no_id)) continue;
             TableNextRow();
             TableNextColumn();
             TextUnformatted(p.name.c_str());
             TableNextColumn();
             auto v = sim.port_value(sc, k);
+            if (p.bundle != model::no_id) {
+                PushID(k);
+                bundle_fields_table(ws.layout_of(p.bundle, p.flipped), &v);
+                PopID();
+                continue;
+            }
             auto c = render::value_color(v);
             TextColored({c.r, c.g, c.b, c.a}, "%s", sim::to_string(v).c_str());
         }

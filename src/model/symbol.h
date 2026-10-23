@@ -45,6 +45,8 @@ struct text {
 
 // stroke width of buses in schematics, for shapes that draw a bus
 constexpr float bus_stroke = 2.5f;
+// and of bundles
+constexpr float bundle_stroke = 2.0f * bus_stroke;
 
 struct shape {
     model::id id = no_id;

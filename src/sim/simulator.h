@@ -101,7 +101,8 @@ public:
     value port_value(const scope& s, int port) const { return port_value(cur, s, port); }
 
     // ports of the top cell. setting drives the net of an input or inout
-    // port, z releases an inout.
+    // port, z releases an inout. of a bundle port only the fields that are
+    // inputs or inouts in the port's view are driven.
     value port_value(int port) const { return port_value(*m_root, port); }
     void set_input(int port, value v);
     value input_value(int port) const { return cur.inputs[port]; }
@@ -234,6 +235,8 @@ private:
     // splits nets into nodes, joining the aliased bits
     void build_nodes();
     void add_driver(int net, int instance, int port);
+    // only bits [lo, lo + width) of the net
+    void add_driver(int net, int instance, int port, int lo, int width);
 
     void schedule(int instance);
     void set_wake(int instance, time t);

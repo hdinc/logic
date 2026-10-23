@@ -1,6 +1,7 @@
 #pragma once
 
 #include "component_bar.h"
+#include "../editor/bundle_editor.h"
 #include "../editor/cell_editor.h"
 #include "../model/workspace.h"
 #include "../hdl/manager.h"
@@ -59,6 +60,16 @@ private:
     void close_editor(model::id cell);
     editor::cell_editor* find_editor(model::id cell);
 
+    // bundle types are edited in tabs next to the cells
+    void open_bundle_editor(model::library& lib, model::bundle_type& b);
+    editor::bundle_editor* find_bundle_editor(model::id bundle);
+    // the bundles of a library in the library panel
+    void library_bundles(model::library& lib);
+    void new_bundle(model::library& lib);
+    // the name of a cell or bundle being renamed in the library panel
+    void rename_input(model::library& lib, std::string& name, bool bundle);
+    void start_rename(model::id item, const std::string& name);
+
     // a schematic cell by default, opened and renamed right away
     void new_cell(model::library& lib, model::implementation impl = model::schematic{});
     // "New ..." items for the kinds of cells
@@ -94,6 +105,9 @@ private:
     model::id active_cell = model::no_id;
     model::id select_tab = model::no_id;
 
+    std::vector<std::unique_ptr<editor::bundle_editor>> bundle_editors;
+    model::id active_bundle = model::no_id;
+
     // instances of running simulations opened in their own tab
     struct instance_tab {
         int id;
@@ -106,12 +120,14 @@ private:
     editor::sim_view* active_view = nullptr;
     editor::sim_view* active_instance_tab = nullptr;
 
+    // a cell or a bundle type
     model::id renaming = model::no_id;
     std::string rename_buf;
     std::string rename_error;
     bool rename_focus = false;
 
     model::id deleting = model::no_id;
+    model::id deleting_bundle = model::no_id;
 
     bool exit_requested = false;
     bool should_exit = false;

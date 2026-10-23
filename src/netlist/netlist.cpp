@@ -59,13 +59,16 @@ netlist extract(const model::workspace& ws, const model::cell& c)
         terminal t;
         int node;
         int width;
+        model::id bundle;
         std::string name;
     };
     std::vector<placed> terms;
 
     for (int i = 0; i < (int)c.ports.size(); i++) {
         auto& p = c.ports[i];
-        terms.push_back({{-1, i}, node(model::connection_point(p)), p.width, p.name});
+        terms.push_back({{-1, i}, node(model::connection_point(p)), p.width, p.bundle, p.name});
+        if (p.bundle != model::no_id && !ws.find_bundle(p.bundle))
+            r.problems.push_back("port " + p.name + ": bundle type " + ws.bundle_label(p.bundle) + " is missing");
     }
 
     r.instance_nets.resize(sch->instances.size());
@@ -82,7 +85,7 @@ netlist extract(const model::workspace& ws, const model::cell& c)
             for (int k = 0; k < (int)iface.ports->size(); k++) {
                 auto& port = (*iface.ports)[k];
                 if (port.id != pin.port) continue;
-                terms.push_back({{i, k}, node(model::pin_position(inst, pin)), port.width, inst.name + "." + port.name});
+                terms.push_back({{i, k}, node(model::pin_position(inst, pin)), port.width, port.bundle, inst.name + "." + port.name});
             }
         }
     }
@@ -127,12 +130,17 @@ netlist extract(const model::workspace& ws, const model::cell& c)
             r.instance_nets[t.t.instance][t.t.port] = n;
 
         first_name.resize(r.nets.size());
+        auto type = [&](int width, model::id bundle) { return bundle != model::no_id ? ws.bundle_label(bundle) : std::to_string(width) + (width == 1 ? " bit" : " bits"); };
         if (net.width == 0) {
             net.width = t.width;
+            net.bundle = t.bundle;
             first_name[n] = t.name;
         } else if (net.width != t.width && !net.width_error) {
             net.width_error = true;
             r.problems.push_back("width mismatch: " + first_name[n] + " has " + std::to_string(net.width) + " bits, " + t.name + " has " + std::to_string(t.width));
+        } else if (net.width == t.width && net.bundle != t.bundle && !net.type_error && !net.width_error) {
+            net.type_error = true;
+            r.problems.push_back("type mismatch: " + first_name[n] + " is " + type(net.width, net.bundle) + ", " + t.name + " is " + type(t.width, t.bundle));
         }
     }
 
