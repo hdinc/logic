@@ -16,6 +16,9 @@ void apply_style(bool light)
     s.WindowRounding = 6.0f;
     s.PopupRounding = 4.0f;
     s.TabRounding = 4.0f;
+    // outlined inputs and buttons, lines connecting tree nodes
+    s.FrameBorderSize = 1.0f;
+    s.TreeLinesFlags = ImGuiTreeNodeFlags_DrawLinesToNodes;
 }
 
 }

@@ -1776,3 +1776,30 @@ product is twice as wide).
 
 - A symbol line drawn on purpose at exactly a bus's or bundle's stroke
   width is also thinned when the option is off.
+
+## 2026-10-23 17:35 +0300
+
+### Changes made
+
+- **ImGui style:** frames (inputs, combos, buttons, the component bar's
+  icons) have a 1 pixel border, and tree nodes (library panel, hierarchy,
+  bundle field trees) are connected by lines to their children.
+- It applies to both themes, and to the standalone waveform viewer
+  (`logic-wave`), which shares `ui::apply_style`.
+
+### How it works
+
+- `ui::apply_style` (`src/ui/style.cpp`) sets `FrameBorderSize = 1` and
+  `TreeLinesFlags = ImGuiTreeNodeFlags_DrawLinesToNodes` after the theme's
+  colors.
+- **Line style:** `DrawLinesToNodes` draws the vertical line only down to
+  the last child. **Rejected:** `DrawLinesFull`, which runs to the end of
+  the node's contents. ImGui documents ToNodes as slower for large trees,
+  which these aren't.
+
+### Testing
+
+- **GUI screenshot:** the library panel shows the tree lines under work,
+  demos, builtin and its categories, and frames and component bar buttons
+  have borders.
+- No code paths changed besides the style, so the tests weren't run again.
