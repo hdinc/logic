@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "../sim/numbers.h"
 
 #include <Hd/Resource.h>
 #include <glm/gtc/type_ptr.hpp>
@@ -271,7 +272,7 @@ glm::vec4 value_color(const sim::value& v, bool bundle)
 void draw_port_value(renderer& r, const model::port& p, const sim::value& v)
 {
     auto color = value_color(v, p.bundle != model::no_id);
-    auto str = sim::to_string(v);
+    auto str = sim::format_number(v, p.format);
     glm::vec2 pos = p.pos;
     if (p.width == 1)
         r.text_middle(str, pos, 7.0f, color, align::center);

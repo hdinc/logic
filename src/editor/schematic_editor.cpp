@@ -1,6 +1,8 @@
 #include "schematic_editor.h"
 #include "../render/live.h"
+#include "../sim/numbers.h"
 #include "bundle_ui.h"
+#include "number_ui.h"
 #include "param_editor.h"
 
 #include <imgui_internal.h>
@@ -467,8 +469,10 @@ void port_tooltip(const std::string& name, const model::port& p, const sim::valu
         bundle_fields_table(b->layout, v);
     } else if (v) {
         auto c = render::value_color(*v);
-        auto str = sim::to_string(*v);
-        if (p.width > 1 && p.width <= 64 && v->fully_known()) str += " (" + std::to_string(v->to_u64()) + ")";
+        auto str = sim::format_number(*v, p.format);
+        // the number too, unless the format already shows it
+        bool decimal = p.format.kind == model::number_format::unsigned_dec || p.format.kind == model::number_format::signed_dec;
+        if (p.width > 1 && p.width <= 64 && v->fully_known() && !decimal) str += " (" + std::to_string(v->to_u64()) + ")";
         TextColored({c.r, c.g, c.b, c.a}, "%s", str.c_str());
     }
     PopTextWrapPos();
@@ -1147,9 +1151,13 @@ void schematic_editor::property_panel()
             SetItemTooltip("the other view of the bundle, its inputs and outputs swapped");
             TextDisabled("%d bits", p->width);
             bundle_fields_table(ctx.ws.layout_of(p->bundle, p->flipped));
-        } else if (InputInt("Width", &p->width)) {
-            p->width = glm::clamp(p->width, 1, model::max_width);
-            ctx.modified();
+        } else {
+            if (InputInt("Width", &p->width)) {
+                p->width = glm::clamp(p->width, 1, model::max_width);
+                ctx.modified();
+            }
+            if (p->width > 1 && edit_number_format("Format", p->format, p->width)) ctx.modified();
+            SetItemTooltip("how its value is shown and entered while simulating");
         }
 
         TextUnformatted("Description");

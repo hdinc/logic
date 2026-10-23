@@ -1,5 +1,7 @@
 #include "sim_view.h"
 #include "bundle_ui.h"
+#include "number_ui.h"
+#include "../sim/numbers.h"
 #include "../ui/fonts.h"
 
 #include <imgui_internal.h>
@@ -116,12 +118,66 @@ void sim_view::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     Image((ImTextureID)tex.Id(), size, {0, size.y / tex.GetHeight()}, {size.x / tex.GetWidth(), 0});
 
     instance_menu();
+    port_value_popup();
 
     // a held button is let go anywhere
     if (pressed >= 0 && !IsMouseDown(ImGuiMouseButton_Left)) {
         s->interact(&current(), pressed, "release", 0);
         pressed = -1;
     }
+}
+
+void sim_view::port_value_popup()
+{
+    using namespace ImGui;
+
+    // opened here, in the editor's window, also when asked from the
+    // properties
+    if (open_port_popup) {
+        OpenPopup("port value");
+        open_port_popup = false;
+    }
+    if (!BeginPopup("port value")) return;
+
+    auto& sim = s->sim();
+    auto top = sim.root().cell;
+    if (port_popup < 0 || port_popup >= (int)top->ports.size()) {
+        CloseCurrentPopup();
+        EndPopup();
+        return;
+    }
+    int k = port_popup;
+    // the format is the cell's, it's saved with it
+    auto cell = ws.find_cell(top->id);
+    auto& p = cell->ports[k];
+    auto v = sim.input_value(k);
+
+    Text("%s", p.name.c_str());
+    SameLine();
+    TextDisabled("%s, %d bits", model::to_string(p.dir), p.width);
+
+    if (IsWindowAppearing()) SetKeyboardFocusHere();
+    SetNextItemWidth(GetFontSize() * 16);
+    if (edit_number("##value", v, p.width, p.format)) s->run.set_input(k, v);
+
+    SetNextItemWidth(GetFontSize() * 10);
+    if (edit_number_format("Format", p.format, p.width)) {
+        if (auto lib = ws.library_of(cell->id)) lib->dirty = true;
+    }
+
+    // a bit per button, while that's still clickable
+    if (p.width <= 128) {
+        auto bits = v;
+        if (edit_bits(bits)) s->run.set_input(k, bits);
+    }
+
+    // inouts can let go of their net
+    if (p.dir == model::direction::inout) {
+        bool driven = !v.fully_floating();
+        if (Checkbox("Drive", &driven)) s->run.set_input(k, driven ? sim::known(0, p.width) : sim::floating(p.width));
+        SetItemTooltip("drive the inout, otherwise it's z");
+    }
+    EndPopup();
 }
 
 void sim_view::toolbar()
@@ -281,7 +337,14 @@ void sim_view::canvas_inputs(bool hovered, schematic_editor& e)
             if (h.kind != schematic_editor::handle::port) continue;
             for (int k = 0; k < (int)sc.cell->ports.size(); k++) {
                 auto& p = sc.cell->ports[k];
-                if (p.id != h.id || p.dir != model::direction::input || p.width != 1) continue;
+                if (p.id != h.id || p.dir == model::direction::output || p.bundle != model::no_id) continue;
+                if (p.width > 1) {
+                    // wider inputs are edited in a popup at the port
+                    port_popup = k;
+                    open_port_popup = true;
+                    continue;
+                }
+                if (p.dir != model::direction::input) continue;
                 auto v = sim.input_value(k);
                 s->run.set_input(k, sim::known(v.get(0) != sim::bit_state::one, 1));
             }
@@ -520,19 +583,15 @@ void sim_view::property_panel()
             if (p.width == 1) {
                 bool b = v.get(0) == sim::bit_state::one;
                 if (Checkbox(p.name.c_str(), &b)) s->run.set_input(k, sim::known(b, 1));
-            } else if (p.width <= 64) {
-                uint64_t u = v.to_u64();
-                if (InputScalar(p.name.c_str(), ImGuiDataType_U64, &u, nullptr, nullptr, "%llX", ImGuiInputTextFlags_CharsHexadecimal))
-                    s->run.set_input(k, sim::known(u, p.width));
-                SetItemTooltip("hex, %d bits", p.width);
             } else {
-                // too wide for a number, edited as hex text
-                std::string buf = driven ? sim::to_hex(v) : std::string();
-                buf.resize(model::max_width / 4 + 8);
-                if (InputText(p.name.c_str(), buf.data(), buf.size(), ImGuiInputTextFlags_CharsHexadecimal | ImGuiInputTextFlags_EnterReturnsTrue)) {
-                    if (auto parsed = sim::parse_hex(buf.c_str(), p.width)) s->run.set_input(k, *parsed);
+                // in the port's format, the bits in the popup of the port
+                if (edit_number(p.name.c_str(), v, p.width, p.format)) s->run.set_input(k, v);
+                SameLine();
+                if (SmallButton("...")) {
+                    port_popup = k;
+                    open_port_popup = true;
                 }
-                SetItemTooltip("hex, %d bits, enter sets it", p.width);
+                SetItemTooltip("the bits and the format");
             }
 
             EndDisabled();
@@ -564,7 +623,7 @@ void sim_view::property_panel()
                 continue;
             }
             auto c = render::value_color(v);
-            TextColored({c.r, c.g, c.b, c.a}, "%s", sim::to_string(v).c_str());
+            TextColored({c.r, c.g, c.b, c.a}, "%s", sim::format_number(v, p.format).c_str());
         }
         EndTable();
     }

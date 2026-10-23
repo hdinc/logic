@@ -871,6 +871,14 @@ static void test_label_alignment()
     auto j = io::to_json(c);
     CHECK(io::to_json(io::cell_from_json(j)) == j);
     CHECK(io::cell_from_json(j).symbol == c.symbol);
+
+    // a port's number format is saved when it isn't hex
+    c.ports[1].format = {model::number_format::signed_fixed, 4};
+    j = io::to_json(c);
+    CHECK(io::cell_from_json(j).ports[1].format == c.ports[1].format);
+    CHECK(!j["ports"][0].contains("format"));
+    j["ports"][1]["format"]["kind"] = "from_the_future";
+    CHECK(io::cell_from_json(j).ports[1].format.kind == model::number_format::hex);
 }
 
 // categories of cells: saved, listed by the library, builtins have theirs

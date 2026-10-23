@@ -207,6 +207,10 @@ json port_to_json(const port& p)
         j["bundle"] = id_to_string(p.bundle);
         if (p.flipped) j["flipped"] = true;
     }
+    if (p.format != number_format{}) {
+        j["format"] = {{"kind", kind_id(p.format.kind)}};
+        if (p.format.frac) j["format"]["frac"] = p.format.frac;
+    }
     return j;
 }
 
@@ -222,6 +226,11 @@ port port_from_json(const json& j)
     if (j.contains("bundle")) {
         r.bundle = id_from_string(j.at("bundle"));
         r.flipped = j.value("flipped", false);
+    }
+    // an unknown kind (from a newer version) shows as hex
+    if (auto it = j.find("format"); it != j.end() && it->is_object()) {
+        r.format.kind = parse_number_kind(it->value("kind", "hex")).value_or(number_format::hex);
+        r.format.frac = std::clamp(it->value("frac", 0), 0, 64);
     }
     return r;
 }

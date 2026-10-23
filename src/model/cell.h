@@ -1,6 +1,7 @@
 #pragma once
 
 #include "bundle.h"
+#include "number_format.h"
 #include "param.h"
 #include "schematic.h"
 #include "symbol.h"
@@ -26,6 +27,9 @@ struct port {
     // inputs and outputs are swapped.
     model::id bundle = no_id;
     bool flipped = false;
+
+    // how its value is shown and entered while simulating
+    number_format format;
 
     // position of the port's connector inside the schematic. unused for cells
     // that are not implemented by a schematic.

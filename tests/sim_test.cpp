@@ -5,6 +5,7 @@
 #include "../src/builtin/builtin.h"
 #include "../src/io/firmware.h"
 #include "../src/sim/arith.h"
+#include "../src/sim/numbers.h"
 #include "../src/sim/runner.h"
 #include "../src/sim/simulator.h"
 
@@ -2125,6 +2126,54 @@ static void test_tunnels()
     }
 }
 
+static void test_number_formats()
+{
+    using F = model::number_format;
+    auto fmt = [](F::kind_t k, int frac = 0) { return F{k, frac}; };
+    auto show = [&](uint64_t v, int w, F f) { return sim::format_number(sim::known(v, w), f); };
+    auto parse = [&](const char* t, int w, F f) { return sim::parse_number(t, w, f); };
+
+    // integers
+    CHECK(show(0xAB, 8, fmt(F::hex)) == "0xAB");
+    CHECK(show(0xFF, 8, fmt(F::unsigned_dec)) == "255" && show(0xFF, 8, fmt(F::signed_dec)) == "-1");
+    CHECK(parse("-128", 8, fmt(F::signed_dec)) == sim::known(0x80, 8));
+    CHECK(!parse("-129", 8, fmt(F::signed_dec)) && !parse("256", 8, fmt(F::unsigned_dec)) && !parse("-1", 8, fmt(F::unsigned_dec)));
+    CHECK(parse("0b1010", 8, fmt(F::unsigned_dec)) == sim::known(10, 8) && parse("ff", 8, fmt(F::hex)) == sim::known(0xFF, 8));
+    CHECK(parse("1_000", 16, fmt(F::unsigned_dec)) == sim::known(1000, 16) && parse("17", 8, fmt(F::octal)) == sim::known(15, 8));
+    CHECK(!parse("12", 8, fmt(F::binary)) && !parse("", 8, fmt(F::hex)));
+    auto big = parse("1267650600228229401496703205375", 100, fmt(F::unsigned_dec)); // 2^100 - 1
+    CHECK(big && *big == *sim::parse_hex("F_FFFFFFFF_FFFFFFFF_FFFFFFFF", 100));
+    CHECK(sim::format_number(*big, fmt(F::unsigned_dec)) == "1267650600228229401496703205375");
+
+    // fixed point, exact
+    CHECK(show(0x14, 8, fmt(F::unsigned_fixed, 4)) == "1.25");
+    CHECK(show(0xEC, 8, fmt(F::signed_fixed, 4)) == "-1.25");
+    CHECK(show(0x80, 8, fmt(F::signed_fixed, 7)) == "-1" && show(1, 8, fmt(F::unsigned_fixed, 8)) == "0.00390625");
+    CHECK(parse("-1.25", 8, fmt(F::signed_fixed, 4)) == sim::known(0xEC, 8));
+    CHECK(parse("0.1", 8, fmt(F::unsigned_fixed, 4)) == sim::known(2, 8)); // 0.125 is the nearest step
+    CHECK(!parse("8", 8, fmt(F::signed_fixed, 4)) && parse("7.9375", 8, fmt(F::signed_fixed, 4)) == sim::known(0x7F, 8));
+    CHECK(show(uint64_t(1) << 63, 64, fmt(F::signed_fixed, 0)) == "-9223372036854775808");
+
+    // floats
+    CHECK(show(0x3C00, 16, fmt(F::ieee_float)) == "1" && show(0xC000, 16, fmt(F::ieee_float)) == "-2");
+    CHECK(show(0x3FC00000, 32, fmt(F::ieee_float)) == "1.5" && show(0x3FB999999999999A, 64, fmt(F::ieee_float)) == "0.1");
+    CHECK(show(0x7C00, 16, fmt(F::ieee_float)) == "inf" && show(0x0001, 16, fmt(F::ieee_float)) == "5.9604645e-08");
+    CHECK(parse("1.5", 32, fmt(F::ieee_float)) == sim::known(0x3FC00000, 32) && parse("0.1", 64, fmt(F::ieee_float)) == sim::known(0x3FB999999999999A, 64));
+    CHECK(parse("65504", 16, fmt(F::ieee_float)) == sim::known(0x7BFF, 16) && parse("1e6", 16, fmt(F::ieee_float)) == sim::known(0x7C00, 16));
+    CHECK(parse("5.9604645e-08", 16, fmt(F::ieee_float)) == sim::known(1, 16));
+    CHECK(show(0x3FC0, 16, fmt(F::bfloat16)) == "1.5" && parse("1.5", 16, fmt(F::bfloat16)) == sim::known(0x3FC0, 16));
+    // floats only for their widths, other widths show bits
+    CHECK(!parse("1", 8, fmt(F::ieee_float)) && show(0xAB, 8, fmt(F::ieee_float)) == "0xAB");
+
+    // ascii, the first character is the top byte
+    CHECK(show(0x4869, 16, fmt(F::ascii)) == "\"Hi\"" && show(0x0041, 16, fmt(F::ascii)) == "\"\\x00A\"");
+    CHECK(parse("\"Hi\"", 16, fmt(F::ascii)) == sim::known(0x4869, 16) && parse("A", 16, fmt(F::ascii)) == sim::known(0x41, 16));
+    CHECK(parse("\\x41\\x42", 16, fmt(F::ascii)) == sim::known(0x4142, 16) && !parse("abc", 16, fmt(F::ascii)));
+
+    // unknown bits show as bits in every format
+    CHECK(sim::format_number(sim::value(4, 0x1, 0x2, 0), fmt(F::signed_dec)) == sim::to_string(sim::value(4, 0x1, 0x2, 0)));
+}
+
 int main()
 {
     test_values();
@@ -2148,6 +2197,7 @@ int main()
     test_counter_part();
     test_plexers();
     test_tunnels();
+    test_number_formats();
     test_wide_values();
     test_wide_circuits();
     test_time();

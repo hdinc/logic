@@ -56,6 +56,9 @@ private:
     void canvas_inputs(bool hovered, schematic_editor& e);
     void instance_menu();
     void signals_menu();
+    // the value of a wide input of the top cell: text in its format, the
+    // format, and the bits
+    void port_value_popup();
     void record_signal(int net, const std::string& name);
     int pin_net(int instance, int port) const;
     // the state and the debugger of the selected instance
@@ -78,6 +81,9 @@ private:
     // instance under the right click menu
     int menu_instance = -1;
     int menu_net = -1;
+    // the top cell's port whose value popup is open (or asked to open)
+    int port_popup = -1;
+    bool open_port_popup = false;
     std::string menu_signal_name;
 
     // selected in the shown scope, -1 for none

@@ -45,6 +45,7 @@ add_library(logic_core STATIC
     src/model/schematic.cpp
     src/model/cell.cpp
     src/model/bundle.cpp
+    src/model/number_format.cpp
     src/model/library.cpp
     src/model/workspace.cpp
     src/model/history.cpp
@@ -65,6 +66,7 @@ add_library(logic_core STATIC
     src/netlist/netlist.cpp
     src/sim/simulator.cpp
     src/sim/arith.cpp
+    src/sim/numbers.cpp
     src/sim/runner.cpp
     src/sim/waveform.cpp
     src/plugin/dynlib.cpp
@@ -130,6 +132,7 @@ add_executable(logic
     src/editor/model_editor.cpp
     src/editor/param_editor.cpp
     src/editor/bundle_ui.cpp
+    src/editor/number_ui.cpp
     src/editor/bundle_editor.cpp
     src/editor/sim_session.cpp
     src/editor/sim_view.cpp

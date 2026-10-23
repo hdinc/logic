@@ -94,6 +94,13 @@ for the debugger, terminal and messages, and one for the text in schematics
 and symbols. Any installed TrueType or OpenType font with Latin letters can
 be chosen.
 
+While simulating, click a multi-bit input port (or use **...** next to
+it in the properties) to set its value as text in the port's format, or
+bit by bit. Ports show their values as hex, unsigned or signed decimal,
+binary, octal, unsigned or signed fixed point, IEEE float (16, 32 or 64
+bits), bfloat16 or ASCII, chosen in the port's properties or in that
+popup.
+
 **View > Instance names** shows all instance names, only the ones you gave
 (not the default U1, U2, ...), or none.
 

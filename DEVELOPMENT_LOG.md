@@ -1617,3 +1617,115 @@ product is twice as wide).
 
 - The same highlight while editing.
 - Highlighting the pins of instances on the net.
+
+## 2026-10-23 17:20 +0300
+
+### Changes made
+
+- **Multi-bit inputs are edited in a popup while simulating.** Clicking a
+  wide input (or inout) port connector of the simulated cell opens it at
+  the port; so does the **...** button next to the input in the
+  properties. It holds:
+  - the value as text in the port's format (Enter sets it)
+  - the format, with the fraction bits for fixed point
+  - a button per bit (up to 128 bits), a click flips it
+  - for inouts, Drive on or off
+- **Number formats per port,** saved in the cell file (`"format": {"kind":
+  ..., "frac": ...}`, only when not hex):
+  - hex, unsigned and signed decimal, binary, octal
+  - unsigned and signed fixed point with a number of fraction bits
+  - IEEE float (half, single, double by the width), bfloat16
+  - ASCII
+
+  They are used for:
+  - the value drawn at the port while simulating
+  - the Inputs and Outputs panels
+  - the port's tooltip
+  - typing values
+
+  The format is chosen in the port's properties or in the popup.
+- **The Inputs panel** edits wide inputs as text in the port's format,
+  instead of hex only.
+
+### Features implemented
+
+- **`sim::format_number` / `sim::parse_number`** (`src/sim/numbers.{h,cpp}`):
+  - **Integers:** any width. Parsing accepts 0x, 0b and 0o prefixes, `_`
+    separators, and rejects values that don't fit (unsigned 0..2^w−1,
+    signed −2^(w−1)..2^(w−1)−1).
+  - **Fixed point:** formatted exactly (whole part, then fraction digits
+    by repeated ×10 with a 128-bit remainder), parsed rounding to the
+    nearest step. Up to 64 bits.
+  - **Floats:** the shortest text that reads back the same
+    (`std::to_chars`). Half and bfloat16 conversions round to nearest even
+    and handle subnormals, infinities and NaN.
+  - **ASCII:** the first character is the top byte. Non-printable bytes
+    show as \xNN, \" and \\ are escaped, and quotes are optional when
+    typing.
+  - **Unknown values:** with x or z bits, a value shows its bits in every
+    format. A format that doesn't fit the width (a float on 8 bits) shows
+    hex.
+- **`model::number_format`** (`src/model/number_format.{h,cpp}`): the kind
+  and fraction bits, labels and file ids, and which kinds fit a width.
+  Unknown kinds from newer files load as hex.
+- **`editor/number_ui.{h,cpp}`:** `edit_number_format` (combo of the kinds
+  that fit, plus fraction bits), `edit_number` (the text field: red while
+  invalid text is typed, applied on Enter) and `edit_bits` (the bit
+  buttons, rows of 16, groups of 4).
+
+### How it works
+
+- **Your decisions:**
+  - A popup at the port. **Rejected:** a separate window like the
+    picture, which needs OK and Apply.
+  - All four format groups.
+  - The format saved per port.
+- **Opening the popup:** both triggers set `sim_view::port_popup` and
+  `open_port_popup`, and the popup is opened and drawn in the editor's
+  window, so it works from either place. Its format edits the cell's port
+  (found non-const through the workspace) and marks the library changed.
+  The simulator doesn't read the format.
+- **Reused code:** the integer kinds reuse the waveform viewer's
+  `wave::format_value`, so ports and traces show integers the same way.
+  The parsing uses `sim/arith`.
+- **Where formats are drawn:** `render::draw_port_value` formats with the
+  port's format. The schematic tooltip of a cell's port does too, and
+  adds the decimal number unless the format is decimal.
+
+### Testing
+
+- **sim_test** (`test_number_formats`):
+  - Integer show and parse, with prefixes, separators and ranges, and
+    100-bit decimal both ways.
+  - Fixed point exact (1.25, −1.25, 2^−8, the most negative 64-bit value)
+    and rounding when parsing.
+  - Half, single, double and bfloat16 both ways, including the half
+    maximum, overflow to infinity and the smallest subnormal.
+  - Floats refused for other widths.
+  - ASCII both ways with escapes.
+  - Unknown bits.
+- **model_test:** the format saved and loaded, no key for hex, and an
+  unknown kind loading as hex.
+- **GUI** (private Xvnc), simulating an 8-bit input to an output:
+  1. Clicking the input port opened the popup with the value field
+     focused.
+  2. Typing C3 and Enter set it, and the output showed 0xC3.
+  3. The format list for 8 bits had no floats.
+  4. Signed fixed showed −61, and −3.8125 with 4 fraction bits, on the
+     canvas too.
+  5. Clicking bit 7 gave 4.1875, and the output showed 0x43.
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed.
+
+### Recommended features
+
+- Formats for wires and instance pins (per net), and the port's format as
+  the default for its waveform trace.
+- The fixed point and float formats in the waveform viewer.
+- Formats for the fields of bundle ports.
+
+### Outstanding issues
+
+- The bit buttons are left out above 128 bits; wider inputs are set as
+  text.
+- Fixed point and floats are limited to 64 bits.
