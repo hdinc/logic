@@ -105,6 +105,8 @@ void sim_view::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     de.view.begin_frame({size.x, size.y});
     de.sim = &s->sim();
     de.sim_scope = &shown;
+    // the net under the mouse, with its wires and tunnels
+    de.highlight_net = hovered && &de == &e ? de.net_at(de.view.mouse_world()) : -1;
 
     fb.Bind((int)size.x, (int)size.y);
     de.draw();

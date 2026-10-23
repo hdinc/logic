@@ -92,6 +92,12 @@ public:
     const sim::scope* sim_scope = nullptr;
     // highlighted while simulating, -1 for none
     int sim_selected = -1;
+    // a net of this cell's netlist (the scope's while simulating) drawn
+    // highlighted: its wires, ports and tunnels. -1 for none.
+    int highlight_net = -1;
+    // the net of what is under the point: a port connector, a pin, a
+    // tunnel or a wire. -1 if there is none.
+    int net_at(glm::vec2 p) const;
 
     // used by the tools
 

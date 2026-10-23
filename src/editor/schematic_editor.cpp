@@ -591,6 +591,35 @@ void schematic_editor::hover_tooltip()
     t.show();
 }
 
+int schematic_editor::net_at(glm::vec2 m) const
+{
+    auto& nl = sim ? *sim_scope->nets : nets;
+    float tol = std::max(3.0f, view.pixels(6.0f));
+
+    for (int k = 0; k < (int)ctx.cell.ports.size() && k < (int)nl.port_nets.size(); k++) {
+        auto& p = ctx.cell.ports[k];
+        if (glm::length(m - glm::vec2(p.pos)) <= std::max(6.0f, tol) || glm::length(m - glm::vec2(model::connection_point(p))) <= tol) return nl.port_nets[k];
+    }
+
+    for (int i = (int)sch.instances.size() - 1; i >= 0; i--) {
+        if (i >= (int)nl.instance_nets.size()) continue;
+        auto& inst = sch.instances[i];
+        auto iface = ctx.ws.interface_of(inst);
+        if (!iface) continue;
+        for (auto& pin : iface.symbol->pins) {
+            if (glm::length(m - glm::vec2(model::pin_position(inst, pin))) > tol) continue;
+            for (int k = 0; k < (int)iface.ports->size(); k++)
+                if ((*iface.ports)[k].id == pin.port && k < (int)nl.instance_nets[i].size()) return nl.instance_nets[i][k];
+        }
+        // a tunnel stands for its net
+        if (iface.tunnel && !iface.tunnel->empty() && !nl.instance_nets[i].empty() && model::instance_bounds(inst, iface.symbol).contains(m))
+            return nl.instance_nets[i][0];
+    }
+
+    auto w = wire_at(m);
+    return w == model::no_id ? -1 : nl.net_of_wire(w);
+}
+
 std::vector<schematic_editor::handle> schematic_editor::handles_in(model::rect rc)
 {
     std::vector<handle> r;
@@ -824,6 +853,19 @@ void schematic_editor::draw()
     auto& local_nets = sim ? *sim_scope->nets : nets;
     std::set<glm::ivec2, ivec2_less> bundle_junction;
 
+    // the highlighted net glows under its wires
+    if (highlight_net >= 0) {
+        auto glow = c.selection;
+        glow.a *= 0.45f;
+        for (auto& w : sch.wires) {
+            if (local_nets.net_of_wire(w.id) != highlight_net) continue;
+            bool bundle = local_nets.nets[highlight_net].bundle != model::no_id;
+            float width = bundle ? render::bundle_width : local_nets.nets[highlight_net].width > 1 ? render::bus_width
+                                                                                                   : render::wire_width;
+            r.line(w.a, w.b, glow, width + 2.0f);
+        }
+    }
+
     for (auto& w : sch.wires) {
         bool sel = is_selected({handle::wire_a, w.id}) && is_selected({handle::wire_b, w.id});
         bool bus = false;
@@ -864,15 +906,20 @@ void schematic_editor::draw()
     for (size_t k = 0; k < sch.instances.size(); k++) {
         auto& i = sch.instances[k];
         bool sel = is_selected({handle::instance, i.id}) || (sim && (int)k == sim_selected);
+        // tunnels of the highlighted net
+        if (highlight_net >= 0 && k < instance_nets.size() && !instance_nets[k].empty() && instance_nets[k][0] == highlight_net) {
+            auto iface = ctx.ws.interface_of(i);
+            sel = sel || (iface.tunnel && !iface.tunnel->empty());
+        }
         render::draw_instance(r, ctx.ws, i, sel ? c.selection : c.symbol, k < instance_nets.size() ? &instance_nets[k] : nullptr);
         if (sim) draw_live(i, k);
     }
 
     for (int k = 0; k < (int)ctx.cell.ports.size(); k++) {
         auto& p = ctx.cell.ports[k];
-        bool sel = is_selected({handle::port, p.id});
         auto& port_nets = sim ? sim_scope->nets->port_nets : nets.port_nets;
         bool connected = k < (int)port_nets.size() && port_nets[k] >= 0;
+        bool sel = is_selected({handle::port, p.id}) || (highlight_net >= 0 && connected && port_nets[k] == highlight_net);
         render::draw_port(r, p, sel ? c.selection : c.symbol, connected, p.bundle != model::no_id ? ctx.ws.bundle_label(p.bundle, p.flipped) : std::string());
         if (sim) render::draw_port_value(r, p, sim->port_value(*sim_scope, k));
     }

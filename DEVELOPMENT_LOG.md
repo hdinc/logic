@@ -1571,3 +1571,49 @@ product is twice as wide).
 - model_test (`test_builtins`) and `test_tunnels` in sim_test pass. All
   ctest suites pass except `font_test`, which wasn't run again: no font
   code changed.
+
+## 2026-10-23 16:52 +0300
+
+### Changes made
+
+- **While simulating, hovering a net highlights all of it:**
+  - Its wires get a glow (the selection color, faint, 2 units wider than the
+    wire), drawn under them so the value colors stay visible.
+  - The cell's port connectors and the tunnels on the net are drawn in the
+    selection color.
+  - A net is hovered through a wire, a pin, a port connector or a
+    tunnel's tag, so pointing at one tunnel also lights up the wires and
+    tunnels of the same name elsewhere.
+
+### How it works
+
+- **`schematic_editor::highlight_net`:** a net of the shown scope's
+  netlist, or -1.
+  - `draw()` first draws the glow for the wires of that net, then
+    everything as before.
+  - Ports whose `port_nets` entry is the net, and instances with a tunnel
+    name whose pin is on it, take the selection color.
+- **`schematic_editor::net_at(point)`** finds the net under the mouse, in
+  this order: a port connector, an instance pin, a tunnel's body (its
+  bounds), a wire.
+- **`sim_view::gui`** sets `highlight_net` every frame from the mouse
+  while the canvas is hovered, else -1.
+  - Only while simulating, as asked.
+  - The editor is still free to use it later.
+- Tunnels of a name share one net (the netlist joins them), so
+  highlighting by net index covers them without knowing names.
+
+### Testing
+
+- **GUI** (private Xvnc, simulating the tunnel demo: input → tunnel "data"
+  … tunnel "data" → output):
+  - Hovering the input wire lights up both wires, both tunnels and both
+    port connectors.
+  - Moving away clears it.
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed. The drawing needs a GL context and isn't unit tested.
+
+### Recommended features
+
+- The same highlight while editing.
+- Highlighting the pins of instances on the net.
