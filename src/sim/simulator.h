@@ -48,6 +48,9 @@ struct state {
     // values set for the top cell's ports
     std::vector<value> inputs;
     time now = 0;
+    // what displays show averaged since the previous publish, by flat
+    // component index, see component::sample_view. only filled by the runner.
+    std::map<int, std::vector<float>> views;
     // the last settle didn't come to rest, e.g. a gate feeding itself
     bool oscillating = false;
     // why a component paused the simulation (e.g. a breakpoint), empty if
@@ -128,6 +131,10 @@ public:
     // the state of the component of an instance in the scope's schematic,
     // empty if it has none
     std::vector<inspect_item> inspect(const scope& s, int instance) const;
+
+    // component::sample_view of every component that has a view, by flat
+    // component index (scope::components). starts their next windows.
+    std::map<int, std::vector<float>> sample_views();
 
     // the component of an instance in the scope's schematic, null if it has
     // none. for debugging views.
@@ -263,6 +270,8 @@ private:
     std::vector<int> parent;
 
     std::vector<instance> instances;
+    // instances whose components have a view
+    std::vector<int> viewers;
     std::vector<net_info> nets;
     std::vector<alias> aliases;
     std::vector<net_pull> pulls;
@@ -313,6 +322,12 @@ public:
     value input_value(int port) const { return st.inputs[port]; }
 
     time now() const { return st.now; }
+    // see state::views, null if the component has none
+    const std::vector<float>* view(int component) const
+    {
+        auto it = st.views.find(component);
+        return it == st.views.end() ? nullptr : &it->second;
+    }
     bool oscillating() const { return st.oscillating; }
     const std::string& paused() const { return st.paused; }
 

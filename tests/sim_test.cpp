@@ -1313,6 +1313,41 @@ static void test_io_parts()
     CHECK(t.next_event() == sim::never);
 }
 
+// a multiplexed 7-segment display: the share of time each segment is lit
+static void test_seg7_view()
+{
+    fixture f;
+    // hex input on the left at (-30, 0), en at (0, -50)
+    f.place("seg7_display", {0, 0}, {{"input", std::string("hex")}, {"enable", true}});
+    // constant 1 (segments b and c), out at (-30, 0)
+    f.place("constant", {-40, 0}, {{"width", int64_t(4)}, {"value", int64_t(1)}});
+    // 1 a quarter of the time, out at (0, -50)
+    f.place("clock", {-10, -50}, {{"frequency", int64_t(1000)}, {"duty", int64_t(25)}});
+    sim::simulator s(f.ws, *f.top, builtin::factory());
+    CHECK(s.problems().empty());
+    int k = s.root().components[0];
+
+    s.run_until(10 * sim::ms);
+    auto views = s.sample_views();
+    CHECK(views.size() == 1 && views.count(k) && views[k].size() == 8);
+    auto& v = views[k];
+    CHECK(std::abs(v[1] - 0.25f) < 0.02f && std::abs(v[2] - 0.25f) < 0.02f);
+    CHECK(v[0] == 0.0f && v[3] == 0.0f && v[6] == 0.0f && v[7] == 0.0f);
+
+    // no time passed: what is lit now (the clock is low for 0.75 ms, then
+    // high)
+    s.run_until(10 * sim::ms + sim::ms * 8 / 10);
+    s.sample_views();
+    auto now = s.sample_views()[k];
+    CHECK(now[1] == 1.0f && now[2] == 1.0f && now[0] == 0.0f);
+
+    // a new window after a reset
+    s.reset();
+    s.run_until(sim::ms);
+    auto again = s.sample_views()[k];
+    CHECK(std::abs(again[1] - 0.25f) < 0.02f);
+}
+
 static void test_rom_ram()
 {
     auto dir = std::filesystem::temp_directory_path() / "logic_sim_test";
@@ -2208,6 +2243,7 @@ int main()
     test_waveforms();
     test_firmware();
     test_io_parts();
+    test_seg7_view();
     test_rom_ram();
 
     if (failures) {

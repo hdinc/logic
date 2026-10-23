@@ -161,6 +161,13 @@ public:
         return false;
     }
 
+    // what a display shows, averaged over time: e.g. the fraction of the
+    // simulated time each segment was lit since the last call, which starts
+    // a new window. only called for components with has_view(), on the
+    // simulation thread when values are published.
+    virtual bool has_view() const { return false; }
+    virtual void sample_view(time now, std::vector<float>& out) { (void)now, (void)out; }
+
     // copies the internal state into bytes and back, for snapshots of the
     // whole simulation. false if the component doesn't support it.
     virtual bool save_state(std::vector<uint8_t>&) const { return false; }

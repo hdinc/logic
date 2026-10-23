@@ -211,6 +211,7 @@ void simulator::add_instance(scope& s, int index, std::unique_ptr<component> c, 
                                                           : port_kind::inout);
     }
     s.components[index] = (int)instances.size();
+    if (x.c->has_view()) viewers.push_back((int)instances.size());
     instances.push_back(std::move(x));
 }
 
@@ -396,6 +397,14 @@ void simulator::set_input(int port, value v)
     int n = net_of_port(*m_root, port);
     if (n >= 0) update_net(n);
     settle();
+}
+
+std::map<int, std::vector<float>> simulator::sample_views()
+{
+    std::map<int, std::vector<float>> r;
+    for (int k : viewers)
+        instances[k].c->sample_view(cur.now, r[k]);
+    return r;
 }
 
 component* simulator::component_of(const scope& s, int instance)

@@ -2068,3 +2068,229 @@ product is twice as wide).
 
 - An option to also mark the schematic's bounds or the symbol's ports'
   bounding box.
+
+## 2026-10-24 00:05 +0300
+
+### Features implemented
+
+- **7-segment display redrawn like the reference picture:**
+  - a 5×7-grid box
+  - slanted, filled, hexagonal segments, the chosen color when lit and grey
+    when dark
+  - a round decimal point at the lower right
+- **Input modes** (instance property "Input"):
+  - **bus** (default, as before): `seg`, a = bit 0 … g = bit 6, dp = bit 7
+  - **pins:** 1-bit `a`…`g` on the left with their labels inside, and a
+    `dp` pin on the right next to the dot
+  - **hex:** a 4-bit `in` shown as 0–F (built-in decoder), with a separate
+    `dp` pin
+- **Pin side:** left, right, top or bottom, for the bus and hex pin.
+  Separate pins are always on the left.
+- **Enable pin** (option): an `en` input at the bottom. The display is
+  dark unless it's 1, for multiplexed displays.
+- **Dark segments while editing:** the display shows its grey segments on
+  the canvas, not only while simulating.
+- **Colors:** orange and cyan added; the LED gets them too.
+
+### How it works
+
+- **Layout:** `seg7_display::build` (`src/builtin/io.cpp`).
+  - Box x ∈ [-20, 30], y ∈ [-35, 35]. The top and bottom edges are on half
+    grids like the picture, so the pins a–g sit on grid rows.
+  - Bus/hex pin positions: left (-30, 0), right (40, 0), top (10, 50),
+    bottom (10, -50). The top and bottom stubs are 1.5 grids long so the
+    pin lands on the grid.
+  - `dp` is at (40, -20), `en` at (0, -50). No combination puts two pins
+    in the same place (checked by the test).
+- **Hex decoding:** `builtin::seg7_hex(digit)` (`builtin.h`) returns the
+  segment bits of 0–F, using the standard table.
+- **Drawing:** `render::draw_live` (`src/render/live.cpp`).
+  - It now takes the instance's ports and finds values by port name,
+    because the port layout depends on the mode.
+  - `seg7_polygons()` builds the seven hexagons once (thickness 4.2,
+    0.6 gap, slant 0.1), and they're drawn with `renderer::fill`. They lie
+    over the symbol fill and under the outline and labels.
+  - **Lit:** the chosen color.
+  - **Dark or floating:** grey, `mix(symbol_fill, symbol, 0.2)`, which
+    follows the theme.
+  - **x:** the theme's unknown color.
+  - **Hex input:** a fully floating input is dark, a partly unknown one
+    makes every segment unknown.
+  - **Enable:** a floating `en` keeps the display dark, x makes it
+    unknown.
+- **Editing:** `schematic_editor::draw` calls `draw_live` for every
+  instance, also while editing. It passes no values then, and only the
+  7-segment display draws anything.
+- **Decisions:**
+  - Bus stays the default (the user's choice), so the part's old
+    interface is unchanged.
+  - Pin side applies only to the bus and hex pin; separate pins stay on
+    the left as in the picture.
+  - The params system has no conditional visibility, so "Pin side" always
+    shows and its description says when it applies.
+  - The bus pin has no label inside the box; its tooltip names it.
+
+### Testing
+
+- **model_test `test_seg7_display`:** every input × side × dp × enable
+  combination builds:
+  - pins on the grid and apart
+  - the expected ports and widths
+  - an empty `check()`
+  - the default is a bus on the left
+
+  It also checks `seg7_hex` for 0, 8, A and F. All 7 ctest suites pass.
+- **GUI (VNC :1, scratch workspace with test cells):**
+  - dark segments while editing
+  - pins mode with constants showing "3." in green, matching the picture's
+    layout
+  - hex 0xA on a top pin showing "A"
+  - bus 0x86 on a right pin showing "1." in cyan
+  - a bottom bus pin
+  - hex with an unconnected `en` staying dark
+  - the light theme
+
+  Moving the `en` label to x = 0 fixed it crowding the `g` label.
+
+### Recommended features
+
+- Conditional parameters in the properties panel (hide "Pin side" for
+  separate pins).
+- A multi-digit display part, and a common-anode or common-cathode choice
+  for the enable level.
+
+### Outstanding issues
+
+- Cyan lit segments have little contrast on the light theme's pale box.
+
+## 2026-10-24 00:45 +0300
+
+### Changes made
+
+- **7-segment display, thicker segments:** 5 units (half a grid) instead
+  of 4.2, with a 0.5 gap, as measured from the reference picture.
+- **Antialiased segments:** fills have hard edges, so every segment edge
+  is also traced with a one-pixel antialiased line in the segment's color.
+- **Q / place previews show the digit:** `instance_tool` and `paste_tool`
+  call `schematic_editor::draw_live`, which is now public, for their
+  previews.
+
+### Features implemented
+
+- **Glow:** lit segments and the point get a soft halo in their color, as
+  strong as they are bright.
+- **Ghosting / multiplexing:** a display shows how long each segment was
+  lit, not just its state at the frame. Multiplexed digits all stay
+  visible, and segments fade out after going dark.
+  - **Brightness:** the share of simulated time a segment was lit since
+    the last update, through a cube root (Stevens' brightness law): 50 %
+    on looks 79 % bright, 25 % looks 63 %. The user chose proportional
+    with a boost.
+  - **Persistence (ms):** a new parameter, 100 by default. The afterglow
+    fades to about 5 % over that much real time, and 0 turns the afterglow
+    off.
+
+### How it works
+
+- **Segment logic:** it moved to `builtin::seg7_levels` (`io.cpp`,
+  declared in `builtin.h`). It covers the bus, pins and hex modes, active
+  low and enable. The renderer and the sim component both use it.
+- **Sim side:**
+  - New optional `component::has_view()` and
+    `sample_view(now, out)`.
+  - `seg7_component` (replacing `display_component` for this part) adds up
+    each segment's lit time on every eval. `sample_view` returns lit time ÷
+    window length and starts a new window. With no time passed, e.g. while
+    paused, it returns the current 0/1 state.
+  - The simulator keeps a list of components with a view (`viewers`) and
+    `sample_views()`.
+  - `runner::publish` stores the samples in `state::views`, and
+    `snapshot::view(component)` reads them. Each window is one publish
+    interval: about 15 ms while running, one command while stepping.
+- **Editor side:**
+  - `schematic_editor::draw_live` looks up the view through
+    `scope::components[index]`.
+  - The fade is kept in `ghosts`, by (scope, instance):
+    `level = max(cbrt(duty), level · exp(−3·dt / persistence))`. It's
+    cleared when not simulating.
+  - The result goes to `render::draw_live` as a new optional `brightness`
+    argument (8 values).
+- **Drawing** (`live.cpp` `draw_seg7`):
+  - `seg7_segments()` gives each hexagon plus its centerline.
+  - **Color:** `mix(unlit, lit, brightness)`, or the unknown color for x.
+  - **Glow:** six round-capped lines along the centerline, each 0.9 wider,
+    at alpha 0.06 × brightness, so they add up to a smooth falloff. Three
+    stronger layers showed visible bands. The halo is in Renderer2D's
+    batch after the fills, so it also tints neighbouring dark segments a
+    little, like a real display.
+- **Decisions:**
+  - **Why on-time and not only fading:** frames sample the circuit at
+    random points of a fast multiplex. A fade alone would flicker, while
+    the averaged on-time is steady and fits the physics.
+  - **Wall-time fade on top:** it covers slow multiplexing and pausing.
+  - **Edge strokes, not a new shader:** they're cheap and need no change
+    in the Hd library.
+
+### Testing
+
+- **sim_test `test_seg7_view`:** a hex display gated by a 1 kHz clock at
+  25 % duty.
+  - After 10 ms, segments b and c read 0.25 and the rest 0.
+  - A second sample with no time passed gives the current state.
+  - After `reset()`, a 1 ms window reads 0.25 again.
+- All 7 ctest suites pass.
+- **GUI (VNC :1, scratch workspace):**
+  - Two digits multiplexed by a clock and its inverse. At 1 kHz both "7"
+    and "2" show steadily with glow.
+  - At 3 Hz they alternate and fade over about 100 ms.
+  - Q on a display shows its segments in the preview.
+  - Zoomed in, the edges are smooth and the glow falls off evenly.
+
+### Recommended features
+
+- A brightness or gamma setting, for displays whose digits look too dim
+  at a high multiplex factor.
+- On-time averaging for the LED, so PWM-dimmed LEDs show their
+  brightness.
+
+### Outstanding issues
+
+- With persistence 0 the brightness still follows the on-time of the last
+  publish interval, so a fast multiplex stays visible. That is intended,
+  and the parameter description says "0: no afterglow".
+
+## 2026-10-24 01:00 +0300
+
+### Changes made
+
+The user changed their mind about the look of the 7-segment display:
+- **Glow removed.**
+- **Full brightness, held:** a segment lit at any time since the last
+  update shows at full brightness, and stays lit for the display's
+  persistence time after it was last lit. This replaces the brightness
+  proportional to on-time and the fade.
+- **Wider gap:** 0.9 units between segments, up from 0.5.
+
+### How it works
+
+- **Sim side, unchanged:** the sim still reports each segment's share of
+  lit time per publish interval (`sample_view`). A share above 0 now just
+  means "was lit", so brief pulses between frames still count.
+- **`schematic_editor::ghost`:** it keeps a `lit_until` time per segment,
+  set to now + persistence whenever the segment was lit. A segment is
+  shown while it's lit or before that time.
+- **`render::draw_live`:** it takes `const bool* shown` instead of float
+  brightness.
+- **`seg7_polygons()`:** back to plain hexagons. The glow's centerlines
+  are gone.
+- **Persistence parameter description:** "how long a segment stays lit
+  after it goes dark, so multiplexed digits stay visible".
+
+### Testing
+
+- All 7 ctest suites pass, including `test_seg7_view`, which still checks
+  the on-time shares.
+- **GUI:**
+  - 1 kHz two-digit multiplex: both digits at full brightness.
+  - 3 Hz: each digit stays lit 100 ms after its enable drops.
+  - The gaps are visibly wider and there's no glow.

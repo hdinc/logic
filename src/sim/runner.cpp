@@ -130,6 +130,7 @@ void runner::publish(double measured)
 {
     std::lock_guard lk(m);
     published = s->current();
+    published.views = s->sample_views();
     published_speed = measured;
     version++;
 }

@@ -43,6 +43,13 @@ void add_sources(model::primitive_registry& r);
 void add_memory(model::primitive_registry& r);
 // splitter
 void add_wiring(model::primitive_registry& r);
+// the segments a (bit 0) to g (bit 6) lit for a hex digit, 0 to 15
+uint8_t seg7_hex(int digit);
+// segments a to g and the point of a 7-segment display: 1 lit, 0 dark or
+// floating, -1 unknown. from its resolved parameters, its ports and their
+// values (none, e.g. while editing: all dark).
+void seg7_levels(const model::param_values& params, const std::vector<model::port>& ports, std::span<const sim::value> values, int out[8]);
+
 // led, displays, button, switch, terminal
 void add_io(model::primitive_registry& r);
 // adder/subtractor, multiplier, divider, negator, comparator, shifter, bit

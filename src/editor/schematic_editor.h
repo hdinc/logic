@@ -6,7 +6,9 @@
 #include "../netlist/netlist.h"
 #include "../sim/simulator.h"
 
+#include <chrono>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -99,6 +101,11 @@ public:
     // tunnel or a wire. -1 if there is none.
     int net_at(glm::vec2 p) const;
 
+    // what displays and inputs show while simulating, instance `index` of
+    // the schematic. while editing: the dark segments of 7-segment displays
+    // (also for previews of tools).
+    void draw_live(const model::instance& i, size_t index);
+
     // used by the tools
 
     struct handle {
@@ -153,8 +160,15 @@ public:
 
 private:
     void set_tool(tool_kind k, std::unique_ptr<tool<schematic_editor>> t);
-    // what displays and inputs show while simulating
-    void draw_live(const model::instance& i, size_t index);
+
+    // the segments of a display stay lit for its persistence time after they
+    // were last lit, by scope and instance index. cleared when not
+    // simulating.
+    struct ghost {
+        std::chrono::steady_clock::time_point lit_until[8];
+        bool shown[8] = {};
+    };
+    std::map<std::pair<const sim::scope*, size_t>, ghost> ghosts;
 
     // what is under the mouse for the tooltip, empty key if nothing
     struct hover_target {

@@ -8,6 +8,7 @@
 #include <imgui_internal.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <map>
 #include <set>
@@ -142,6 +143,7 @@ public:
     void draw(schematic_editor& e) override
     {
         render::draw_instance(e.ctx.r, e.ctx.ws, preview, render::colors().preview);
+        e.draw_live(preview, 0);
     }
 
 private:
@@ -186,6 +188,7 @@ public:
         for (auto i : sch->instances) {
             i.pos += offset;
             render::draw_instance(r, e.ctx.ws, i, c);
+            e.draw_live(i, 0);
         }
         for (auto p : part.ports) {
             p.pos += offset;
@@ -819,14 +822,35 @@ void schematic_editor::draw_live(const model::instance& i, size_t index)
     auto iface = ctx.ws.interface_of(i);
     if (!iface) return;
 
-    // the values at the pins
+    // the values at the ports, none while editing
     std::vector<sim::value> pins;
-    auto& local = sim_scope->nets->instance_nets;
-    for (size_t p = 0; p < iface.ports->size(); p++) {
-        int n = index < local.size() && p < local[index].size() ? local[index][p] : -1;
-        pins.push_back(n < 0 ? sim::floating((*iface.ports)[p].width) : sim->net_value(sim_scope->flat_net[n]));
+    auto params = model::resolve_params(prim->params(), i.params);
+    const bool* shown = nullptr;
+    if (sim) {
+        auto& local = sim_scope->nets->instance_nets;
+        for (size_t p = 0; p < iface.ports->size(); p++) {
+            int n = index < local.size() && p < local[index].size() ? local[index][p] : -1;
+            pins.push_back(n < 0 ? sim::floating((*iface.ports)[p].width) : sim->net_value(sim_scope->flat_net[n]));
+        }
+
+        // displays: a segment lit at any time since the last update (its
+        // share of the time is above 0) shows fully lit, and stays so for the
+        // persistence time, so multiplexed digits are all visible
+        int k = index < sim_scope->components.size() ? sim_scope->components[index] : -1;
+        if (auto view = k >= 0 ? sim->view(k) : nullptr) {
+            auto& g = ghosts[{sim_scope, index}];
+            auto now = std::chrono::steady_clock::now();
+            auto it = params.find("persistence");
+            auto persistence = std::chrono::milliseconds(it != params.end() && std::get_if<int64_t>(&it->second) ? std::get<int64_t>(it->second) : 0);
+            for (size_t s = 0; s < 8 && s < view->size(); s++) {
+                bool lit = (*view)[s] > 0.0f;
+                if (lit) g.lit_until[s] = now + persistence;
+                g.shown[s] = lit || now < g.lit_until[s];
+            }
+            shown = g.shown;
+        }
     }
-    render::draw_live(ctx.r, prim->kind(), model::resolve_params(prim->params(), i.params), i, *iface.symbol, pins);
+    render::draw_live(ctx.r, prim->kind(), params, i, *iface.symbol, *iface.ports, pins, shown);
 }
 
 std::string schematic_editor::unique_instance_name() const
@@ -850,6 +874,7 @@ void schematic_editor::draw()
     r.draw_origin();
 
     if (!sim) nets = netlist::extract(ctx.ws, ctx.cell);
+    if (!sim) ghosts.clear();
 
     std::map<glm::ivec2, int, ivec2_less> endpoint_count;
     std::map<glm::ivec2, glm::vec4, ivec2_less> junction_color;
@@ -921,7 +946,7 @@ void schematic_editor::draw()
             sel = sel || (iface.tunnel && !iface.tunnel->empty());
         }
         render::draw_instance(r, ctx.ws, i, sel ? c.selection : c.symbol, k < instance_nets.size() ? &instance_nets[k] : nullptr);
-        if (sim) draw_live(i, k);
+        draw_live(i, k);
     }
 
     for (int k = 0; k < (int)ctx.cell.ports.size(); k++) {

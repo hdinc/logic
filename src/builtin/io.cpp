@@ -15,12 +15,69 @@ using model::direction;
 using model::grid;
 using sim::value;
 
-const std::vector<std::string> colors{"red", "green", "yellow", "blue", "white"};
+const std::vector<std::string> colors{"red", "green", "yellow", "orange", "blue", "cyan", "white"};
 
 // shows its inputs, does nothing in the simulation
 class display_component : public sim::component {
 public:
     void eval(std::span<value>, sim::context&) override {}
+};
+
+// measures how long each segment is lit, so multiplexed digits can be
+// shown at their average brightness (see sample_view)
+class seg7_component : public sim::component {
+public:
+    seg7_component(model::param_values params, std::vector<model::port> ports)
+        : params(std::move(params))
+        , ports(std::move(ports))
+    {
+    }
+
+    void eval(std::span<value> values, sim::context& ctx) override
+    {
+        advance(ctx.now());
+        int levels[8];
+        seg7_levels(params, ports, values, levels);
+        for (int k = 0; k < 8; k++)
+            lit[k] = levels[k] == 1;
+    }
+
+    void reset() override
+    {
+        std::fill(std::begin(lit), std::end(lit), false);
+        std::fill(std::begin(lit_time), std::end(lit_time), 0);
+        last = window_start = 0;
+    }
+
+    bool has_view() const override { return true; }
+
+    void sample_view(sim::time now, std::vector<float>& out) override
+    {
+        advance(now);
+        out.resize(8);
+        auto window = now - window_start;
+        for (int k = 0; k < 8; k++)
+            out[k] = window > 0 ? float(double(lit_time[k]) / double(window)) : (lit[k] ? 1.0f : 0.0f);
+        std::fill(std::begin(lit_time), std::end(lit_time), 0);
+        window_start = now;
+    }
+
+private:
+    // the segments lit since `last` were lit until now
+    void advance(sim::time now)
+    {
+        if (now <= last) return;
+        for (int k = 0; k < 8; k++)
+            if (lit[k]) lit_time[k] += now - last;
+        last = now;
+    }
+
+    model::param_values params;
+    std::vector<model::port> ports;
+    bool lit[8] = {};
+    sim::time lit_time[8] = {};
+    sim::time last = 0;
+    sim::time window_start = 0;
 };
 
 class led : public primitive {
@@ -50,34 +107,77 @@ public:
     std::unique_ptr<sim::component> create(const model::param_values&) const override { return std::make_unique<display_component>(); }
 };
 
-// segments a to g and the decimal point
+// segments a to g and the decimal point, from a bus, separate pins or a hex
+// digit. render/live.cpp draws the segments inside the box.
 class seg7_display : public primitive {
 public:
     std::string kind() const override { return "seg7_display"; }
     std::string name() const override { return "7-segment display"; }
     std::string category() const override { return "Input/Output"; }
-    std::string description() const override { return "segments a (bit 0) to g (bit 6) and the decimal point (bit 7)"; }
+    std::string description() const override { return "shows segments a to g and a decimal point, from a bus, separate pins or a hex digit"; }
 
     std::vector<model::param_def> params() const override
     {
         return {
+            model::choice_param("input", "Input", {"bus", "pins", "hex"}, "bus",
+                "bus: segments a (bit 0) to g (bit 6), pins: one pin a segment, hex: a 4-bit digit shown as 0 to F"),
+            model::choice_param("side", "Pin side", {"left", "right", "top", "bottom"}, "left", "where the bus pin is (bus and hex input)"),
             model::choice_param("color", "Color", colors, "red"),
-            model::bool_param("dp", "Decimal point", false, "an 8th bit for the point"),
-            model::bool_param("active_low", "Active low", false, "segments light up at 0, for common anode displays"),
+            model::bool_param("dp", "Decimal point", false, "an 8th bit of the bus, or a dp pin"),
+            model::bool_param("active_low", "Active low", false, "segments light up at 0, for common anode displays. only the point for hex input"),
+            model::bool_param("enable", "Enable pin", false, "an en pin, dark unless it is 1 (for multiplexed displays)"),
+            model::int_param("persistence", "Persistence (ms)", 100, 0, 2000,
+                "how long a segment stays lit after it goes dark, so multiplexed digits stay visible"),
         };
     }
 
     model::cell_interface build(const model::param_values& v) const override
     {
-        int width = model::get_bool(v, "dp") ? 8 : 7;
+        auto input = model::get_string(v, "input");
+        bool dp = model::get_bool(v, "dp");
+        constexpr float label_size = 6.0f;
         builder b;
-        b.rect({-2 * grid, -3 * grid}, {2 * grid, 3 * grid});
-        b.line({-3 * grid, 0}, {-2 * grid, 0}, model::bus_stroke);
-        b.port("seg", direction::input, width, {-3 * grid, 0}, "segments a (bit 0) to g (bit 6)" + std::string(width == 8 ? ", point (bit 7)" : ""));
+        b.rect({-2 * grid, -35}, {3 * grid, 35});
+
+        if (input == "pins") {
+            const char* names[] = {"a", "b", "c", "d", "e", "f", "g"};
+            for (int k = 0; k < 7; k++) {
+                int y = (3 - k) * grid;
+                b.line({-3 * grid, y}, {-2 * grid, y});
+                b.text({-18, y - 2}, names[k], label_size);
+                b.port(names[k], direction::input, 1, {-3 * grid, y}, std::string("segment ") + names[k]);
+            }
+        } else {
+            bool hex = input == "hex";
+            int width = hex ? 4 : dp ? 8 : 7;
+            auto side = model::get_string(v, "side");
+            // the top and bottom edges are half a grid off, those stubs are
+            // longer so the pin is on the grid
+            glm::ivec2 pin{-3 * grid, 0}, edge{-2 * grid, 0};
+            if (side == "right") pin = {4 * grid, 0}, edge = {3 * grid, 0};
+            if (side == "top") pin = {grid, 5 * grid}, edge = {grid, 35};
+            if (side == "bottom") pin = {grid, -5 * grid}, edge = {grid, -35};
+            b.line(pin, edge, model::bus_stroke);
+            if (hex) b.port("in", direction::input, 4, pin, "the digit to show, 0 to F");
+            else b.port("seg", direction::input, width, pin, "segments a (bit 0) to g (bit 6)" + std::string(width == 8 ? ", point (bit 7)" : ""));
+        }
+        // the point's pin next to it
+        if (dp && input != "bus") {
+            b.line({3 * grid, -2 * grid}, {4 * grid, -2 * grid});
+            b.port("dp", direction::input, 1, {4 * grid, -2 * grid}, "the decimal point");
+        }
+        if (model::get_bool(v, "enable")) {
+            b.line({0, -5 * grid}, {0, -35});
+            b.text({0, -32}, "en", label_size, model::text_align::center);
+            b.port("en", direction::input, 1, {0, -5 * grid}, "1 shows the segments, 0 keeps them dark");
+        }
         return b.finish();
     }
 
-    std::unique_ptr<sim::component> create(const model::param_values&) const override { return std::make_unique<display_component>(); }
+    std::unique_ptr<sim::component> create(const model::param_values& v) const override
+    {
+        return std::make_unique<seg7_component>(v, build(v).ports);
+    }
 };
 
 // the value of a bus in hex
@@ -320,6 +420,64 @@ public:
     }
 };
 
+}
+
+uint8_t seg7_hex(int digit)
+{
+    static const uint8_t patterns[16] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F, 0x77, 0x7C, 0x39, 0x5E, 0x79, 0x71};
+    return patterns[digit & 15];
+}
+
+void seg7_levels(const model::param_values& params, const std::vector<model::port>& ports, std::span<const sim::value> values, int out[8])
+{
+    auto text = [&](const char* name) {
+        auto it = params.find(name);
+        return it != params.end() && std::get_if<std::string>(&it->second) ? std::get<std::string>(it->second) : std::string();
+    };
+    auto flag = [&](const char* name) {
+        auto it = params.find(name);
+        return it != params.end() && std::get_if<bool>(&it->second) && std::get<bool>(it->second);
+    };
+    // 1, 0 or -1 for x, floating counts as 0
+    auto level = [](const sim::value& v, int bit, bool active_low) {
+        auto b = v.get(bit);
+        if (b == sim::bit_state::z) return 0;
+        if (b == sim::bit_state::x) return -1;
+        return (b == sim::bit_state::one) != active_low ? 1 : 0;
+    };
+    // the value of a port, none while not simulating
+    auto value_of = [&](const std::string& name) -> const sim::value* {
+        for (size_t k = 0; k < ports.size() && k < values.size(); k++)
+            if (ports[k].name == name) return &values[k];
+        return nullptr;
+    };
+
+    std::fill(out, out + 8, 0);
+    bool low = flag("active_low");
+    auto input = text("input");
+    if (input == "hex") {
+        // partly unknown: every segment unknown
+        if (auto v = value_of("in"); v && !v->fully_floating()) {
+            uint8_t on = seg7_hex((int)v->to_u64());
+            for (int k = 0; k < 7; k++)
+                out[k] = !v->fully_known() ? -1 : (on >> k) & 1;
+        }
+    } else if (input == "pins") {
+        const char* names[] = {"a", "b", "c", "d", "e", "f", "g"};
+        for (int k = 0; k < 7; k++)
+            if (auto v = value_of(names[k])) out[k] = level(*v, 0, low);
+    } else if (auto v = value_of("seg")) {
+        for (int k = 0; k < std::min(v->width(), 8); k++)
+            out[k] = level(*v, k, low);
+    }
+    if (input != "bus")
+        if (auto v = value_of("dp")) out[7] = level(*v, 0, low);
+    if (flag("enable")) {
+        auto v = value_of("en");
+        int en = v ? level(*v, 0, false) : 0;
+        for (int k = 0; k < 8; k++)
+            out[k] = en == 1 ? out[k] : en == 0 ? 0 : -1;
+    }
 }
 
 void add_io(model::primitive_registry& r)

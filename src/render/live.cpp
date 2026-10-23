@@ -1,6 +1,9 @@
 #include "live.h"
+#include "../builtin/builtin.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <functional>
 
 namespace logic::render {
 
@@ -10,7 +13,9 @@ glm::vec4 color_of(const std::string& name)
 {
     if (name == "green") return {0.2f, 0.9f, 0.3f, 1};
     if (name == "yellow") return {1.0f, 0.85f, 0.1f, 1};
+    if (name == "orange") return {1.0f, 0.5f, 0.05f, 1};
     if (name == "blue") return {0.3f, 0.55f, 1.0f, 1};
+    if (name == "cyan") return {0.2f, 0.9f, 0.95f, 1};
     if (name == "white") return {0.95f, 0.95f, 0.95f, 1};
     return {1.0f, 0.15f, 0.1f, 1};
 }
@@ -28,13 +33,81 @@ int level(const sim::value& v, int bit, bool active_low)
     return (b == sim::bit_state::one) != active_low ? 1 : 0;
 }
 
+// thickness of the segments
+constexpr float seg7_thickness = 5.0f;
+
+// the hexagons of segments a to g of a slanted digit, in symbol
+// coordinates. matches the box of seg7_display in builtin/io.cpp.
+const std::vector<std::vector<glm::vec2>>& seg7_polygons()
+{
+    static const auto polys = [] {
+        // the outer edges of the digit
+        const float x0 = -8, x1 = 19, y0 = -23, y1 = 23, t = seg7_thickness, gap = 0.9f, slant = 0.1f;
+        float l = x0 + t / 2, r = x1 - t / 2, b = y0 + t / 2, top = y1 - t / 2;
+        const glm::vec2 ends[7][2] = {
+            {{l, top}, {r, top}}, // a
+            {{r, top}, {r, 0}}, // b
+            {{r, 0}, {r, b}}, // c
+            {{l, b}, {r, b}}, // d
+            {{l, 0}, {l, b}}, // e
+            {{l, top}, {l, 0}}, // f
+            {{l, 0}, {r, 0}}, // g
+        };
+        std::vector<std::vector<glm::vec2>> out;
+        for (auto& e : ends) {
+            auto u = glm::normalize(e[1] - e[0]);
+            glm::vec2 n{-u.y, u.x};
+            auto p = e[0] + u * gap, q = e[1] - u * gap;
+            float h = t / 2;
+            std::vector<glm::vec2> poly{p, p + (u + n) * h, q + (n - u) * h, q, q - (u + n) * h, p + (u - n) * h};
+            for (auto& v : poly)
+                v.x += slant * v.y;
+            out.push_back(std::move(poly));
+        }
+        return out;
+    }();
+    return polys;
+}
+
+void draw_seg7(renderer& r, const model::param_values& params, const std::vector<model::port>& ports, const std::vector<sim::value>& pins,
+    const bool* shown, const std::function<glm::vec2(glm::vec2)>& world)
+{
+    auto& c = colors();
+    auto it = params.find("color");
+    auto lit = color_of(it != params.end() && std::get_if<std::string>(&it->second) ? std::get<std::string>(it->second) : std::string());
+    auto unlit = glm::mix(c.symbol_fill, c.symbol, 0.2f);
+    unlit.a = 1.0f;
+
+    int levels[8];
+    builtin::seg7_levels(params, ports, pins, levels);
+    auto color_at = [&](int k) {
+        if (levels[k] < 0) return c.unknown;
+        return (shown ? shown[k] : levels[k] == 1) ? lit : unlit;
+    };
+
+    for (int k = 0; k < 7; k++) {
+        std::vector<glm::vec2> poly;
+        for (auto p : seg7_polygons()[k])
+            poly.push_back(world(p));
+        auto color = color_at(k);
+        r.fill(poly, color);
+        // fills have hard edges, a pixel wide line along them smooths them
+        for (size_t i = 0; i < poly.size(); i++)
+            r.line(poly[i], poly[(i + 1) % poly.size()], color, r.pixel());
+    }
+    auto dp = params.find("dp");
+    if (dp != params.end() && std::get_if<bool>(&dp->second) && std::get<bool>(dp->second)) r.circle(world({24, -21}), 3.0f, color_at(7));
+}
+
 }
 
 void draw_live(renderer& r, const std::string& kind, const model::param_values& params, const model::instance& inst, const model::symbol& sym,
-    const std::vector<sim::value>& pins)
+    const std::vector<model::port>& ports, const std::vector<sim::value>& pins, const bool* shown)
 {
-    if (pins.empty()) return;
     auto world = [&](glm::vec2 p) { return glm::vec2(inst.pos) + inst.xf.apply(p); };
+    // also while editing, with the segments dark
+    if (kind == "seg7_display") return draw_seg7(r, params, ports, pins, shown, world);
+    if (pins.empty()) return;
     auto get_bool = [&](const char* name) {
         auto it = params.find(name);
         return it != params.end() && std::get_if<bool>(&it->second) && std::get<bool>(it->second);
@@ -49,34 +122,6 @@ void draw_live(renderer& r, const std::string& kind, const model::param_values& 
         auto on = level(pins[0], 0, get_bool("active_low"));
         auto color = color_of(get_text("color"));
         r.circle(world({0, 0}), 5.5f, on == 1 ? color : on == 0 ? dim(color) : c.unknown);
-    } else if (kind == "seg7_display") {
-        auto b = sym.bounds();
-        // segments inside the box: y is up
-        float x0 = b.min.x + 9, x1 = b.max.x - 9, y0 = b.min.y + 9, y1 = b.max.y - 9, ym = (y0 + y1) / 2;
-        struct seg {
-            glm::vec2 a, b;
-        };
-        const seg segs[7] = {
-            {{x0, y1}, {x1, y1}}, // a
-            {{x1, y1}, {x1, ym}}, // b
-            {{x1, ym}, {x1, y0}}, // c
-            {{x0, y0}, {x1, y0}}, // d
-            {{x0, ym}, {x0, y0}}, // e
-            {{x0, y1}, {x0, ym}}, // f
-            {{x0, ym}, {x1, ym}}, // g
-        };
-        auto color = color_of(get_text("color"));
-        bool low = get_bool("active_low");
-        for (int k = 0; k < 7; k++) {
-            auto on = level(pins[0], k, low);
-            // a bit shorter, so the segments don't touch
-            auto d = (segs[k].b - segs[k].a) * 0.12f;
-            r.line(world(segs[k].a + d), world(segs[k].b - d), on == 1 ? color : on == 0 ? dim(color) : c.unknown, 3.0f);
-        }
-        if (pins[0].width() >= 8) {
-            auto on = level(pins[0], 7, low);
-            r.circle(world({x1 + 4, y0}), 1.8f, on == 1 ? color : on == 0 ? dim(color) : c.unknown);
-        }
     } else if (kind == "hex_display") {
         auto b = sym.bounds();
         auto& v = pins[0];

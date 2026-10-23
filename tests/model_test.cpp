@@ -983,6 +983,42 @@ static void test_fill_outlines()
     CHECK(model::fill_outlines(open).empty());
 }
 
+static void test_seg7_display()
+{
+    auto p = builtin::registry().find("seg7_display");
+    CHECK(p);
+    if (!p) return;
+
+    // every input mode, bus side and option builds pins on the grid, apart
+    for (const char* input : {"bus", "pins", "hex"})
+        for (const char* side : {"left", "right", "top", "bottom"})
+            for (int opts = 0; opts < 4; opts++) {
+                model::param_values v{{"input", std::string(input)}, {"side", std::string(side)}, {"dp", (opts & 1) != 0}, {"enable", (opts & 2) != 0}};
+                v = model::resolve_params(p->params(), v);
+                CHECK(p->check(v).empty());
+                auto iface = p->build(v);
+                for (auto& pin : iface.symbol.pins)
+                    CHECK(on_grid(pin.pos));
+                for (size_t a = 0; a < iface.symbol.pins.size(); a++)
+                    for (size_t b = a + 1; b < iface.symbol.pins.size(); b++)
+                        CHECK(iface.symbol.pins[a].pos != iface.symbol.pins[b].pos);
+
+                std::string mode = input;
+                size_t expected = (mode == "pins" ? 7 : 1) + ((opts & 1) && mode != "bus" ? 1 : 0) + ((opts & 2) ? 1 : 0);
+                CHECK(iface.ports.size() == expected);
+                auto& first = iface.ports[0];
+                if (mode == "bus") CHECK(first.name == "seg" && first.width == ((opts & 1) ? 8 : 7));
+                if (mode == "hex") CHECK(first.name == "in" && first.width == 4);
+                if (mode == "pins") CHECK(first.name == "a" && iface.ports[6].name == "g" && iface.ports[6].width == 1);
+            }
+
+    // the bus is on the left by default
+    auto def = p->build(model::resolve_params(p->params(), {}));
+    CHECK(def.ports.size() == 1 && def.symbol.pins[0].pos == glm::ivec2(-30, 0));
+
+    CHECK(builtin::seg7_hex(0) == 0x3F && builtin::seg7_hex(8) == 0x7F && builtin::seg7_hex(10) == 0x77 && builtin::seg7_hex(15) == 0x71);
+}
+
 int main(int argc, char** argv)
 {
     auto dir = std::filesystem::path(argc > 1 ? argv[1] : ".") / "model_test_workspace";
@@ -999,6 +1035,7 @@ int main(int argc, char** argv)
     test_arc();
     test_clipboard();
     test_builtins();
+    test_seg7_display();
     test_save_load(dir);
     test_external_cells(dir);
     test_bundles(dir);
