@@ -1,4 +1,5 @@
 #include "symbol_editor.h"
+#include "../ui/theme.h"
 
 #include <algorithm>
 #include <set>
@@ -685,7 +686,7 @@ void symbol_editor::property_panel()
     }
 
     for (auto& problem : ctx.cell.check())
-        TextColored({1, 0.6f, 0.2f, 1}, "%s", problem.c_str());
+        TextColored(ui::color(ui::color_id::warning), "%s", problem.c_str());
 }
 
 }

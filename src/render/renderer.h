@@ -2,6 +2,7 @@
 
 #include "../model/workspace.h"
 #include "../sim/value.h"
+#include "../ui/theme.h"
 
 #include <Hd/Renderer2D.h>
 #include <Hd/Shader.h>
@@ -42,14 +43,23 @@ struct theme {
     glm::vec4 bundle;
     // inside closed outlines of symbols, see renderer::fill_symbols
     glm::vec4 symbol_fill;
+
+    // leds and 7-segment displays, by their color parameter
+    glm::vec4 display_red;
+    glm::vec4 display_green;
+    glm::vec4 display_yellow;
+    glm::vec4 display_orange;
+    glm::vec4 display_blue;
+    glm::vec4 display_cyan;
+    glm::vec4 display_white;
+    // segments that are off
+    glm::vec4 display_unlit;
 };
 
-const theme& dark_theme();
-const theme& light_theme();
-
-// the theme in use
+// the canvas colors of the theme in use, see ui::theme
 const theme& colors();
-void set_theme(const theme& t);
+// takes the colors of the ui theme
+void set_theme(const ui::theme& t);
 
 enum class grid_style {
     dots,

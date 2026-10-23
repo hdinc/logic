@@ -1,6 +1,7 @@
 #pragma once
 
 #include "component_bar.h"
+#include "theme_editor.h"
 #include "../editor/bundle_editor.h"
 #include "../editor/cell_editor.h"
 #include "../model/workspace.h"
@@ -51,7 +52,10 @@ private:
 
     // theme and canvas options, kept in imgui.ini
     void add_settings_handler();
+    // loads the theme named theme_name and shows it
     void apply_theme();
+    // shows ui::current() in imgui and on the canvas
+    void use_theme();
     // imgui's fonts, between frames
     void update_font();
     void update_canvas_font();
@@ -136,7 +140,10 @@ private:
     bool show_demo = false;
     bool show_settings = false;
 
-    bool light_theme = false;
+    // a built-in theme ("dark", "light", "black") or a custom one, see
+    // ui::find_theme
+    std::string theme_name = "dark";
+    theme_editor themes;
     int font_size = 20;
     // interface, monospace (debugger, terminal, messages) and canvas fonts,
     // the built-in ones if they have no file
@@ -152,7 +159,7 @@ private:
     ui::font_picker mono_font_picker{true};
     ui::font_picker canvas_font_picker;
     // settings at the last check, a change marks imgui.ini for saving
-    using settings = std::tuple<bool, bool, bool, render::grid_style, render::instance_names, bool, bool, component_bar::orientation, component_bar::icon_size, int, ui::font_ref, ui::font_ref, ui::font_ref>;
+    using settings = std::tuple<std::string, bool, bool, render::grid_style, render::instance_names, bool, bool, component_bar::orientation, component_bar::icon_size, int, ui::font_ref, ui::font_ref, ui::font_ref>;
     settings current_settings() const;
     settings saved_settings;
 

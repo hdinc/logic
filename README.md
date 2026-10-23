@@ -97,6 +97,14 @@ for the debugger, terminal and messages, and one for the text in schematics
 and symbols. Any installed TrueType or OpenType font with Latin letters can
 be chosen.
 
+**Edit theme...** next to the theme in the settings (or **View > Theme**)
+opens the theme editor. Every color has a name there, grouped by canvas,
+signal values, waveforms, messages, displays and the interface. Dark,
+Light and Black are built in; **Duplicate...** makes a custom theme you can
+change, saved as a JSON file in `~/.config/logic/themes`
+(`%APPDATA%\logic\themes` on Windows). The waveform viewer offers the same
+themes.
+
 While simulating, click a multi-bit input port (or use **...** next to
 it in the properties) to set its value as text in the port's format, or
 bit by bit. Ports show their values as hex, unsigned or signed decimal,

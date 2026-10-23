@@ -2294,3 +2294,168 @@ The user changed their mind about the look of the 7-segment display:
   - 1 kHz two-digit multiplex: both digits at full brightness.
   - 3 Hz: each digit stays lit 100 ms after its enable drops.
   - The gaps are visibly wider and there's no glow.
+
+## 2026-10-24 01:20 +0300
+
+### Features implemented
+
+- **Theme editor:** every color the apps use has a name and can be edited.
+  - **Opening it:** View > Settings → **Edit theme...**, or View > Theme →
+    **Edit theme...**.
+  - **Groups:** Canvas, Signals, Waveforms, Messages, Displays and
+    Interface. Interface holds all of ImGui's colors under their ImGui
+    names.
+  - **Built-in themes:** Dark and Light are read-only.
+  - **Custom themes:**
+    - **Duplicate...** makes a custom theme. Custom themes can be renamed
+      and deleted; deleting falls back to the theme's base.
+    - **Each color** has a picker with alpha, changes show live, and a
+      Reset button appears when it differs from the base theme. A filter
+      box opens the groups that match.
+    - **Saving:** they're saved as JSON in `~/.config/logic/themes`
+      (`$XDG_CONFIG_HOME`; `%APPDATA%\logic` on Windows;
+      `~/Library/Application Support/logic` on macOS).
+- **Choosing a theme:** the theme combo in Settings and View > Theme list
+  Dark, Light and the custom themes. imgui.ini keeps the choice as
+  `Theme=<name>`; old `Theme=dark` and `Theme=light` lines still work.
+- **Viewer:** the waveform viewer (`logic-wave`) has a View > Theme menu
+  with the same themes, stored in `logic-wave.ini`.
+
+### Changes made
+
+- **Shared names:** uses that mean the same thing now share one color.
+  - **Unknown and Floating:** used on the canvas and in waveforms. The
+    waveform unknown color was orange; it is now the canvas's red.
+  - **Error:** canvas missing-cell marks and the red message texts.
+  - **Warning:** the orange texts, including the paused simulation and
+    HDL warnings.
+  - **Info:** the blue "building" texts.
+  - **Success:** "built".
+  - **Program counter:** the disassembly line.
+  - **Displays:** the LED and 7-segment colors, plus "Unlit segment",
+    which was computed from the symbol colors before.
+- **Message colors:** about 30 literal `TextColored` and `PushStyleColor`
+  colors in the editors became `ui::color(ui::color_id::...)`.
+- **Files:** `src/ui/style.h/.cpp` were removed; `ui::apply_current()`
+  takes their place.
+
+### How it works
+
+- **`src/ui/theme.h/.cpp`** (in `logic_ui`, used by both apps):
+  - **`color_id`:** with a table of key, name, group, description and the
+    dark and light defaults (today's values).
+  - **`theme`:** app colors plus `ImGuiCol_COUNT` interface colors, the
+    base ("dark"/"light") and the file. `builtin_theme(light)` takes
+    ImGui's `StyleColorsDark` / `StyleColorsLight` into a scratch style,
+    so it needs no ImGui context.
+  - **Current theme:** `current()`, `set_current()`, `color()` and
+    `color_u32()`. `apply_current()` sets ImGui's colors and the apps'
+    roundings and borders.
+  - **Files:** `config_dir()`, `themes_dir()`, `list_themes()`,
+    `load_theme()`, `save_theme()`, `find_theme(name)`.
+  - **Pickers:** `theme_combo()` and `theme_menu_items()`, shared by both
+    apps.
+  - **File format:** `{"name", "base", "colors": {key: "#rrggbbaa"},
+    "interface": {ImGui name: "#rrggbbaa"}}`. Missing or invalid colors
+    come from the base theme, so files stay valid when colors are added.
+    Unknown keys are ignored.
+- **Canvas:** `render::theme` keeps its fields, so drawing code is
+  unchanged, plus the display colors. `render::set_theme(const ui::theme&)`
+  fills it. The built-in `dark_theme()` and `light_theme()` are gone.
+- **App:**
+  - `app::theme_name` replaces `light_theme`.
+  - `apply_theme()` loads by name, falling back to Dark with a message.
+  - `use_theme()` pushes `ui::current()` to ImGui and the canvas.
+- **`theme_editor`** (`src/app/theme_editor.h/.cpp`):
+  - It edits a copy of the current theme and applies it every frame a
+    color changes.
+  - It saves on `IsItemDeactivatedAfterEdit`, or on Reset.
+  - A name check refuses empty names, path characters, a leading dot,
+    "dark" or "light", and existing names. A custom theme's name is its
+    file name.
+- **Waveform view:** the six `IM_COL32` constants became functions that
+  read the theme.
+
+### Testing
+
+- **New `theme_test`:**
+  - unique keys and names, and every group has colors
+  - hex parsing and formatting
+  - built-in values (dark background, light pin) and ImGui's light
+    WindowBg
+  - a save and load round trip with every color and interface color
+  - a partial file: missing, invalid and unknown keys fall back to the
+    base
+  - broken and missing files fail with an error
+- All 8 ctest suites pass.
+- **GUI (VNC :1, `XDG_CONFIG_HOME` in the scratchpad):**
+  - Settings shows **Edit theme...**, and Dark is read-only.
+  - Duplicating as "Mine" wrote `Mine.json`.
+  - Changing Background recolored the canvas live and was saved.
+  - Filtering "windowbg" opened Interface, and changing WindowBg
+    recolored every window.
+  - Reset restored and saved the default.
+  - A restart kept `Theme=Mine`, and View > Theme listed it.
+  - `logic-wave` loaded "Mine" from the same folder and switched to Light
+    from its menu.
+  - Delete removed the file and fell back to Dark.
+
+### Recommended features
+
+- Import and export of a theme file from the editor, and an "open themes
+  folder" button.
+- Separate light-theme defaults for the message colors. They're the same
+  as in the dark theme today, as before, and orange on white is weak.
+
+### Outstanding issues
+
+- Rounding, borders and sizes of the interface aren't part of themes.
+
+## 2026-10-24 01:45 +0300
+
+### Features implemented
+
+- **Built-in Black theme:** a black canvas and black windows, listed after
+  Dark and Light in Settings, View > Theme, the theme editor and the
+  waveform viewer. Like the others it's read-only; Duplicate makes an
+  editable copy, and its colors are the base of the copy's resets and
+  missing colors.
+
+### How it works
+
+- **Black defaults:** `color_def` has a third default, `black`.
+  - **Canvas:** background `#000000`, grid `#3a3f47` at 80 %, symbols
+    `#f2f4f7`, symbol fill `#0d1420`, and slightly brighter wires and
+    signal colors than Dark.
+  - **Unlit segments:** `#1e242b`.
+  - **Messages:** brighter variants of the message colors.
+  - **Display colors:** the same as Dark.
+- **Interface:** `make_black()` starts from ImGui's dark colors and
+  overrides the surfaces:
+  - WindowBg, ChildBg, TitleBg, ScrollbarBg and DockingEmptyBg are black
+  - PopupBg and MenuBarBg are `#0a0a0a`
+  - frames are `#141414`, with blue-tinted hover and active states
+  - borders and separators are `#2e2e33`
+
+  ImGui's blue accents for buttons, headers and tabs stay.
+- **API:**
+  - `ui::builtin_theme(key)` takes "dark", "light" or "black"; an
+    unknown key gives Dark.
+  - `ui::builtin_themes()` lists them for the pickers and the name check.
+  - `theme::light()` was removed; code compares `base`.
+  - `find_theme`, the pickers' separator position and the editor's name
+    check use the list, so a later built-in theme only needs a table
+    column.
+
+### Testing
+
+- **theme_test:**
+  - Black's key and name, black background and WindowBg, and ImGui's dark
+    button color kept
+  - `find_theme("black")`
+  - an unknown key gives Dark
+  - a custom file based on black fills its gaps from Black
+- All 8 ctest suites pass.
+- **GUI:** View > Theme lists Dark, Light and Black. Black shows the black
+  canvas and windows, with a simulated two-digit display. I switched back
+  to Dark afterwards.

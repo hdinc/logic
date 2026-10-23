@@ -102,7 +102,7 @@ target_compile_definitions(ImGuiFileDialog PUBLIC USE_STD_FILESYSTEM)
 add_library(logic_ui STATIC
     src/ui/file_dialog.cpp
     src/ui/fonts.cpp
-    src/ui/style.cpp
+    src/ui/theme.cpp
     src/wave/ui/timeline.cpp
     src/wave/ui/view.cpp
 )
@@ -124,6 +124,7 @@ add_executable(logic
     src/main.cpp
     src/app/app.cpp
     src/app/component_bar.cpp
+    src/app/theme_editor.cpp
     src/render/renderer.cpp
     src/render/live.cpp
     src/editor/canvas.cpp
@@ -198,6 +199,11 @@ add_executable(vcd_test tests/vcd_test.cpp)
 target_link_libraries(vcd_test logic_wave)
 target_compile_options(vcd_test PRIVATE ${LOGIC_WARNINGS})
 add_test(NAME vcd_test COMMAND vcd_test)
+
+add_executable(theme_test tests/theme_test.cpp)
+target_link_libraries(theme_test logic_ui)
+target_compile_options(theme_test PRIVATE ${LOGIC_WARNINGS})
+add_test(NAME theme_test COMMAND theme_test ${CMAKE_CURRENT_BINARY_DIR})
 
 add_executable(waveform_test tests/waveform_test.cpp)
 target_link_libraries(waveform_test logic_core logic_ui)

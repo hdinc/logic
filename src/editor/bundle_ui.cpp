@@ -1,5 +1,6 @@
 #include "bundle_ui.h"
 #include "../render/renderer.h"
+#include "../ui/theme.h"
 
 #include <imgui.h>
 
@@ -44,7 +45,7 @@ void bundle_fields_table(const model::bundle_layout& layout, const sim::value* v
     using namespace ImGui;
 
     if (!layout) {
-        TextColored({1, 0.6f, 0.2f, 1}, "%s", layout.error.c_str());
+        TextColored(ui::color(ui::color_id::warning), "%s", layout.error.c_str());
         return;
     }
     if (layout.nodes.empty()) {

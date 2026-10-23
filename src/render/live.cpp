@@ -11,13 +11,14 @@ namespace {
 
 glm::vec4 color_of(const std::string& name)
 {
-    if (name == "green") return {0.2f, 0.9f, 0.3f, 1};
-    if (name == "yellow") return {1.0f, 0.85f, 0.1f, 1};
-    if (name == "orange") return {1.0f, 0.5f, 0.05f, 1};
-    if (name == "blue") return {0.3f, 0.55f, 1.0f, 1};
-    if (name == "cyan") return {0.2f, 0.9f, 0.95f, 1};
-    if (name == "white") return {0.95f, 0.95f, 0.95f, 1};
-    return {1.0f, 0.15f, 0.1f, 1};
+    auto& c = colors();
+    if (name == "green") return c.display_green;
+    if (name == "yellow") return c.display_yellow;
+    if (name == "orange") return c.display_orange;
+    if (name == "blue") return c.display_blue;
+    if (name == "cyan") return c.display_cyan;
+    if (name == "white") return c.display_white;
+    return c.display_red;
 }
 
 glm::vec4 dim(glm::vec4 c)
@@ -75,8 +76,7 @@ void draw_seg7(renderer& r, const model::param_values& params, const std::vector
     auto& c = colors();
     auto it = params.find("color");
     auto lit = color_of(it != params.end() && std::get_if<std::string>(&it->second) ? std::get<std::string>(it->second) : std::string());
-    auto unlit = glm::mix(c.symbol_fill, c.symbol, 0.2f);
-    unlit.a = 1.0f;
+    auto unlit = c.display_unlit;
 
     int levels[8];
     builtin::seg7_levels(params, ports, pins, levels);

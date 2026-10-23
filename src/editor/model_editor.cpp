@@ -1,4 +1,5 @@
 #include "model_editor.h"
+#include "../ui/theme.h"
 #include "param_editor.h"
 #include "file_dialog.h"
 
@@ -37,7 +38,7 @@ bool string_list(const char* id, std::vector<std::string>& list, const char* add
         SetItemTooltip("remove");
         if (dir && !dir->empty() && !list[k].empty() && !std::filesystem::exists(*dir / list[k])) {
             SameLine();
-            TextColored({1, 0.6f, 0.2f, 1}, "?");
+            TextColored(ui::color(ui::color_id::warning), "?");
             SetItemTooltip("not found in %s", dir->string().c_str());
         }
         PopID();
@@ -105,7 +106,7 @@ void model_editor::gui(bool locked)
     if (!refresh_message.empty()) {
         SameLine();
         if (refresh_failed)
-            TextColored({1, 0.4f, 0.4f, 1}, "%s", refresh_message.c_str());
+            TextColored(ui::color(ui::color_id::error), "%s", refresh_message.c_str());
         else
             TextDisabled("%s", refresh_message.c_str());
     }
@@ -223,7 +224,7 @@ void model_editor::c_model_settings(model::c_model_impl& m)
     SetItemTooltip("name of the model inside the plugin");
 
     if (!error.empty()) {
-        TextColored({1, 0.4f, 0.4f, 1}, "%s", error.c_str());
+        TextColored(ui::color(ui::color_id::error), "%s", error.c_str());
     } else if (loaded) {
         if (auto d = loaded->find(m.model); d && d->description) TextDisabled("%s", d->description);
     }
@@ -286,7 +287,7 @@ void model_editor::hdl_build(const model::hdl_impl& h)
     bool ok;
     auto tool = ctx.hdl->tool_status(h.backend, ok);
     if (!ok) {
-        TextColored({1, 0.4f, 0.4f, 1}, "%s", tool.c_str());
+        TextColored(ui::color(ui::color_id::error), "%s", tool.c_str());
         return;
     }
     TextDisabled("%s", tool.c_str());
@@ -303,17 +304,17 @@ void model_editor::hdl_build(const model::hdl_impl& h)
 
     switch (st.state) {
     case hdl::build_status::none: TextDisabled("not built in this session"); break;
-    case hdl::build_status::queued: TextColored({0.4f, 0.7f, 1, 1}, "waiting..."); break;
-    case hdl::build_status::building: TextColored({0.4f, 0.7f, 1, 1}, "building..."); break;
-    case hdl::build_status::done: TextColored({0.4f, 0.9f, 0.4f, 1}, "built"); break;
-    case hdl::build_status::failed: TextColored({1, 0.4f, 0.4f, 1}, "failed"); break;
+    case hdl::build_status::queued: TextColored(ui::color(ui::color_id::info), "waiting..."); break;
+    case hdl::build_status::building: TextColored(ui::color(ui::color_id::info), "building..."); break;
+    case hdl::build_status::done: TextColored(ui::color(ui::color_id::success), "built"); break;
+    case hdl::build_status::failed: TextColored(ui::color(ui::color_id::error), "failed"); break;
     }
 
     if (!st.error.empty()) TextWrapped("%s", st.error.c_str());
 
     // messages with a place in the sources
     for (auto& d : st.diagnostics) {
-        auto color = d.severity == "error" ? ImVec4{1, 0.4f, 0.4f, 1} : ImVec4{1, 0.8f, 0.3f, 1};
+        auto color = d.severity == "error" ? ui::color(ui::color_id::error) : ui::color(ui::color_id::warning);
         auto where = d.file.empty() ? std::string() : std::filesystem::path(d.file).filename().string() + ":" + std::to_string(d.line) + ": ";
         TextColored(color, "%s%s", where.c_str(), d.message.c_str());
         if (!d.file.empty()) SetItemTooltip("%s:%d:%d", d.file.c_str(), d.line, d.column);
@@ -417,7 +418,7 @@ void model_editor::ports_table()
     SetItemTooltip("Replace the symbol with a box: inputs left, outputs right, in the order of the ports");
 
     for (auto& problem : c.check())
-        TextColored({1, 0.6f, 0.2f, 1}, "%s", problem.c_str());
+        TextColored(ui::color(ui::color_id::warning), "%s", problem.c_str());
 }
 
 void model_editor::groups_table()
@@ -575,7 +576,7 @@ void model_editor::groups_table()
     }
     if (!groups->empty())
         for (auto& p : ctx.ws.group_ports(c.model_ports(), *groups).problems)
-            TextColored({1, 0.6f, 0.2f, 1}, "%s", p.c_str());
+            TextColored(ui::color(ui::color_id::warning), "%s", p.c_str());
 }
 
 void model_editor::params_table()

@@ -1,6 +1,7 @@
 #include "schematic_editor.h"
 #include "../render/live.h"
 #include "../sim/numbers.h"
+#include "../ui/theme.h"
 #include "bundle_ui.h"
 #include "number_ui.h"
 #include "param_editor.h"
@@ -1105,7 +1106,7 @@ void schematic_editor::property_panel()
             Text("Cell: %s / %s", l->name.c_str(), c->name.c_str());
             if (auto prim = ctx.ws.primitive_of(*c); prim && !prim->description().empty()) TextDisabled("%s", prim->description().c_str());
         } else {
-            TextColored({1, 0.3f, 0.3f, 1}, "Cell is missing");
+            TextColored(ui::color(ui::color_id::error), "Cell is missing");
         }
 
         int rot = i->xf.rotation;
@@ -1130,7 +1131,7 @@ void schematic_editor::property_panel()
                 normalize();
             }
             auto problem = ctx.ws.check_instance(*i);
-            if (!problem.empty()) TextColored({1, 0.6f, 0.2f, 1}, "%s", problem.c_str());
+            if (!problem.empty()) TextColored(ui::color(ui::color_id::warning), "%s", problem.c_str());
         }
         return;
     }
@@ -1227,9 +1228,9 @@ void schematic_editor::property_panel()
     }
 
     for (auto& problem : ctx.cell.check())
-        TextColored({1, 0.6f, 0.2f, 1}, "%s", problem.c_str());
+        TextColored(ui::color(ui::color_id::warning), "%s", problem.c_str());
     for (auto& problem : nets.problems)
-        TextColored({1, 0.6f, 0.2f, 1}, "%s", problem.c_str());
+        TextColored(ui::color(ui::color_id::warning), "%s", problem.c_str());
 }
 
 }

@@ -1,5 +1,6 @@
 #include "number_ui.h"
 #include "../sim/numbers.h"
+#include "../ui/theme.h"
 
 #include <imgui.h>
 
@@ -53,7 +54,7 @@ bool edit_number(const char* label, sim::value& v, int width, model::number_form
     // room for every bit in binary, with separators
     std::vector<char> buf(std::max<size_t>(text.size(), 2 * width) + 64, 0);
     text.copy(buf.data(), buf.size() - 1);
-    if (!valid) PushStyleColor(ImGuiCol_Text, ImVec4{1, 0.4f, 0.4f, 1});
+    if (!valid) PushStyleColor(ImGuiCol_Text, ui::color(ui::color_id::error));
     bool enter = InputText(label, buf.data(), buf.size(), ImGuiInputTextFlags_EnterReturnsTrue);
     if (!valid) PopStyleColor();
     if (IsItemActive())

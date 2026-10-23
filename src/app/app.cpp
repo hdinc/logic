@@ -3,7 +3,7 @@
 #include "../editor/param_editor.h"
 #include "../io/storage.h"
 #include "../plugin/libraries.h"
-#include "../ui/style.h"
+#include "../ui/theme.h"
 
 #include <Hd/Resource.h>
 #include <imgui.h>
@@ -153,8 +153,9 @@ void app::add_settings_handler()
         auto a = (app*)h->UserData;
         char str[32];
         int i;
-        if (std::sscanf(line, "Theme=%31s", str) == 1)
-            a->light_theme = std::strcmp(str, "light") == 0;
+        // the rest of the line, names of custom themes may have spaces
+        if (std::strncmp(line, "Theme=", 6) == 0)
+            a->theme_name = line + 6;
         else if (std::sscanf(line, "Grid=%d", &i) == 1)
             a->renderer.show_grid = i != 0;
         else if (std::sscanf(line, "GridStyle=%31s", str) == 1)
@@ -199,7 +200,7 @@ void app::add_settings_handler()
     };
     h.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* h, ImGuiTextBuffer* buf) {
         auto a = (app*)h->UserData;
-        buf->appendf("[Logic][Settings]\nTheme=%s\nGrid=%d\nGridStyle=%s\nComponentBar=%s\nFontSize=%d\n", a->light_theme ? "light" : "dark", a->renderer.show_grid ? 1 : 0, grid_style_name(a->renderer.grid), a->components.dir == component_bar::orientation::horizontal ? "horizontal" : "vertical", a->font_size);
+        buf->appendf("[Logic][Settings]\nTheme=%s\nGrid=%d\nGridStyle=%s\nComponentBar=%s\nFontSize=%d\n", a->theme_name.c_str(), a->renderer.show_grid ? 1 : 0, grid_style_name(a->renderer.grid), a->components.dir == component_bar::orientation::horizontal ? "horizontal" : "vertical", a->font_size);
         // the file's path is the rest of the line
         const char* names[] = {"all", "custom", "none"};
         const char* sizes[] = {"small", "medium", "large"};
@@ -213,13 +214,25 @@ void app::add_settings_handler()
 
 app::settings app::current_settings() const
 {
-    return {light_theme, renderer.show_grid, renderer.show_origin, renderer.grid, renderer.names, renderer.thick_buses, renderer.fill_symbols, components.dir, components.size, font_size, ui_font, mono_font, canvas_font};
+    return {theme_name, renderer.show_grid, renderer.show_origin, renderer.grid, renderer.names, renderer.thick_buses, renderer.fill_symbols, components.dir, components.size, font_size, ui_font, mono_font, canvas_font};
 }
 
 void app::apply_theme()
 {
-    render::set_theme(light_theme ? render::light_theme() : render::dark_theme());
-    ui::apply_style(light_theme);
+    ui::theme t;
+    std::string error;
+    if (!ui::find_theme(theme_name, t, error)) {
+        message("Theme '" + theme_name + "': " + error + ", using Dark");
+        theme_name = "dark";
+    }
+    ui::set_current(std::move(t));
+    use_theme();
+}
+
+void app::use_theme()
+{
+    ui::apply_current();
+    render::set_theme(ui::current());
 }
 
 void app::settings_window()
@@ -240,11 +253,9 @@ void app::settings_window()
     SetNextWindowPos(GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, {0.5f, 0.5f});
     if (Begin("Settings", &show_settings, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
         SeparatorText("Appearance");
-        int theme = light_theme ? 1 : 0;
-        if (Combo("Theme", &theme, "Dark\0Light\0")) {
-            light_theme = theme == 1;
-            apply_theme();
-        }
+        if (ui::theme_combo("Theme", theme_name)) apply_theme();
+        SameLine();
+        if (Button("Edit theme...")) themes.open = true;
         int size = font_size;
         SliderInt("Font size", &size, 12, 40, "%d px", ImGuiSliderFlags_AlwaysClamp);
         SameLine();
@@ -360,6 +371,7 @@ void app::draw_gui()
     hierarchy_panel();
     messages_panel();
     settings_window();
+    themes.gui(theme_name, [&] { use_theme(); }, [&] { apply_theme(); });
     exit_dialog();
 }
 
@@ -530,14 +542,9 @@ void app::menu_bar()
                 EndMenu();
             }
             if (BeginMenu("Theme")) {
-                if (MenuItem("Dark", nullptr, !light_theme)) {
-                    light_theme = false;
-                    apply_theme();
-                }
-                if (MenuItem("Light", nullptr, light_theme)) {
-                    light_theme = true;
-                    apply_theme();
-                }
+                if (ui::theme_menu_items(theme_name)) apply_theme();
+                Separator();
+                if (MenuItem("Edit theme...")) themes.open = true;
                 EndMenu();
             }
             EndMenu();
@@ -755,7 +762,7 @@ void app::rename_input(model::library& lib, std::string& name, bool bundle)
             rename_focus = true;
         }
     }
-    if (renaming != model::no_id && !rename_error.empty()) TextColored({1, 0.4f, 0.4f, 1}, "%s", rename_error.c_str());
+    if (renaming != model::no_id && !rename_error.empty()) TextColored(ui::color(ui::color_id::error), "%s", rename_error.c_str());
 }
 
 void app::start_rename(model::id item, const std::string& name)

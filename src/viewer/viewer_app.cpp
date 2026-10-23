@@ -3,7 +3,7 @@
 #include "viewer_app.h"
 #include "../ui/file_dialog.h"
 #include "../ui/fonts.h"
-#include "../ui/style.h"
+#include "../ui/theme.h"
 
 #include <Hd/Resource.h>
 #include <GLFW/glfw3.h>
@@ -383,9 +383,13 @@ void viewer_app::menu_bar()
         EndMenu();
     }
     if (BeginMenu("View")) {
-        if (MenuItem("Light theme", nullptr, &light_theme)) {
-            apply_theme();
-            MarkIniSettingsDirty();
+        if (BeginMenu("Theme")) {
+            // the logic app's themes, edited there
+            if (ui::theme_menu_items(theme_name)) {
+                apply_theme();
+                MarkIniSettingsDirty();
+            }
+            EndMenu();
         }
         if (MenuItem("Remove all rows", nullptr, false, view.rows() > 0)) view.clear();
         EndMenu();
@@ -449,20 +453,27 @@ void viewer_app::add_settings_handler()
     };
     h.ReadLineFn = [](ImGuiContext*, ImGuiSettingsHandler* h, void*, const char* line) {
         auto a = (viewer_app*)h->UserData;
-        char str[32];
-        if (std::sscanf(line, "Theme=%31s", str) == 1) a->light_theme = std::strcmp(str, "light") == 0;
+        // the rest of the line, names of custom themes may have spaces
+        if (std::strncmp(line, "Theme=", 6) == 0) a->theme_name = line + 6;
     };
     h.ApplyAllFn = [](ImGuiContext*, ImGuiSettingsHandler* h) { ((viewer_app*)h->UserData)->apply_theme(); };
     h.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* h, ImGuiTextBuffer* buf) {
         auto a = (viewer_app*)h->UserData;
-        buf->appendf("[LogicWave][Settings]\nTheme=%s\n\n", a->light_theme ? "light" : "dark");
+        buf->appendf("[LogicWave][Settings]\nTheme=%s\n\n", a->theme_name.c_str());
     };
     ImGui::AddSettingsHandler(&h);
 }
 
 void viewer_app::apply_theme()
 {
-    ui::apply_style(light_theme);
+    ui::theme t;
+    std::string error;
+    if (!ui::find_theme(theme_name, t, error)) {
+        notes.push_back("Theme '" + theme_name + "': " + error + ", using Dark");
+        theme_name = "dark";
+    }
+    ui::set_current(std::move(t));
+    ui::apply_current();
     auto bg = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
     glClearColor(bg.x, bg.y, bg.z, 1);
 }

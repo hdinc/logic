@@ -1,5 +1,6 @@
 #include "view.h"
 #include "../search.h"
+#include "../../ui/theme.h"
 
 #include <imgui.h>
 
@@ -18,12 +19,13 @@ time as_time(double t)
     return (time)std::clamp(t, 0.0, max_time);
 }
 
-constexpr ImU32 known_color = IM_COL32(80, 200, 130, 255);
-constexpr ImU32 unknown_color = IM_COL32(245, 130, 80, 255);
-constexpr ImU32 floating_color = IM_COL32(120, 170, 240, 255);
-constexpr ImU32 cursor_a_color = IM_COL32(240, 200, 70, 255);
-constexpr ImU32 cursor_b_color = IM_COL32(90, 200, 240, 255);
-constexpr ImU32 marker_color = IM_COL32(200, 130, 240, 255);
+// from the theme in use
+ImU32 known_color() { return ui::color_u32(ui::color_id::wave_value); }
+ImU32 unknown_color() { return ui::color_u32(ui::color_id::unknown); }
+ImU32 floating_color() { return ui::color_u32(ui::color_id::floating); }
+ImU32 cursor_a_color() { return ui::color_u32(ui::color_id::cursor_a); }
+ImU32 cursor_b_color() { return ui::color_u32(ui::color_id::cursor_b); }
+ImU32 marker_color() { return ui::color_u32(ui::color_id::marker); }
 
 ImU32 with_alpha(ImU32 c, float a)
 {
@@ -34,9 +36,9 @@ ImU32 with_alpha(ImU32 c, float a)
 
 ImU32 change_color(const trace& t, size_t i, ImU32 custom)
 {
-    if (t.fully_floating(i)) return floating_color;
-    if (!t.fully_known(i)) return unknown_color;
-    return custom ? custom : known_color;
+    if (t.fully_floating(i)) return floating_color();
+    if (!t.fully_known(i)) return unknown_color();
+    return custom ? custom : known_color();
 }
 
 bool input_string(const char* label, std::string& s, ImGuiInputTextFlags flags = 0)
@@ -82,7 +84,7 @@ void draw_digital(ImDrawList& draw, const trace& tr, format f, const mapping& m,
     bool dense_known = true;
     auto flush = [&] {
         if (dense_b < dense_a) return;
-        auto c = dense_known ? (custom ? custom : known_color) : unknown_color;
+        auto c = dense_known ? (custom ? custom : known_color()) : unknown_color();
         draw.AddRectFilled({dense_a, high}, {std::max(dense_b, dense_a + 1), low}, c);
         dense_b = -1;
         dense_known = true;
@@ -164,7 +166,7 @@ void draw_analog(ImDrawList& draw, const trace& tr, display mode, bool is_signed
             float xa = m.x(double(tr.at(i))), xb = x_end(i);
             if (std::isnan(v)) {
                 flush();
-                draw.AddRectFilled({xa, y0}, {std::max(xb, xa + 1), y1}, with_alpha(unknown_color, 0.25f));
+                draw.AddRectFilled({xa, y0}, {std::max(xb, xa + 1), y1}, with_alpha(unknown_color(), 0.25f));
                 continue;
             }
             float y = y_of(v);
@@ -189,7 +191,7 @@ void draw_analog(ImDrawList& draw, const trace& tr, display mode, bool is_signed
         if (a == trace::npos) a = 0;
         auto [l, h] = tr.range(a, b + 1, is_signed);
         if (std::isnan(l)) {
-            draw.AddLine({x, y0}, {x, y1}, with_alpha(unknown_color, 0.25f));
+            draw.AddLine({x, y0}, {x, y1}, with_alpha(unknown_color(), 0.25f));
             continue;
         }
         draw.AddLine({x + 0.5f, y_of(h)}, {x + 0.5f, y_of(l) + 1}, color, 1.5f);
@@ -509,7 +511,7 @@ void view::toolbar(const trace_set& data, view_host& host)
     if (Button("Find >")) find(data, true);
     if (!search_status.empty()) {
         SameLine();
-        TextColored(ColorConvertU32ToFloat4(unknown_color), "%s", search_status.c_str());
+        TextColored(ColorConvertU32ToFloat4(unknown_color()), "%s", search_status.c_str());
     }
 }
 
@@ -578,7 +580,7 @@ void view::row_menu(const trace_set& data, row& r, const signal& s)
     Separator();
     SetNextItemWidth(GetFontSize() * 8);
     SliderFloat("Height", &r.height, 0.5f, 8.0f, "%.1f");
-    ImVec4 c = r.color ? ColorConvertU32ToFloat4(r.color) : ColorConvertU32ToFloat4(known_color);
+    ImVec4 c = r.color ? ColorConvertU32ToFloat4(r.color) : ColorConvertU32ToFloat4(known_color());
     if (ColorEdit3("Color", &c.x, ImGuiColorEditFlags_NoInputs)) r.color = ColorConvertFloat4ToU32(c);
     if (r.color) {
         SameLine();
@@ -807,7 +809,7 @@ void view::plot(const trace_set& data, view_host& host, float plot_height)
                 lo -= pad;
                 hi += pad;
             }
-            draw_analog(*draw, *tr, r.mode, is_signed, lo, hi, m, data.end, top, l.height, r.color ? r.color : known_color);
+            draw_analog(*draw, *tr, r.mode, is_signed, lo, hi, m, data.end, top, l.height, r.color ? r.color : known_color());
             draw->AddText({left + 3, top + 2}, muted, format_real(hi).c_str());
             draw->AddText({left + 3, top + l.height - GetTextLineHeight() - 2}, muted, format_real(lo).c_str());
         } else {
@@ -828,7 +830,7 @@ void view::plot(const trace_set& data, view_host& host, float plot_height)
     draw->PushClipRect({left, axis_y}, {left + width, axis_y + visible_height}, true);
     if (cursor_a && cursor_b) {
         float xa = m.x(double(*cursor_a)), xb = m.x(double(*cursor_b));
-        draw->AddRectFilled({std::min(xa, xb), lines_top}, {std::max(xa, xb), lines_bottom}, with_alpha(cursor_b_color, 0.08f));
+        draw->AddRectFilled({std::min(xa, xb), lines_top}, {std::max(xa, xb), lines_bottom}, with_alpha(cursor_b_color(), 0.08f));
         time d = *cursor_a > *cursor_b ? *cursor_a - *cursor_b : *cursor_b - *cursor_a;
         auto label = format_time(d, data.tb);
         auto f = format_frequency(double(d), data.tb);
@@ -836,18 +838,18 @@ void view::plot(const trace_set& data, view_host& host, float plot_height)
         auto size = CalcTextSize(label.c_str());
         float cx = (xa + xb) / 2 - size.x / 2;
         draw->AddRectFilled({cx - 4, lines_top + 2}, {cx + size.x + 4, lines_top + size.y + 4}, GetColorU32(ImGuiCol_PopupBg));
-        draw->AddText({cx, lines_top + 3}, cursor_b_color, label.c_str());
+        draw->AddText({cx, lines_top + 3}, cursor_b_color(), label.c_str());
     }
     for (auto& mk : markers) {
         float x = m.x(double(mk.t));
-        dashed_line(*draw, x, axis_y + axis_height / 2, lines_bottom, marker_color);
-        draw->AddText({x + 3, axis_y + axis_height / 2}, marker_color, mk.name.c_str());
+        dashed_line(*draw, x, axis_y + axis_height / 2, lines_bottom, marker_color());
+        draw->AddText({x + 3, axis_y + axis_height / 2}, marker_color(), mk.name.c_str());
     }
-    if (cursor_a) draw->AddLine({m.x(double(*cursor_a)), axis_y}, {m.x(double(*cursor_a)), lines_bottom}, cursor_a_color, 1.5f);
-    if (cursor_b) draw->AddLine({m.x(double(*cursor_b)), axis_y}, {m.x(double(*cursor_b)), lines_bottom}, cursor_b_color, 1.5f);
+    if (cursor_a) draw->AddLine({m.x(double(*cursor_a)), axis_y}, {m.x(double(*cursor_a)), lines_bottom}, cursor_a_color(), 1.5f);
+    if (cursor_b) draw->AddLine({m.x(double(*cursor_b)), axis_y}, {m.x(double(*cursor_b)), lines_bottom}, cursor_b_color(), 1.5f);
     if (region_from && IsMouseDown(ImGuiMouseButton_Left)) {
         float xa = m.x(*region_from), xb = io.MousePos.x;
-        draw->AddRectFilled({std::min(xa, xb), axis_y}, {std::max(xa, xb), lines_bottom}, with_alpha(cursor_a_color, 0.12f));
+        draw->AddRectFilled({std::min(xa, xb), axis_y}, {std::max(xa, xb), lines_bottom}, with_alpha(cursor_a_color(), 0.12f));
     }
     draw->PopClipRect();
     draw->AddRectFilled({left - divider, axis_y}, {left, axis_y + visible_height},
@@ -907,12 +909,12 @@ void view::overview(const trace_set& data, float bar_height)
     auto draw = GetWindowDrawList();
     draw->AddRectFilled(pos, {pos.x + width, pos.y + bar_height}, GetColorU32(ImGuiCol_FrameBg), 3);
     // where there is data
-    draw->AddRectFilled({x_of(double(first)), pos.y + bar_height - 4}, {x_of(double(last)), pos.y + bar_height - 1}, with_alpha(known_color, 0.6f));
+    draw->AddRectFilled({x_of(double(first)), pos.y + bar_height - 4}, {x_of(double(last)), pos.y + bar_height - 1}, with_alpha(known_color(), 0.6f));
     draw->AddRectFilled({wa, pos.y}, {wb, pos.y + bar_height}, GetColorU32(IsItemActive() ? ImGuiCol_ButtonActive : ImGuiCol_Button), 3);
     for (auto& mk : markers)
-        draw->AddLine({x_of(double(mk.t)), pos.y}, {x_of(double(mk.t)), pos.y + bar_height}, marker_color);
-    if (cursor_a) draw->AddLine({x_of(double(*cursor_a)), pos.y}, {x_of(double(*cursor_a)), pos.y + bar_height}, cursor_a_color);
-    if (cursor_b) draw->AddLine({x_of(double(*cursor_b)), pos.y}, {x_of(double(*cursor_b)), pos.y + bar_height}, cursor_b_color);
+        draw->AddLine({x_of(double(mk.t)), pos.y}, {x_of(double(mk.t)), pos.y + bar_height}, marker_color());
+    if (cursor_a) draw->AddLine({x_of(double(*cursor_a)), pos.y}, {x_of(double(*cursor_a)), pos.y + bar_height}, cursor_a_color());
+    if (cursor_b) draw->AddLine({x_of(double(*cursor_b)), pos.y}, {x_of(double(*cursor_b)), pos.y + bar_height}, cursor_b_color());
 
     auto view_text = format_time(as_time(timeline.start()), data.tb) + " - " + format_time(as_time(timeline.end()), data.tb) + "  (" +
         format_time(as_time(timeline.span()), data.tb) + ")";

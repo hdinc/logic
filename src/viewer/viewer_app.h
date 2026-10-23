@@ -83,7 +83,8 @@ private:
 
     std::string error_message;
     std::vector<std::string> notes;
-    bool light_theme = false;
+    // a built-in theme or a custom one of the logic app, see ui::find_theme
+    std::string theme_name = "dark";
     bool should_exit = false;
     bool show_help = false;
 };

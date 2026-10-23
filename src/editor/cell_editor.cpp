@@ -1,6 +1,7 @@
 #include "cell_editor.h"
 #include "../builtin/builtin.h"
 #include "../io/json.h"
+#include "../ui/theme.h"
 
 #include <imgui_internal.h>
 
@@ -142,7 +143,7 @@ void cell_editor::toolbar()
     BeginDisabled(!schematic);
     if (!building.empty()) {
         if (tool_button("Cancel", "Don't wait for the builds, they go on in the background (F5)", true)) building.clear();
-        TextColored({0.4f, 0.7f, 1, 1}, "building %zu HDL model(s)...", building.size());
+        TextColored(ui::color(ui::color_id::info), "building %zu HDL model(s)...", building.size());
         SameLine();
     } else if (tool_button(session ? "Stop" : "Simulate", session ? "Back to editing (F5)" : "Simulate the schematic (F5)", session != nullptr)) {
         if (session)
@@ -152,7 +153,7 @@ void cell_editor::toolbar()
     }
     EndDisabled();
     if (!start_error.empty() && !session) {
-        TextColored({1, 0.4f, 0.4f, 1}, "%s", start_error.c_str());
+        TextColored(ui::color(ui::color_id::error), "%s", start_error.c_str());
         SameLine();
         if (SmallButton("x")) start_error.clear();
         SameLine();
@@ -221,7 +222,7 @@ void cell_editor::edit_toolbar()
 
     SameLine();
     if (locked())
-        TextColored({1, 0.6f, 0.2f, 1}, "used by the simulation of '%s', stop it to edit", locked_by.c_str());
+        TextColored(ui::color(ui::color_id::warning), "used by the simulation of '%s', stop it to edit", locked_by.c_str());
     else
         TextDisabled("Shift: keep placing");
 }
@@ -391,7 +392,7 @@ void cell_editor::property_panel()
         return;
     }
 
-    if (locked()) ImGui::TextColored({1, 0.6f, 0.2f, 1}, "Used by the simulation of '%s'", locked_by.c_str());
+    if (locked()) ImGui::TextColored(ui::color(ui::color_id::warning), "Used by the simulation of '%s'", locked_by.c_str());
     ImGui::BeginDisabled(locked());
     if (show_symbol)
         symbol.property_panel();

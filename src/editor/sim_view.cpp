@@ -3,6 +3,7 @@
 #include "number_ui.h"
 #include "../sim/numbers.h"
 #include "../ui/fonts.h"
+#include "../ui/theme.h"
 
 #include <imgui_internal.h>
 
@@ -231,21 +232,21 @@ void sim_view::toolbar()
         SameLine();
         double actual = run.actual_speed();
         if (!max && actual > 0.0 && actual < speed * 0.9)
-            TextColored({1, 0.6f, 0.2f, 1}, "(%.3g x, slower than set)", actual);
+            TextColored(ui::color(ui::color_id::warning), "(%.3g x, slower than set)", actual);
         else
             TextDisabled("(%.3g x)", actual);
     }
     if (sim.oscillating()) {
         SameLine();
-        TextColored({1, 0.3f, 0.3f, 1}, "oscillating");
+        TextColored(ui::color(ui::color_id::error), "oscillating");
     }
     if (!sim.paused().empty() && !running) {
         SameLine();
-        TextColored({1, 0.75f, 0.2f, 1}, "paused, %s", sim.paused().c_str());
+        TextColored(ui::color(ui::color_id::warning), "paused, %s", sim.paused().c_str());
     }
     if (!sim.problems().empty()) {
         SameLine();
-        TextColored({1, 0.6f, 0.2f, 1}, "%zu problem(s), see properties", sim.problems().size());
+        TextColored(ui::color(ui::color_id::warning), "%zu problem(s), see properties", sim.problems().size());
     }
 }
 
@@ -543,9 +544,9 @@ void sim_view::property_panel()
 
     SeparatorText("Simulation");
     Text("Top: %s, t = %s", sim.root().cell->name.c_str(), sim::format_time(sim.now()).c_str());
-    if (sim.oscillating()) TextColored({1, 0.3f, 0.3f, 1}, "The circuit doesn't settle, e.g. a gate feeding itself");
+    if (sim.oscillating()) TextColored(ui::color(ui::color_id::error), "The circuit doesn't settle, e.g. a gate feeding itself");
     for (auto& p : sim.problems())
-        TextColored({1, 0.6f, 0.2f, 1}, "%s", p.c_str());
+        TextColored(ui::color(ui::color_id::warning), "%s", p.c_str());
 
     auto& ports = sc.cell->ports;
 
@@ -741,7 +742,7 @@ void sim_view::instance_panel()
                 char addr[32];
                 std::snprintf(addr, sizeof(addr), "%04llX  ", (unsigned long long)l.address);
                 PushID((int)l.address);
-                if (at_pc) PushStyleColor(ImGuiCol_Text, ImVec4{1, 0.85f, 0.3f, 1});
+                if (at_pc) PushStyleColor(ImGuiCol_Text, ui::color(ui::color_id::program_counter));
                 // a click sets or clears a breakpoint
                 if (Selectable((label + addr + l.text).c_str(), false)) {
                     auto a = l.address;

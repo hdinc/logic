@@ -12,79 +12,54 @@ namespace logic::render {
 
 namespace {
 
-constexpr glm::vec4 rgb(int hex, float a = 1.0f)
-{
-    return {((hex >> 16) & 255) / 255.0f, ((hex >> 8) & 255) / 255.0f, (hex & 255) / 255.0f, a};
-}
+theme current;
 
-const theme* current = &dark_theme();
-
-}
-
-const theme& dark_theme()
-{
-    static const theme t{
-        .background = rgb(0x15171a),
-        .grid = rgb(0x6a7080, 0.8f),
-        .symbol = rgb(0xe4e7eb),
-        .wire = rgb(0xa2a9b3),
-        .bus_wire = rgb(0x6fa8dc),
-        .bundle_wire = rgb(0xb98ae6),
-        .label = rgb(0x8a919c),
-        .selection = rgb(0xffc533),
-        .guide = rgb(0x6f8a33),
-        .pin = rgb(0x5a9bff),
-        .control_point = rgb(0xff4d4d),
-        .error = rgb(0xff4d4d),
-        .width_error = rgb(0xff8c1a),
-        .preview = rgb(0x8a919c),
-        .high = rgb(0x3ee65a),
-        .low = rgb(0x1d7a2f),
-        .unknown = rgb(0xff4d4d),
-        .floating = rgb(0x5a8cff),
-        .bus = rgb(0x8cc8f2),
-        .bundle = rgb(0xd2b0f5),
-        .symbol_fill = rgb(0x1f2b38),
-    };
-    return t;
-}
-
-const theme& light_theme()
-{
-    static const theme t{
-        .background = rgb(0xfafaf8),
-        .grid = rgb(0x9aa0ab, 0.8f),
-        .symbol = rgb(0x1e2126),
-        .wire = rgb(0x4d545e),
-        .bus_wire = rgb(0x2f6fb5),
-        .bundle_wire = rgb(0x8a3fc4),
-        .label = rgb(0x737a85),
-        .selection = rgb(0xf08c00),
-        .guide = rgb(0x8ca640),
-        .pin = rgb(0x1a66e6),
-        .control_point = rgb(0xd91a1a),
-        .error = rgb(0xd91a1a),
-        .width_error = rgb(0xf07800),
-        .preview = rgb(0x9097a3),
-        .high = rgb(0x12b333),
-        .low = rgb(0x0d6120),
-        .unknown = rgb(0xe01b1b),
-        .floating = rgb(0x2966f0),
-        .bus = rgb(0x1f7acc),
-        .bundle = rgb(0x9b4fd9),
-        .symbol_fill = rgb(0xdce8f5),
-    };
-    return t;
 }
 
 const theme& colors()
 {
-    return *current;
+    return current;
 }
 
-void set_theme(const theme& t)
+void set_theme(const ui::theme& t)
 {
-    current = &t;
+    auto c = [&](ui::color_id id) {
+        auto v = t[id];
+        return glm::vec4{v.x, v.y, v.z, v.w};
+    };
+    using ui::color_id;
+    current = {
+        .background = c(color_id::background),
+        .grid = c(color_id::grid),
+        .symbol = c(color_id::symbol),
+        .wire = c(color_id::wire),
+        .bus_wire = c(color_id::bus_wire),
+        .bundle_wire = c(color_id::bundle_wire),
+        .label = c(color_id::label),
+        .selection = c(color_id::selection),
+        .guide = c(color_id::guide),
+        .pin = c(color_id::pin),
+        .control_point = c(color_id::control_point),
+        // the canvas shows errors like messages
+        .error = c(color_id::error),
+        .width_error = c(color_id::width_error),
+        .preview = c(color_id::preview),
+        .high = c(color_id::high),
+        .low = c(color_id::low),
+        .unknown = c(color_id::unknown),
+        .floating = c(color_id::floating),
+        .bus = c(color_id::bus),
+        .bundle = c(color_id::bundle),
+        .symbol_fill = c(color_id::symbol_fill),
+        .display_red = c(color_id::display_red),
+        .display_green = c(color_id::display_green),
+        .display_yellow = c(color_id::display_yellow),
+        .display_orange = c(color_id::display_orange),
+        .display_blue = c(color_id::display_blue),
+        .display_cyan = c(color_id::display_cyan),
+        .display_white = c(color_id::display_white),
+        .display_unlit = c(color_id::display_unlit),
+    };
 }
 
 renderer::renderer()

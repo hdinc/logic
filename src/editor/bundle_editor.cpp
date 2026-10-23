@@ -1,4 +1,5 @@
 #include "bundle_editor.h"
+#include "../ui/theme.h"
 #include "bundle_ui.h"
 #include "context.h"
 
@@ -106,7 +107,7 @@ void bundle_editor::gui(bool locked)
     SameLine();
     TextDisabled(layout.width == 1 ? "%d bit" : "%d bits", layout.width);
 
-    if (locked) TextColored({1, 0.6f, 0.2f, 1}, "A simulation is running, stop it to edit the bundle");
+    if (locked) TextColored(ui::color(ui::color_id::warning), "A simulation is running, stop it to edit the bundle");
     BeginDisabled(locked || lib.read_only);
 
     bool edited = false;
@@ -222,7 +223,7 @@ void bundle_editor::gui(bool locked)
     EndDisabled();
 
     for (auto& p : check())
-        TextColored({1, 0.6f, 0.2f, 1}, "%s", p.c_str());
+        TextColored(ui::color(ui::color_id::warning), "%s", p.c_str());
 
     SeparatorText("Layout");
     bundle_fields_table(layout);
