@@ -1331,3 +1331,91 @@ product is twice as wide).
     and 2, symmetric.
 - All ctest suites pass except `font_test`, which wasn't run again: no font
   code changed.
+
+## 2026-10-23 15:50 +0300
+
+### Changes made
+
+- **Rotating and mirroring while placing:** pasted elements (Ctrl+V)
+  follow the mouse and can be turned before the click.
+  - R (or Ctrl+R) turns them a quarter turn about the point under the
+    mouse, Shift+R the other way.
+  - M (or Ctrl+M) mirrors them.
+  - Placing a single cell (Space, the component bar) takes the same keys.
+    Before, only R worked there, and only counter-clockwise.
+- **Q duplicates the element under the mouse and starts placing it:**
+  - an instance, with its parameters and orientation
+  - a port connector
+  - a wire segment
+
+  The copy follows the mouse until a click places it (Shift keeps
+  placing). It can be turned with R and M first. The clipboard isn't
+  touched.
+- The Help > Keys window and the schematic editor's key list describe the
+  new keys.
+
+### How it works
+
+- **Keys:** `placing_transform_shortcut` (`src/editor/tool.h`) reads R,
+  Shift+R and M, with or without Ctrl.
+  - Without Ctrl, R and M only transform while placing or pasting. The
+    select tool keeps Ctrl+R/Ctrl+M, so a stray R doesn't turn a selection.
+- **Pasting:** `paste_tool::transform` turns the copied ports, instances
+  (position and `xf.then`) and wire ends about the copy's origin, which is
+  the point that follows the mouse.
+- **Placing a cell:** `instance_tool` applies `xf.then(turns, mirror)` to
+  its preview.
+- **Q:** `schematic_editor::copy_of(handles, origin)` is the old
+  `copy_selection` generalized to any handles.
+  - `duplicate_hovered` copies the `hit_test` result under the mouse. A
+    wire end counts as its whole segment.
+  - The origin is the instance's or port's position, so the copy hangs on
+    the mouse like a newly placed part. For a wire it's the grid point
+    under the mouse.
+  - It then calls `begin_paste`, so placing, turning, naming
+    (`unique_instance_name` on clashes) and cycle checks are the paste
+    tool's.
+- **Rejected:** Q placing through the system clipboard. It would overwrite
+  what was copied with Ctrl+C.
+
+### Testing
+
+- **GUI** (private Xvnc, xdotool):
+  1. Hovered the bundle breakout B1 in a schematic and pressed Q: the copy
+     followed the mouse by its bundle pin.
+  2. Pressed R: it turned a quarter turn about that point.
+  3. Clicked: placed and selected as U1, rotated, with the original
+     unchanged.
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed. The tools need an ImGui frame and are not unit tested.
+
+### Recommended features
+
+- Q in the symbol editor (duplicate a shape or pin).
+- Showing the keys for R/M/Esc in a hint line while placing.
+
+## 2026-10-23 15:58 +0300
+
+### Changes made
+
+- **Bug fix:** a port being pasted or duplicated with Q was drawn without
+  the dot on its connection point, while instances being placed showed
+  dots on their pins.
+- **Bug fix:** the pasted copy of a bundle port was labelled with its width
+  (`m[10]`) instead of its type (`m : ~hs`).
+
+### How it works
+
+- `paste_tool::draw` drew ports as connected (`draw_port(..., true)`), and
+  connected pins get no dot. Instances are drawn without connection info,
+  so all their pins get dots.
+- The ports are now drawn unconnected, like the port tool's preview. They
+  are passed the bundle label like the ports of the schematic.
+
+### Testing
+
+- **GUI:** Q on the bundle port `m` in a schematic shows the ghost with
+  its dot. The label fix was made after that screenshot (which still read
+  `m[10]`) and builds, but wasn't looked at again.
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed.

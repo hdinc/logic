@@ -22,7 +22,9 @@ namespace logic::editor {
 //   i / o            place an input / output port
 //   space            place an instance (popup opened by the cell editor)
 //   ctrl+c/x/v       copy, cut, paste (handled by the app)
-//   r                rotate selected instances or the one being placed
+//   ctrl+r / ctrl+m  rotate / mirror the selection (shift: the other way)
+//   r / m            rotate / mirror what is being placed or pasted
+//   q                duplicate the element under the mouse and place it
 //   delete           delete selection
 //   esc              cancel the tool / clear selection
 //   g                toggle grid
@@ -68,8 +70,11 @@ public:
     // origin. empty if nothing is selected.
     std::optional<model::cell> copy_selection() const;
     // the copied elements follow the mouse, a click places them (shift keeps
-    // placing). instances that would contain this cell are left out.
+    // placing), r rotates and m mirrors them. instances that would contain
+    // this cell are left out.
     void begin_paste(model::cell part);
+    // starts pasting a copy of the instance, port or wire under the mouse
+    void duplicate_hovered();
     // adds the copied elements moved by offset with new ids and selects them
     void insert(const model::cell& part, glm::ivec2 offset);
 
@@ -113,6 +118,9 @@ public:
 
     bool is_selected(handle h) const;
     void select(const std::vector<handle>& hs, bool add);
+    // the elements in a cell of their own (wires only with both ends),
+    // moved so origin is at 0
+    std::optional<model::cell> copy_of(const std::vector<handle>& handles, glm::ivec2 origin) const;
 
     void move_selection(glm::ivec2 d);
     void finish_move() { normalize(); }

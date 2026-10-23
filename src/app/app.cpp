@@ -492,7 +492,10 @@ void app::menu_bar()
         BulletText("Ctrl+C / Ctrl+X / Ctrl+V: copy, cut, paste (click to place the copy)");
         SeparatorText("Schematic");
         BulletText("W: wires (click points, Esc ends the wire and goes back to select)");
-        BulletText("I / O: input / output port, Space: place a cell, R: rotate");
+        BulletText("I / O: input / output port, Space: place a cell");
+        BulletText("Q: duplicate the element under the mouse and place it");
+        BulletText("Ctrl+R / Ctrl+M: rotate / mirror the selection (Shift: the other way)");
+        BulletText("R / M while placing or pasting: rotate / mirror it (Shift+R: the other way)");
         BulletText("Components bar: click an icon, then click in the schematic to place it");
         BulletText("Right click the components bar: vertical or horizontal");
         SeparatorText("Symbol");

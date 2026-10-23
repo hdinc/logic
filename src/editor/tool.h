@@ -21,6 +21,19 @@ inline bool transform_shortcut(int& turns, bool& mirror)
     return true;
 }
 
+// the same while placing (a cell or copied elements): r and m also work
+// without ctrl. false if neither is pressed.
+inline bool placing_transform_shortcut(int& turns, bool& mirror)
+{
+    auto& io = ImGui::GetIO();
+    turns = 0;
+    mirror = false;
+    if (ImGui::IsKeyPressed(ImGuiKey_R, false)) turns = io.KeyShift ? -1 : 1;
+    else if (ImGui::IsKeyPressed(ImGuiKey_M, false)) mirror = true;
+    else return false;
+    return true;
+}
+
 // the right button released without dragging: a right drag pans the view,
 // a right click can cancel
 inline bool right_clicked()

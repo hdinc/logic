@@ -106,7 +106,8 @@ private:
     model::port preview;
 };
 
-// places instances of a cell, r rotates, shift keeps placing
+// places instances of a cell, r rotates (shift+r the other way), m mirrors,
+// shift keeps placing
 class instance_tool : public tool<schematic_editor> {
 public:
     explicit instance_tool(model::id cell) { preview.cell = cell; }
@@ -118,10 +119,12 @@ public:
         preview.pos = model::snap(e.view.mouse_world(), model::grid);
         if (!hovered) return;
 
+        int turns;
+        bool mirror;
         if (IsKeyPressed(ImGuiKey_Escape)) {
             done = true;
-        } else if (IsKeyPressed(ImGuiKey_R)) {
-            preview.xf.rotation = (preview.xf.rotation + 1) % 4;
+        } else if (placing_transform_shortcut(turns, mirror)) {
+            preview.xf = preview.xf.then(turns, mirror);
         } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
             auto i = preview;
             i.id = e.ctx.cell.new_id();
@@ -143,7 +146,8 @@ private:
     model::instance preview;
 };
 
-// copied elements following the mouse until a click places them
+// copied elements following the mouse until a click places them. r
+// rotates them about the mouse (shift+r the other way), m mirrors.
 class paste_tool : public tool<schematic_editor> {
 public:
     explicit paste_tool(model::cell part)
@@ -158,8 +162,12 @@ public:
         offset = model::snap(e.view.mouse_world(), model::grid);
         if (!hovered) return;
 
+        int turns;
+        bool mirror;
         if (IsKeyPressed(ImGuiKey_Escape)) {
             done = true;
+        } else if (placing_transform_shortcut(turns, mirror)) {
+            transform(turns, mirror);
         } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
             e.insert(part, offset);
             done = !GetIO().KeyShift;
@@ -179,11 +187,29 @@ public:
         }
         for (auto p : part.ports) {
             p.pos += offset;
-            render::draw_port(r, p, c, true);
+            // like the instances: nothing is connected yet, the pin shows its dot
+            render::draw_port(r, p, c, false, p.bundle != model::no_id ? e.ctx.ws.bundle_label(p.bundle, p.flipped) : std::string());
         }
     }
 
 private:
+    // about the origin, which follows the mouse
+    void transform(int turns, bool mirror)
+    {
+        auto turn = [&](glm::ivec2 p) { return turn_about(p, {0, 0}, turns, mirror); };
+        for (auto& p : part.ports)
+            p.pos = turn(p.pos);
+        auto sch = part.get_schematic();
+        for (auto& i : sch->instances) {
+            i.pos = turn(i.pos);
+            i.xf = i.xf.then(turns, mirror);
+        }
+        for (auto& w : sch->wires) {
+            w.a = turn(w.a);
+            w.b = turn(w.b);
+        }
+    }
+
     model::cell part;
     glm::ivec2 offset{0, 0};
 };
@@ -231,7 +257,12 @@ std::optional<model::cell> schematic_editor::copy_selection() const
 {
     auto bounds = selection_bounds();
     if (!bounds) return std::nullopt;
-    auto origin = model::snap((bounds->min + bounds->max) / 2.0f, model::grid);
+    return copy_of(selection, model::snap((bounds->min + bounds->max) / 2.0f, model::grid));
+}
+
+std::optional<model::cell> schematic_editor::copy_of(const std::vector<handle>& handles, glm::ivec2 origin) const
+{
+    auto chosen = [&](handle h) { return std::find(handles.begin(), handles.end(), h) != handles.end(); };
 
     model::cell part;
     part.name = ctx.cell.name;
@@ -239,22 +270,44 @@ std::optional<model::cell> schematic_editor::copy_selection() const
     auto& s = *part.get_schematic();
 
     for (auto& p : ctx.cell.ports) {
-        if (!is_selected({handle::port, p.id})) continue;
+        if (!chosen({handle::port, p.id})) continue;
         part.ports.push_back(p);
         part.ports.back().pos -= origin;
     }
     for (auto& i : sch.instances) {
-        if (!is_selected({handle::instance, i.id})) continue;
+        if (!chosen({handle::instance, i.id})) continue;
         s.instances.push_back(i);
         s.instances.back().pos -= origin;
     }
     for (auto& w : sch.wires) {
-        if (!is_selected({handle::wire_a, w.id}) || !is_selected({handle::wire_b, w.id})) continue;
+        if (!chosen({handle::wire_a, w.id}) || !chosen({handle::wire_b, w.id})) continue;
         s.wires.push_back({w.id, w.a - origin, w.b - origin});
     }
 
     if (part.ports.empty() && s.instances.empty() && s.wires.empty()) return std::nullopt;
     return part;
+}
+
+void schematic_editor::duplicate_hovered()
+{
+    auto m = view.mouse_world();
+    auto hs = hit_test(m);
+    if (hs.empty()) return;
+    // a wire end under the mouse means the whole segment
+    if (hs[0].kind == handle::wire_a || hs[0].kind == handle::wire_b) {
+        auto w = sch.find_wire(hs[0].id);
+        if (!w) return;
+        hs = {{handle::wire_a, w->id}, {handle::wire_b, w->id}};
+    } else {
+        hs.resize(1);
+    }
+
+    // an instance or port follows the mouse by its origin like a new one,
+    // a wire by the point under the mouse
+    glm::ivec2 origin = model::snap(m, model::grid);
+    if (hs[0].kind == handle::instance) origin = sch.find_instance(hs[0].id)->pos;
+    if (hs[0].kind == handle::port) origin = ctx.cell.find_port(hs[0].id)->pos;
+    if (auto part = copy_of(hs, origin)) begin_paste(std::move(*part));
 }
 
 void schematic_editor::begin_paste(model::cell part)
@@ -329,6 +382,8 @@ void schematic_editor::process_inputs(bool hovered)
             set_tool(tool_kind::input_port);
         else if (IsKeyPressed(ImGuiKey_O))
             set_tool(tool_kind::output_port);
+        else if (IsKeyPressed(ImGuiKey_Q) && kind == tool_kind::select)
+            duplicate_hovered();
     }
 
     int turns;
