@@ -1210,3 +1210,124 @@ product is twice as wide).
 
 - Use the new parts in an example (e.g. a counter, adder and mux datapath)
   in the workspace examples.
+
+## 2026-10-23 14:57 +0300
+
+### Changes made
+
+- **Multiplexer and demultiplexer** are drawn as trapezoids, like common
+  textbook mux symbols, instead of labelled boxes.
+  - **Mux:** tall on the inputs' side, short on the output's side.
+  - **Demux:** mirrored.
+  - **Inputs/outputs:** numbered inside the tall side.
+  - **Select (and enable):** on the slanted bottom edge, labelled "sel"
+    and "en" outside.
+
+### How it works
+
+- `plexer_symbol` in `src/builtin/plexers.cpp` draws both. The demux uses
+  the same geometry with x negated.
+  - **Geometry:** the tall side spans one grid beyond the first and last
+    pin. The short side is one grid shorter at each end (half a grid for 2
+    pins).
+  - **Pins:** the n pins are one grid apart without a gap, and the single
+    pin is at y 0, the grid line at or just below their middle. Pins stay
+    on the grid for any count.
+  - **Bottom pins:** the select sits below the middle and the enable one
+    grid towards the short side. Their stubs end on the slanted edge.
+- The port order is unchanged, so the simulation components and saved
+  schematics are unaffected. Pin positions changed, so wires to existing
+  muxes and demuxes need reconnecting.
+- **Rejected:** the gates' input spacing, which leaves out the middle row
+  for an even count. It centred the output exactly but left a gap between
+  inputs 1 and 2 that doesn't match the reference style.
+
+### Testing
+
+- model_test's `test_builtins` checks the new symbols at the defaults and
+  extremes (pins on the grid, no overlapping pins), and the sim tests of
+  the plexers pass unchanged.
+- **GUI** (private Xvnc screenshots): 4- and 2-input muxes and demuxes,
+  with and without enable, bus and single-bit.
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed.
+
+### Outstanding issues
+
+- With an even number of inputs the output is half a grid below the
+  trapezoid's middle.
+
+## 2026-10-23 15:01 +0300
+
+### Changes made
+
+- **Mux and demux trapezoids are narrower:** two grids wide by default,
+  three with an enable, so the enable gets its own place on the bottom
+  edge.
+- **They are symmetric around the single pin's line** (the mux output, the
+  demux input). The shape reaches as far below y 0 as above it, plus a
+  grid.
+  - With an even number of inputs, the evenly spaced pins can't straddle
+    y 0 on the grid, so there is one grid of extra space under the last
+    pin.
+  - This fixes the outstanding issue of the previous entry: the output was
+    half a grid below the middle of the shape.
+
+### How it works
+
+- In `plexer_symbol` (`src/builtin/plexers.cpp`):
+  - `top`/`bottom` are ±(the farthest pin from y 0 + a grid), and the
+    short side is `tall + 2 or 3 grids`.
+  - The select stays one grid from the tall side, which is the middle when
+    there is no enable, and the enable one grid further.
+- **Rejected:** leaving out the middle input row to centre the pins as
+  well. That brings back the gap between inputs that the reference style
+  doesn't have.
+
+### Testing
+
+- `test_builtins` (pins on the grid, no overlaps) and the plexer sim tests
+  pass.
+- **GUI screenshot:** a 4-input mux with enable (three grids, symmetric)
+  and a 2-input mux (two grids, symmetric).
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed.
+
+## 2026-10-23 15:23 +0300
+
+### Changes made
+
+- **The mux and demux trapezoids follow your sketch:**
+  - **Pins:** one grid apart and symmetric around the single pin at y 0.
+    An even count leaves out the middle row, like the gates' inputs, so a
+    2-input mux has its inputs at ±1 grid.
+  - **Shape:** the body reaches one grid beyond the outer pins, and the
+    short side is one grid shorter at each end, so the shape is symmetric
+    around y 0. It is two grids wide, three with an enable.
+  - **Select and enable pins:** on the grid line of the bottom corner
+    (before, one grid below it). Short stubs go up to the slanted edge,
+    with the select one grid from the tall side.
+
+### How it works
+
+- `side_ys` in `src/builtin/plexers.cpp` is the gates' spacing again
+  (`input_ys`), which keeps symmetry and the grid together.
+  - The previous entries' even spacing (no gap) needed extra space under
+    the last pin to keep the shape symmetric. Your sketch shows the gap
+    instead.
+- The top and bottom are a grid beyond the outer pins.
+- The shrink of the short side is always one grid (half a grid for two
+  pins before).
+- The input numbers and the sel/en labels are kept from the first
+  reference image. They sit outside under the bottom edge.
+
+### Testing
+
+- `test_builtins` (pins on the grid, no overlaps) and the plexer sim tests
+  pass.
+- **GUI screenshot:**
+  - A 2-input mux matching the sketch.
+  - A 4-input mux with enable: three grids wide, a gap between inputs 1
+    and 2, symmetric.
+- All ctest suites pass except `font_test`, which wasn't run again: no font
+  code changed.

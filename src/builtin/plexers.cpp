@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <optional>
 
 namespace logic::builtin {
@@ -37,6 +38,86 @@ std::optional<int> index_of(const value& v)
 }
 
 // ---- mux ----
+
+// y of the many side's pins, top first, one grid apart and symmetric
+// around the single pin at y 0: an even count leaves out the middle row.
+std::vector<int> side_ys(int n)
+{
+    std::vector<int> ys;
+    for (int k = 0; k < n; k++) {
+        int y = n / 2 - k;
+        if (n % 2 == 0 && y <= 0) y--;
+        ys.push_back(y * model::grid);
+    }
+    return ys;
+}
+
+// a trapezoid, tall on the side of the n pins and short on the side of the
+// single one, the select (and enable) at the slanted bottom. a mux has the
+// n inputs on the left, a demux (mirrored) the n outputs on the right.
+// ports: the n pins (mux) or the single input (demux), sel, en, then the
+// single output (mux) or the n pins (demux).
+void plexer_symbol(builder& b, bool demux, int n, int width, int bits, bool has_en)
+{
+    using model::grid;
+    // x as for a mux, mirrored for a demux
+    int m = demux ? -1 : 1;
+    auto at = [&](int x, int y) { return glm::ivec2{m * x, y}; };
+    float stroke = width > 1 ? model::bus_stroke : 0.0f;
+
+    auto ys = side_ys(n);
+    // a grid beyond the outer pins
+    int top = ys.front() + grid, bottom = ys.back() - grid;
+    // the tall side at x -grid, the short one two grids further, three
+    // with an enable so it has its own place at the bottom. the short side
+    // is a grid shorter at each end.
+    int tall = -grid, small = tall + (has_en ? 3 : 2) * grid;
+    int s = grid;
+    b.polyline({at(tall, top), at(small, top - s), at(small, bottom + s), at(tall, bottom), at(tall, top)});
+    // where the bottom edge is at x
+    auto bottom_at = [&](int x) { return bottom + (int)std::lround(double(s) * (x - tall) / (small - tall)); };
+
+    auto many = [&] {
+        for (int k = 0; k < n; k++) {
+            b.line(at(tall - grid, ys[k]), at(tall, ys[k]), stroke);
+            auto label = std::to_string(k);
+            b.text(at(tall + 2, ys[k] - 2), label, 5.0f, demux ? model::text_align::right : model::text_align::left);
+            if (demux)
+                b.port("out" + label, direction::output, width, at(tall - grid, ys[k]), "in when sel is " + label + ", else 0");
+            else
+                b.port("in" + label, direction::input, width, at(tall - grid, ys[k]), "passed when sel is " + label);
+        }
+    };
+    auto single = [&] {
+        b.line(at(small, 0), at(small + grid, 0), stroke);
+        if (demux)
+            b.port("in", direction::input, width, at(small + grid, 0), "the value to pass");
+        else
+            b.port("out", direction::output, width, at(small + grid, 0), "the chosen input");
+    };
+
+    if (demux)
+        single();
+    else
+        many();
+
+    // the select a grid from the tall side (the middle without enable), the
+    // enable a grid further. their pins are on the grid line of the bottom
+    // corner, short stubs go up to the slanted edge. the labels outside.
+    b.line(at(0, bottom), at(0, bottom_at(0)), bits > 1 ? model::bus_stroke : 0.0f);
+    b.text(at(-3, bottom - 8), "sel", 4.5f, demux ? model::text_align::left : model::text_align::right);
+    b.port("sel", direction::input, bits, at(0, bottom), demux ? "which output gets in" : "which input to pass");
+    if (has_en) {
+        b.line(at(grid, bottom), at(grid, bottom_at(grid)));
+        b.text(at(grid + 3, bottom - 8), "en", 4.5f, demux ? model::text_align::right : model::text_align::left);
+        b.port("en", direction::input, 1, at(grid, bottom), demux ? "0 makes all outputs 0" : "0 makes out 0");
+    }
+
+    if (demux)
+        many();
+    else
+        single();
+}
 
 // in0..inN-1, sel, [en], out
 class mux_component : public sim::component {
@@ -87,14 +168,8 @@ public:
     model::cell_interface build(const model::param_values& v) const override
     {
         int bits = (int)model::get_int(v, "select");
-        int width = (int)model::get_int(v, "width");
-        std::vector<pin> left;
-        for (int k = 0; k < (1 << bits); k++)
-            left.push_back({"in" + std::to_string(k), direction::input, width, "passed when sel is " + std::to_string(k), std::to_string(k)});
-        std::vector<pin> bottom{{"sel", direction::input, bits, "which input to pass"}};
-        if (model::get_bool(v, "enable")) bottom.push_back({"en", direction::input, 1, "0 makes out 0"});
         builder b;
-        b.box("MUX", left, {{"out", direction::output, width, "the chosen input"}}, bottom);
+        plexer_symbol(b, false, 1 << bits, (int)model::get_int(v, "width"), bits, model::get_bool(v, "enable"));
         return b.finish();
     }
 
@@ -150,14 +225,8 @@ public:
     model::cell_interface build(const model::param_values& v) const override
     {
         int bits = (int)model::get_int(v, "select");
-        int width = (int)model::get_int(v, "width");
-        std::vector<pin> right;
-        for (int k = 0; k < (1 << bits); k++)
-            right.push_back({"out" + std::to_string(k), direction::output, width, "in when sel is " + std::to_string(k) + ", else 0", std::to_string(k)});
-        std::vector<pin> bottom{{"sel", direction::input, bits, "which output gets in"}};
-        if (model::get_bool(v, "enable")) bottom.push_back({"en", direction::input, 1, "0 makes all outputs 0"});
         builder b;
-        b.box("DMX", {{"in", direction::input, width, "the value to pass"}}, right, bottom);
+        plexer_symbol(b, true, 1 << bits, (int)model::get_int(v, "width"), bits, model::get_bool(v, "enable"));
         return b.finish();
     }
 
