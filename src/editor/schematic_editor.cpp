@@ -257,6 +257,7 @@ void schematic_editor::begin_place(model::id cell)
     if (ctx.ws.would_create_cycle(ctx.cell.id, cell) || busy()) return;
     set_tool(tool_kind::place_instance, std::make_unique<instance_tool>(cell));
     placing_cell = cell;
+    if (ctx.recent) ctx.recent->use(cell);
 }
 
 std::optional<model::cell> schematic_editor::copy_selection() const

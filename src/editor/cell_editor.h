@@ -99,8 +99,13 @@ private:
     std::unique_ptr<model_editor> model_page;
     symbol_editor symbol;
 
+    // the place popup: its search text, the entry chosen with the keys
     bool focus_search = false;
     std::string search;
+    std::string last_search;
+    int selected = -1;
+    bool reset_selection = false;
+    bool scroll_to_selected = false;
 
     std::shared_ptr<sim_session> session;
     std::unique_ptr<sim_view> view;

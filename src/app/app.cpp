@@ -195,6 +195,8 @@ void app::add_settings_handler()
             int size = std::clamp(i, 12, 40);
             a->font_size = size;
             ui::set_font_size((float)size);
+        } else if (std::strncmp(line, "RecentCells=", 12) == 0) {
+            a->recent_cells.from_string(line + 12);
         } else if (std::strncmp(line, "UiFont=", 7) == 0) {
             a->ui_font = ui::parse_font_ref(line + 7);
             a->font_update_pending = true;
@@ -220,6 +222,7 @@ void app::add_settings_handler()
         const char* sizes[] = {"small", "medium", "large"};
         buf->appendf("ComponentIcons=%s\n", sizes[(int)a->components.size]);
         buf->appendf("InstanceNames=%s\nThickBuses=%d\nFillSymbols=%d\nOrigin=%d\n", names[(int)a->renderer.names], a->renderer.thick_buses ? 1 : 0, a->renderer.fill_symbols ? 1 : 0, a->renderer.show_origin ? 1 : 0);
+        buf->appendf("RecentCells=%s\n", a->recent_cells.to_string().c_str());
         buf->appendf("UiFont=%s\nMonoFont=%s\nCanvasFont=%s\n\n", ui::to_string(a->ui_font).c_str(), ui::to_string(a->mono_font).c_str(), ui::to_string(a->canvas_font).c_str());
     };
     ImGui::AddSettingsHandler(&h);
@@ -228,7 +231,7 @@ void app::add_settings_handler()
 
 app::settings app::current_settings() const
 {
-    return {theme_name, renderer.show_grid, renderer.show_origin, renderer.grid, renderer.names, renderer.thick_buses, renderer.fill_symbols, components.side, components.size, font_size, ui_font, mono_font, canvas_font};
+    return {theme_name, renderer.show_grid, renderer.show_origin, renderer.grid, renderer.names, renderer.thick_buses, renderer.fill_symbols, components.side, components.size, font_size, ui_font, mono_font, canvas_font, recent_cells.to_string()};
 }
 
 void app::apply_theme()
@@ -529,7 +532,8 @@ void app::menu_bar()
         BulletText("Ctrl+C / Ctrl+X / Ctrl+V: copy, cut, paste (click to place the copy)");
         SeparatorText("Schematic");
         BulletText("W: wires (click points, Esc ends the wire and goes back to select)");
-        BulletText("I / O: input / output port, Space: place a cell");
+        BulletText("I / O: input / output port");
+        BulletText("Space: place a cell: type to search, Up / Down to choose, Enter to place, Esc to close");
         BulletText("Q: duplicate the element under the mouse and place it");
         BulletText("Ctrl+R / Ctrl+M: rotate / mirror the selection (Shift: the other way)");
         BulletText("R / M while placing or pasting: rotate / mirror it (Shift+R: the other way)");
@@ -1000,7 +1004,7 @@ void app::open_editor(model::cell& c)
     }
 
     auto lib = ws.library_of(c.id);
-    editors.push_back(std::make_unique<editor::cell_editor>(editor::context{ws, *lib, c, renderer, &factory, &plugins, &hdl}));
+    editors.push_back(std::make_unique<editor::cell_editor>(editor::context{ws, *lib, c, renderer, &factory, &plugins, &hdl, &recent_cells}));
 }
 
 void app::close_editor(model::id cell)

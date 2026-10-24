@@ -2827,3 +2827,102 @@ The user changed their mind about the look of the 7-segment display:
 ### Outstanding issues
 
 - None known.
+
+## 2026-10-24 22:54 +0300
+
+### Features implemented
+
+- **The place popup (Space / "Cell...") works from the keyboard:**
+  - The top entry is always selected, both when the popup opens and after
+    every change to the text.
+  - Up and Down move the selection. They stop at the ends, repeat while
+    held, skip greyed-out cells (the ones that would contain themselves),
+    and scroll the list to keep the selection visible.
+  - Enter or keypad Enter places the selected cell, and Shift+Enter does
+    the same. Esc closes the popup.
+  - A mouse click places as before; hovering doesn't move the selection.
+- **Recent cells:**
+  - With an empty search, the recently placed cells come first, most
+    recent first, then a separator, then all other cells in library order.
+  - Up to 8 are kept. They're shared by all editors and saved in
+    `imgui.ini` (`RecentCells=`), so they survive restarts.
+- **Ranked search:**
+  1. names that start with the text
+  2. names where a word starts with it (after a space or punctuation, at
+     a letter/digit change, or a lower-to-upper case change)
+  3. names that contain it anywhere
+
+  Within a rank, library order is kept. "and" lists AND, then NAND, then
+  handshake_sink.
+- **Look:** the search box has no "Search" label. It's full width with a
+  faint "Search cells..." hint. Rows show `library / name`: the library
+  faint, the matched text in an accent color (`ImGuiCol_PlotLinesHovered`).
+
+### How it works
+
+- **New `src/ui/search.{h,cpp}`** in `logic_ui`, without ImGui:
+  - `match_text(name, text)` returns `{rank, pos}` of the best occurrence,
+    ignoring case.
+  - `recent_list` (`use`, `items`, `to_string`, `from_string`): ids most
+    recent first, no duplicates, limited to 8.
+- **`editor::context`:**
+  - `ui::recent_list* recent`. The app owns `recent_cells` and passes it to
+    every cell editor.
+  - `schematic_editor::begin_place` calls `recent->use(cell)`, so the popup,
+    the component bar and Q (duplicate) all count.
+- **`editor::input_string`** takes an optional hint and then uses
+  `InputTextWithHint`.
+- **`cell_editor::place_popup`:**
+  - Builds the entries each frame: recent ids looked up in the libraries
+    (gone cells left out), then the rest; or the matches sorted with
+    `std::stable_sort` by rank.
+  - `selected` resets to the first selectable entry when the popup opens,
+    when the text changes (`last_search`), or when the selected entry is
+    no longer selectable.
+  - Up and Down are read with `IsKeyPressed` (repeating). Enter and Escape
+    without repeat.
+  - A row is an empty `Selectable("##cell", selected)`, and the text is
+    drawn over it with the draw list in parts, starting at the cursor
+    position. The Selectable's rectangle starts half an item spacing
+    further left, which clipped the first letter.
+  - `SetScrollHereY` runs after the selected row when the keys moved it.
+- **Settings:** the recent list is part of `app::settings`, so a change
+  marks `imgui.ini` dirty.
+- **Decided:**
+  - A cell counts as used when placing starts, not when the instance is
+    dropped. That's simpler, and choosing it is the use.
+  - With an empty search, all cells are listed below the recent ones, so
+    browsing still works.
+
+### Testing
+
+- **New `search_test`:**
+  - ranks: prefix, word starts after space, `-`, `_`, digit, camel case,
+    and middle of a word
+  - the best position is chosen; an empty text matches
+  - `recent_list` moves an id to the front, drops duplicates, keeps the
+    limit, and its string round-trips, skipping bad parts
+- All 9 ctest suites pass.
+- **GUI** with xdotool, on a scratch copy of the workspace and `imgui.ini`:
+  - The empty popup had the hint, no label, and the first row selected.
+  - Typing "and" listed AND (selected), NAND, then handshake_sink, with
+    "and" highlighted. Enter placed an AND; the same with "clock" placed a
+    Clock.
+  - The empty popup then showed Clock and AND first, above a separator.
+  - Five Downs skipped the greyed `cell1` and reached Constant.
+  - Ten Ups stopped at the top, and Esc closed the popup.
+  - "and", Down, Enter placed a NAND.
+  - 40 Downs scrolled the list with the selection in view.
+  - After a restart, the recent list (NAND, Clock, AND) was still there.
+
+### Recommended features
+
+- The component bar icon in front of builtin rows.
+- Tab to complete the search text to the selected name.
+- Fuzzy (subsequence) matching, e.g. "rgs" finds "Register".
+- Also match library and category names, e.g. "arith" for the arithmetic
+  parts.
+
+### Outstanding issues
+
+- None known.

@@ -4,6 +4,7 @@
 #include "../model/workspace.h"
 #include "../plugin/registry.h"
 #include "../render/renderer.h"
+#include "../ui/search.h"
 
 #include <imgui.h>
 #include <string>
@@ -22,6 +23,8 @@ struct context {
     const plugin::registry* plugins = nullptr;
     // hdl cells, null if they aren't supported
     hdl::manager* hdl = nullptr;
+    // cells placed lately, shared by the editors. null if not kept.
+    ui::recent_list* recent = nullptr;
 
     // call after every change to the cell so the library gets saved
     void modified()
@@ -31,13 +34,15 @@ struct context {
     }
 };
 
-// imgui text input for std::string, returns true when the string changed
-inline bool input_string(const char* label, std::string& s, ImGuiInputTextFlags flags = 0)
+// imgui text input for std::string, returns true when the string changed.
+// the hint is shown faintly while it's empty.
+inline bool input_string(const char* label, std::string& s, ImGuiInputTextFlags flags = 0, const char* hint = nullptr)
 {
     char buf[256];
     s.copy(buf, sizeof(buf) - 1);
     buf[std::min(s.size(), sizeof(buf) - 1)] = 0;
-    if (ImGui::InputText(label, buf, sizeof(buf), flags) && s != buf) {
+    bool edited = hint ? ImGui::InputTextWithHint(label, hint, buf, sizeof(buf), flags) : ImGui::InputText(label, buf, sizeof(buf), flags);
+    if (edited && s != buf) {
         s = buf;
         return true;
     }

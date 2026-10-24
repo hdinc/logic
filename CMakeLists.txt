@@ -102,6 +102,7 @@ target_compile_definitions(ImGuiFileDialog PUBLIC USE_STD_FILESYSTEM)
 add_library(logic_ui STATIC
     src/ui/file_dialog.cpp
     src/ui/fonts.cpp
+    src/ui/search.cpp
     src/ui/theme.cpp
     src/wave/ui/timeline.cpp
     src/wave/ui/view.cpp
@@ -204,6 +205,11 @@ add_executable(theme_test tests/theme_test.cpp)
 target_link_libraries(theme_test logic_ui)
 target_compile_options(theme_test PRIVATE ${LOGIC_WARNINGS})
 add_test(NAME theme_test COMMAND theme_test ${CMAKE_CURRENT_BINARY_DIR})
+
+add_executable(search_test tests/search_test.cpp)
+target_link_libraries(search_test logic_ui)
+target_compile_options(search_test PRIVATE ${LOGIC_WARNINGS})
+add_test(NAME search_test COMMAND search_test)
 
 add_executable(waveform_test tests/waveform_test.cpp)
 target_link_libraries(waveform_test logic_core logic_ui)

@@ -6,7 +6,6 @@
 #include <imgui_internal.h>
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 
 namespace logic::editor {
@@ -23,14 +22,6 @@ bool tool_button(const char* label, const char* tip, bool active)
     SetItemTooltip("%s", tip);
     SameLine();
     return clicked;
-}
-
-bool contains_ignore_case(const std::string& s, const std::string& sub)
-{
-    auto it = std::search(s.begin(), s.end(), sub.begin(), sub.end(), [](char a, char b) {
-        return std::tolower((unsigned char)a) == std::tolower((unsigned char)b);
-    });
-    return it != s.end();
 }
 
 }
@@ -271,6 +262,7 @@ void cell_editor::open_place_popup()
 {
     search.clear();
     focus_search = true;
+    reset_selection = true;
     ImGui::OpenPopup("place");
 }
 
@@ -363,26 +355,107 @@ void cell_editor::place_popup()
         SetKeyboardFocusHere();
         focus_search = false;
     }
-    input_string("Search", search);
+    SetNextItemWidth(-FLT_MIN);
+    input_string("##search", search, 0, "Search cells...");
+
+    // without text the recently placed cells, then the others. with text
+    // the cells whose name contains it, the best matches first.
+    struct entry {
+        const model::library* lib;
+        const model::cell* cell;
+        ui::text_match match;
+        // a cell can't contain itself, directly or through other cells
+        bool cycle = false;
+        // a line before it, after the recent cells
+        bool separator = false;
+    };
+    std::vector<entry> entries;
+    auto add = [&](const model::library& lib, const model::cell& c, ui::text_match m) {
+        entries.push_back({&lib, &c, m, ctx.ws.would_create_cycle(ctx.cell.id, c.id)});
+    };
+    if (search.empty()) {
+        std::vector<model::id> recent;
+        if (ctx.recent) recent = ctx.recent->items();
+        // in the order of the list, gone cells are left out
+        for (auto id : recent)
+            for (auto& lib : ctx.ws.libraries)
+                if (auto c = lib->find_cell(id)) add(*lib, *c, {});
+        size_t n = entries.size();
+        for (auto& lib : ctx.ws.libraries)
+            for (auto& c : lib->cells)
+                if (std::find(recent.begin(), recent.end(), c->id) == recent.end()) add(*lib, *c, {});
+        if (n > 0 && n < entries.size()) entries[n].separator = true;
+    } else {
+        for (auto& lib : ctx.ws.libraries)
+            for (auto& c : lib->cells)
+                if (auto m = ui::match_text(c->name, search)) add(*lib, *c, *m);
+        std::stable_sort(entries.begin(), entries.end(), [](auto& a, auto& b) { return a.match.rank < b.match.rank; });
+    }
+
+    // the selection: the first entry that can be placed after every change
+    // of the text, up and down move it, enter places it
+    auto selectable = [&](int k) { return k >= 0 && k < (int)entries.size() && !entries[k].cycle; };
+    if (reset_selection || search != last_search || !selectable(selected)) {
+        selected = -1;
+        for (int k = 0; k < (int)entries.size() && selected < 0; k++)
+            if (selectable(k)) selected = k;
+        last_search = search;
+        reset_selection = false;
+        scroll_to_selected = true;
+    }
+    auto step = [&](int d) {
+        for (int k = selected + d; k >= 0 && k < (int)entries.size(); k += d) {
+            if (selectable(k)) {
+                selected = k;
+                scroll_to_selected = true;
+                return;
+            }
+        }
+    };
+    if (IsKeyPressed(ImGuiKey_UpArrow)) step(-1);
+    if (IsKeyPressed(ImGuiKey_DownArrow)) step(1);
+
+    auto choose = [&](int k) {
+        schematic->begin_place(entries[k].cell->id);
+        CloseCurrentPopup();
+    };
+    bool enter = IsKeyPressed(ImGuiKey_Enter, false) || IsKeyPressed(ImGuiKey_KeypadEnter, false);
+    if (enter && selectable(selected)) choose(selected);
+    if (IsKeyPressed(ImGuiKey_Escape, false)) CloseCurrentPopup();
 
     BeginChild("results", {300, 250});
-    for (auto& lib : ctx.ws.libraries) {
-        for (auto& c : lib->cells) {
-            if (!search.empty() && !contains_ignore_case(c->name, search)) continue;
+    auto dl = GetWindowDrawList();
+    for (int k = 0; k < (int)entries.size(); k++) {
+        auto& e = entries[k];
+        if (e.separator) Separator();
 
-            // a cell can't contain itself, directly or through other cells
-            bool cycle = ctx.ws.would_create_cycle(ctx.cell.id, c->id);
-            auto label = lib->name + " / " + c->name;
+        PushID(k);
+        BeginDisabled(e.cycle);
+        // the row's rect starts left of the content, the text at the cursor
+        auto pos = GetCursorScreenPos();
+        bool clicked = Selectable("##cell", k == selected);
+        // "library / name", the library faint and the found text marked
+        auto text = [&](const std::string& s, ImU32 color) {
+            dl->AddText(pos, color, s.c_str());
+            pos.x += CalcTextSize(s.c_str()).x;
+        };
+        auto& name = e.cell->name;
+        size_t len = search.empty() ? 0 : search.size();
+        text(e.lib->name + " / ", GetColorU32(ImGuiCol_TextDisabled));
+        text(name.substr(0, e.match.pos), GetColorU32(ImGuiCol_Text));
+        text(name.substr(e.match.pos, len), GetColorU32(ImGuiCol_PlotLinesHovered));
+        text(name.substr(e.match.pos + len), GetColorU32(ImGuiCol_Text));
+        EndDisabled();
+        if (e.cycle) SetItemTooltip("would contain itself");
+        PopID();
 
-            BeginDisabled(cycle);
-            if (Selectable(label.c_str())) {
-                schematic->begin_place(c->id);
-                CloseCurrentPopup();
-            }
-            EndDisabled();
-            if (cycle) SetItemTooltip("would contain itself");
+        if (clicked) choose(k);
+        if (k == selected && scroll_to_selected) {
+            SetScrollHereY();
+            scroll_to_selected = false;
         }
     }
+    if (entries.empty()) TextDisabled("no cell matches");
     EndChild();
 
     EndPopup();

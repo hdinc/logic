@@ -31,6 +31,11 @@ standalone VCD viewer, `logic-wave`.
   scrolls smoothly when the mouse is near one of its ends or with the
   wheel, and has three icon sizes. Other cells are placed from the library
   panel or with Space.
+- **Place popup** (Space or **Cell...**): opens with the recently placed
+  cells first. Typing searches the names, ranked: the start of the name
+  first, then the start of a word, then anywhere, with the match
+  highlighted. The top entry is selected; Up and Down choose, Enter
+  places, Esc closes.
 - **Categories**: cells are grouped by category in the library panel. Set
   a cell's category in its properties or from the library panel's context
   menu.

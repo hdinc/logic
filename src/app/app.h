@@ -99,6 +99,8 @@ private:
     sim::factory_chain factory;
     render::renderer renderer;
     component_bar components;
+    // cells placed lately, listed first in the place popup. kept in imgui.ini.
+    ui::recent_list recent_cells;
 
     // all editors draw into this, only the visible one each frame
     Hd::Texture editor_tex;
@@ -156,7 +158,7 @@ private:
     ui::font_picker mono_font_picker{true};
     ui::font_picker canvas_font_picker;
     // settings at the last check, a change marks imgui.ini for saving
-    using settings = std::tuple<std::string, bool, bool, render::grid_style, render::instance_names, bool, bool, component_bar::edge, component_bar::icon_size, int, ui::font_ref, ui::font_ref, ui::font_ref>;
+    using settings = std::tuple<std::string, bool, bool, render::grid_style, render::instance_names, bool, bool, component_bar::edge, component_bar::icon_size, int, ui::font_ref, ui::font_ref, ui::font_ref, std::string>;
     settings current_settings() const;
     settings saved_settings;
 
