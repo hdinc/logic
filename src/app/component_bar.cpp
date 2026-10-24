@@ -27,9 +27,14 @@ const std::set<std::string> shown_kinds = {
     "led", "button", "switch", "seg7_display", "hex_display",
 };
 
-// space between the strip and the canvas edge, and inside the strip
+// space between the strip and the canvas edge
 constexpr float margin = 8.0f;
-constexpr float pad = 4.0f;
+// between the buttons and the strip's border and between two buttons, the
+// same everywhere
+constexpr float pad = 3.0f;
+// around each icon in its button, the same in rows and columns so the
+// buttons are square
+constexpr float icon_pad = 4.0f;
 // a group separator: a line with this much room on both sides
 constexpr float separator_gap = 6.0f;
 // the ends where the mouse scrolls the strip, in buttons, and the speed at
@@ -265,18 +270,18 @@ model::id component_bar::gui(const model::workspace& ws, const target& t, ImVec2
     draw_icons(ws, cells);
 
     // buttons along the strip, their length and thickness
-    auto& style = GetStyle();
-    ImVec2 button{icon_px() + 2 * style.FramePadding.x, icon_px() + 2 * style.FramePadding.y};
-    float step = row ? button.x : button.y;
-    float thick = row ? button.y : button.x;
-    float spacing = row ? style.ItemSpacing.x : style.ItemSpacing.y;
+    float step = icon_px() + 2 * icon_pad;
+    float thick = step;
+    float spacing = pad;
+    // from the strip's outer edge: the border line takes a pixel of it
+    float inset = pad + GetStyle().ChildBorderSize;
     float content = cells.size() * step + (cells.size() - 1) * spacing + (gs.size() - 1) * 2 * separator_gap;
 
     // as long as the icons, at most the canvas minus the margins
     ImVec2 canvas{canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y};
-    float len = std::min(content + 2 * pad, (row ? canvas.x : canvas.y) - 2 * margin);
-    if (len < step + 2 * pad || (row ? canvas.y : canvas.x) < thick + 2 * pad + 2 * margin) return clicked;
-    ImVec2 size = row ? ImVec2{len, thick + 2 * pad} : ImVec2{thick + 2 * pad, len};
+    float len = std::min(content + 2 * inset, (row ? canvas.x : canvas.y) - 2 * margin);
+    if (len < step + 2 * inset || (row ? canvas.y : canvas.x) < thick + 2 * inset + 2 * margin) return clicked;
+    ImVec2 size = row ? ImVec2{len, thick + 2 * inset} : ImVec2{thick + 2 * inset, len};
 
     // centered along its edge, whole pixels so the icons stay sharp
     ImVec2 pos{canvas_min.x + margin, canvas_min.y + margin};
@@ -293,14 +298,15 @@ model::id component_bar::gui(const model::workspace& ws, const target& t, ImVec2
 
     SetCursorScreenPos(pos);
     PushStyleVar(ImGuiStyleVar_Alpha, alpha);
-    PushStyleVar(ImGuiStyleVar_WindowPadding, {pad, pad});
+    PushStyleVar(ImGuiStyleVar_WindowPadding, {inset, inset});
+    PushStyleVar(ImGuiStyleVar_FramePadding, {icon_pad, icon_pad});
     PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
     PushStyleColor(ImGuiCol_ChildBg, GetStyleColorVec4(ImGuiCol_WindowBg));
     BeginChild("component_bar", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     hovered = IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
     context_menu();
 
-    float at = pad;
+    float at = inset;
     int slot = 0;
     auto sep = GetColorU32(ImGuiCol_Separator);
     for (size_t k = 0; k < gs.size(); k++) {
@@ -310,13 +316,13 @@ model::id component_bar::gui(const model::workspace& ws, const target& t, ImVec2
             auto wp = GetWindowPos();
             float s = row ? GetScrollX() : GetScrollY();
             if (row)
-                GetWindowDrawList()->AddLine({wp.x + mid - s, wp.y + pad}, {wp.x + mid - s, wp.y + pad + thick}, sep);
+                GetWindowDrawList()->AddLine({wp.x + mid - s, wp.y + inset}, {wp.x + mid - s, wp.y + inset + thick}, sep);
             else
-                GetWindowDrawList()->AddLine({wp.x + pad, wp.y + mid - s}, {wp.x + pad + thick, wp.y + mid - s}, sep);
+                GetWindowDrawList()->AddLine({wp.x + inset, wp.y + mid - s}, {wp.x + inset + thick, wp.y + mid - s}, sep);
             at += 2 * separator_gap;
         }
         for (auto c : gs[k].cells) {
-            SetCursorPos(row ? ImVec2{at, pad} : ImVec2{pad, at});
+            SetCursorPos(row ? ImVec2{at, inset} : ImVec2{inset, at});
             if (icon(ws, *c, slot++, t)) clicked = c->id;
             at += step + spacing;
         }
@@ -325,7 +331,7 @@ model::id component_bar::gui(const model::workspace& ws, const target& t, ImVec2
     scroll_strip(row, step);
     EndChild();
     PopStyleColor();
-    PopStyleVar(3);
+    PopStyleVar(4);
 
     // the canvas window gets the keys again (esc, r, m) and the next click
     if (hovered && IsMouseReleased(ImGuiMouseButton_Left)) SetWindowFocus();

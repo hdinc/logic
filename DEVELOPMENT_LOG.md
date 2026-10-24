@@ -3094,3 +3094,60 @@ The user changed their mind about the look of the 7-segment display:
 ### Outstanding issues
 
 - None known.
+
+## 2026-10-24 23:46 +0300
+
+### Changes made
+
+- **Fix:** the component bar's buttons were spaced differently in a row
+  and in a column, and weren't square.
+  - The gap came from ImGui's `ItemSpacing`, which differs in x and y.
+  - The padding came from `FramePadding`, also different in x and y.
+
+### How it works
+
+- `src/app/component_bar.cpp` uses its own constants for both directions:
+  - `icon_pad` (4 px around the icon, pushed as `FramePadding` while the
+    strip is drawn), so buttons are square
+  - `gap` (6 px between buttons)
+- The strip's length and thickness are computed from the same values.
+
+### Testing
+
+- **GUI** with xdotool, on a scratch copy of the workspace: the bar at the
+  top and at the left, compared enlarged. The buttons are the same squares
+  with the same gaps.
+- All 9 ctest suites pass.
+
+### Outstanding issues
+
+- None known.
+
+## 2026-10-24 23:49 +0300
+
+### Changes made
+
+- **Component bar spacing:** the gap between buttons is shorter (3 px,
+  was 6). The distance from the strip's border to the buttons is the same
+  3 px (it was 2 px: the 4 px padding minus the border line).
+
+### How it works
+
+- In `src/app/component_bar.cpp`, one constant `pad` (3 px) is both the
+  gap between buttons and the padding inside the strip; the separate `gap`
+  is gone.
+- At the strip's edges the content is inset by `pad` plus
+  `ChildBorderSize`, because the border line is drawn inside the strip's
+  rectangle and would otherwise take a pixel of the padding. The strip's
+  size, the button positions and the separator lines use that inset.
+
+### Testing
+
+- **GUI** with xdotool, on a scratch copy of the workspace: one pixel row
+  through the strip measured border, 3 px background, button border, and
+  between two buttons border, 3 px background, border.
+- All 9 ctest suites pass.
+
+### Outstanding issues
+
+- None known.
