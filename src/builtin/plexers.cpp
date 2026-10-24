@@ -52,14 +52,28 @@ std::vector<int> side_ys(int n)
     return ys;
 }
 
+enum class plexer {
+    mux,
+    demux,
+    decoder,
+    // a decoder with all outputs in one bus
+    decoder_bus
+};
+
 // a trapezoid, tall on the side of the n pins and short on the side of the
 // single one, the select (and enable) at the slanted bottom. a mux has the
-// n inputs on the left, a demux (mirrored) the n outputs on the right.
-// ports: the n pins (mux) or the single input (demux), sel, en, then the
-// single output (mux) or the n pins (demux).
-void plexer_symbol(builder& b, bool demux, int n, int width, int bits, bool has_en)
+// n inputs on the left, a demux (mirrored) the n outputs on the right. a
+// decoder is a demux without the input, with the bus output it's as tall as
+// one with two outputs and has a single pin in the middle of the tall side.
+// ports: the n pins (mux) or the single input (demux, not decoder), sel,
+// en, then the single output (mux) or the n pins (demux, decoder) or the
+// bus (decoder_bus, width bits).
+void plexer_symbol(builder& b, plexer kind, int n, int width, int bits, bool has_en)
 {
     using model::grid;
+    bool demux = kind != plexer::mux;
+    bool bus = kind == plexer::decoder_bus;
+    if (bus) n = 2;
     // x as for a mux, mirrored for a demux
     int m = demux ? -1 : 1;
     auto at = [&](int x, int y) { return glm::ivec2{m * x, y}; };
@@ -78,11 +92,19 @@ void plexer_symbol(builder& b, bool demux, int n, int width, int bits, bool has_
     auto bottom_at = [&](int x) { return bottom + (int)std::lround(double(s) * (x - tall) / (small - tall)); };
 
     auto many = [&] {
+        if (bus) {
+            b.line(at(tall - grid, 0), at(tall, 0), model::bus_stroke);
+            b.text(at(tall + 2, -2), "out", 5.0f, model::text_align::right);
+            b.port("out", direction::output, width, at(tall - grid, 0), "bit sel is 1, the others 0");
+            return;
+        }
         for (int k = 0; k < n; k++) {
             b.line(at(tall - grid, ys[k]), at(tall, ys[k]), stroke);
             auto label = std::to_string(k);
             b.text(at(tall + 2, ys[k] - 2), label, 5.0f, demux ? model::text_align::right : model::text_align::left);
-            if (demux)
+            if (kind == plexer::decoder)
+                b.port("out" + label, direction::output, width, at(tall - grid, ys[k]), "1 when sel is " + label + ", else 0");
+            else if (demux)
                 b.port("out" + label, direction::output, width, at(tall - grid, ys[k]), "in when sel is " + label + ", else 0");
             else
                 b.port("in" + label, direction::input, width, at(tall - grid, ys[k]), "passed when sel is " + label);
@@ -96,9 +118,9 @@ void plexer_symbol(builder& b, bool demux, int n, int width, int bits, bool has_
             b.port("out", direction::output, width, at(small + grid, 0), "the chosen input");
     };
 
-    if (demux)
+    if (kind == plexer::demux)
         single();
-    else
+    else if (kind == plexer::mux)
         many();
 
     // the select a grid from the tall side (the middle without enable), the
@@ -106,7 +128,8 @@ void plexer_symbol(builder& b, bool demux, int n, int width, int bits, bool has_
     // corner, short stubs go up to the slanted edge. the labels outside.
     b.line(at(0, bottom), at(0, bottom_at(0)), bits > 1 ? model::bus_stroke : 0.0f);
     b.text(at(-3, bottom - 8), "sel", 4.5f, demux ? model::text_align::left : model::text_align::right);
-    b.port("sel", direction::input, bits, at(0, bottom), demux ? "which output gets in" : "which input to pass");
+    const char* sel_desc = kind == plexer::decoder_bus ? "which bit to set" : kind == plexer::decoder ? "which output is 1" : demux ? "which output gets in" : "which input to pass";
+    b.port("sel", direction::input, bits, at(0, bottom), sel_desc);
     if (has_en) {
         b.line(at(grid, bottom), at(grid, bottom_at(grid)));
         b.text(at(grid + 3, bottom - 8), "en", 4.5f, demux ? model::text_align::right : model::text_align::left);
@@ -169,7 +192,7 @@ public:
     {
         int bits = (int)model::get_int(v, "select");
         builder b;
-        plexer_symbol(b, false, 1 << bits, (int)model::get_int(v, "width"), bits, model::get_bool(v, "enable"));
+        plexer_symbol(b, plexer::mux, 1 << bits, (int)model::get_int(v, "width"), bits, model::get_bool(v, "enable"));
         return b.finish();
     }
 
@@ -226,7 +249,7 @@ public:
     {
         int bits = (int)model::get_int(v, "select");
         builder b;
-        plexer_symbol(b, true, 1 << bits, (int)model::get_int(v, "width"), bits, model::get_bool(v, "enable"));
+        plexer_symbol(b, plexer::demux, 1 << bits, (int)model::get_int(v, "width"), bits, model::get_bool(v, "enable"));
         return b.finish();
     }
 
@@ -238,12 +261,13 @@ public:
 
 // ---- decoder ----
 
-// sel, [en], out (one bit per value of sel)
+// sel, [en], then out0..outN-1 or one bus out with a bit per output
 class decoder_component : public sim::component {
 public:
-    decoder_component(int outputs, bool has_en)
+    decoder_component(int outputs, bool has_en, bool bus)
         : outputs(outputs)
         , has_en(has_en)
+        , bus(bus)
     {
     }
 
@@ -251,19 +275,34 @@ public:
     {
         auto sel = index_of(ports[0]);
         auto en = has_en ? enable(ports[1]) : true;
-        auto& out = ports[has_en ? 2 : 1];
-        if (!en || (*en && !sel)) {
-            out = sim::unknown(outputs);
+        int first = has_en ? 2 : 1;
+        if (bus) {
+            auto& out = ports[first];
+            if (!en || (*en && !sel)) {
+                out = sim::unknown(outputs);
+                return;
+            }
+            out = value(outputs, 0);
+            if (*en) out.set(*sel, sim::bit_state::one);
             return;
         }
-        out = value(outputs, 0);
-        if (*en) out.set(*sel, sim::bit_state::one);
+        for (int k = 0; k < outputs; k++) {
+            auto& out = ports[first + k];
+            if (!en || (*en && !sel))
+                out = sim::unknown(1);
+            else
+                out = sim::known(*en && *sel == k ? 1 : 0, 1);
+        }
     }
 
 private:
     int outputs;
     bool has_en;
+    bool bus;
 };
+
+// separate output pins only up to this many select bits, more are a bus
+constexpr int max_separate_bits = 6;
 
 class decoder : public primitive {
 public:
@@ -272,21 +311,37 @@ public:
     std::string category() const override { return "Plexers"; }
     std::string description() const override { return "sets the output bit the select chooses (one-hot)"; }
 
-    std::vector<model::param_def> params() const override { return select_params(12, false); }
+    std::vector<model::param_def> params() const override
+    {
+        auto r = select_params(12, false);
+        r.push_back(model::choice_param("outputs", "Outputs", {"separate", "bus"}, "separate", "separate: a pin per output (up to 6 select bits), bus: one output with a bit per output"));
+        return r;
+    }
 
     model::cell_interface build(const model::param_values& v) const override
     {
         int bits = (int)model::get_int(v, "select");
-        std::vector<pin> bottom;
-        if (model::get_bool(v, "enable")) bottom.push_back({"en", direction::input, 1, "0 makes all bits 0"});
+        bool bus = is_bus(v);
         builder b;
-        b.box("DEC", {{"sel", direction::input, bits, "which bit to set"}}, {{"out", direction::output, 1 << bits, "bit sel is 1, the others 0"}}, bottom);
+        plexer_symbol(b, bus ? plexer::decoder_bus : plexer::decoder, 1 << bits, bus ? 1 << bits : 1, bits, model::get_bool(v, "enable"));
         return b.finish();
+    }
+
+    std::string check(const model::param_values& v) const override
+    {
+        if (model::get_string(v, "outputs") == "separate" && is_bus(v)) return "more than 6 select bits are too many pins, shown as a bus";
+        return {};
     }
 
     std::unique_ptr<sim::component> create(const model::param_values& v) const override
     {
-        return std::make_unique<decoder_component>(1 << model::get_int(v, "select"), model::get_bool(v, "enable"));
+        return std::make_unique<decoder_component>(1 << model::get_int(v, "select"), model::get_bool(v, "enable"), is_bus(v));
+    }
+
+private:
+    static bool is_bus(const model::param_values& v)
+    {
+        return model::get_string(v, "outputs") == "bus" || model::get_int(v, "select") > max_separate_bits;
     }
 };
 

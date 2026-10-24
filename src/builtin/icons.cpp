@@ -118,7 +118,8 @@ const std::map<std::string, icon_fn>& icons()
         // plexers
         {"mux", [](builder& b) { b.polyline({{-6, 10}, {6, 5}, {6, -5}, {-6, -10}, {-6, 10}}); }},
         {"demux", [](builder& b) { b.polyline({{6, 10}, {-6, 5}, {-6, -5}, {6, -10}, {6, 10}}); }},
-        {"decoder", [](builder& b) { chip(b, "DE"); }},
+        // the demux shape, the symbol has no input
+        {"decoder", [](builder& b) { b.polyline({{6, 10}, {-6, 5}, {-6, -5}, {6, -10}, {6, 10}}); }},
         {"priority", [](builder& b) { chip(b, "PR"); }},
         {"popcount", [](builder& b) { boxed(b, "#1", 10.0f); }},
         {"bitselect",

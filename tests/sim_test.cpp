@@ -2056,10 +2056,24 @@ static void test_plexers()
     }
     {
         part_fixture f("decoder", {{"select", int64_t(3)}});
+        CHECK(!f.ports.count("in") && f.top->ports[f.ports["out7"]].width == 1);
+        f.set("sel", 5);
+        CHECK(f.num("out5") == 1 && f.num("out4") == 0 && f.num("out0") == 0);
+        f.set("sel", sim::unknown(3));
+        CHECK(f.get("out5") == sim::unknown(1));
+    }
+    {
+        part_fixture f("decoder", {{"select", int64_t(3)}, {"outputs", std::string("bus")}});
+        CHECK(!f.ports.count("out0") && f.top->ports[f.ports["out"]].width == 8);
         f.set("sel", 5);
         CHECK(f.get("out") == sim::known(0x20, 8));
         f.set("sel", sim::unknown(3));
         CHECK(f.get("out") == sim::unknown(8));
+    }
+    {
+        // too many select bits for separate pins: a bus
+        part_fixture f("decoder", {{"select", int64_t(8)}});
+        CHECK(f.top->ports[f.ports["out"]].width == 256);
     }
     {
         part_fixture f("priority", {{"inputs", int64_t(10)}});

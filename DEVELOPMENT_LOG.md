@@ -2724,3 +2724,106 @@ The user changed their mind about the look of the 7-segment display:
 
 - Parts that aren't in the subset can't be added to the bar without
   changing `shown_kinds` in `component_bar.cpp`.
+
+## 2026-10-24 22:36 +0300
+
+### Changes made
+
+- **The decoder is drawn like the demultiplexer, without the input:** the
+  same trapezoid with numbered outputs on the tall side, `sel` (and `en`)
+  at the slanted bottom. It replaces the "DEC" box.
+- **One 1-bit output per value of `sel`:** `out0` … `outN-1`, instead of a
+  single `out` bus 2^select bits wide. The new pin is 1 and the others are 0.
+  An unknown `sel` or `en` makes all outputs unknown.
+- **Select bits are limited to 6 (64 outputs), as for the demux.** It was
+  12, but 4096 separate pins aren't practical.
+- **Component bar icon:** the demux shape instead of the "DE" chip.
+
+### How it works
+
+- In `src/builtin/plexers.cpp`, `plexer_symbol` takes a
+  `plexer {mux, demux, decoder}` instead of `bool demux`.
+  - The decoder takes the demux layout (mirrored) but skips the single
+    input pin.
+  - Its outputs are 1 bit wide, with the descriptions "1 when sel is k,
+    else 0" and `sel` "which output is 1".
+- `decoder_component` sets each output port `first + k` (after `sel` and
+  the optional `en`).
+- **Compatibility:** a saved decoder from before has an `out` bus that no
+  longer exists, so its wires would lose their pin. No schematic in the
+  workspace uses a decoder, so the decoder was changed rather than given
+  an option. Decoders with more than 6 select bits are clamped by the
+  parameter range.
+
+### Testing
+
+- **sim_test:** the decoder with 3 select bits has `out7` 1 bit wide and no
+  `in`. `sel` = 5 sets `out5` = 1 and `out4` = `out0` = 0. An unknown `sel`
+  makes `out5` unknown. All 8 ctest suites pass.
+- **GUI**, on a scratch copy of the workspace: a Decoder and a
+  Demultiplexer placed side by side. They have the same shape and numbered
+  outputs, and the decoder has no input pin.
+
+### Recommended features
+
+- Optional inverted (active-low) outputs for the decoder, as on the
+  74x138.
+
+### Outstanding issues
+
+- None known.
+
+## 2026-10-24 22:41 +0300
+
+### Features implemented
+
+- **Decoder "Outputs" parameter:**
+  - `separate` (default): a 1-bit pin per output, `out0` … `outN-1`, as in
+    the previous entry.
+  - `bus`: one output `out` with a bit per output (bit `sel` is 1, as the
+    decoder was before today), drawn as a compact trapezoid with one bus
+    pin in the middle of the tall side.
+- **Select bits:** up to 12 again. Separate outputs with more than 6 select
+  bits would be too many pins, so the decoder is shown as a bus. The
+  properties warn: "more than 6 select bits are too many pins, shown as a
+  bus".
+
+### How it works
+
+- In `src/builtin/plexers.cpp`, `plexer::decoder_bus`:
+  - `plexer_symbol` draws the trapezoid at the size of a two-output
+    decoder and puts one `out` port at y 0 on the tall side, with a bus
+    stub and an "out" label.
+  - The `sel` description is "which bit to set".
+- `decoder::is_bus(params)`: outputs = bus, or select > `max_separate_bits`
+  (6). `build`, `create` and `check` use it.
+  - `check` returns the warning only when separate outputs were chosen but
+    a bus is shown.
+- `decoder_component` takes `bus`.
+  - Bus: sets one bit in a value as wide as the outputs.
+  - Separate: sets each pin.
+  - In both, an unknown `sel` or `en` gives unknown.
+- **Decided:**
+  - Separate stays the default, as asked in the previous change.
+  - A bus as the fallback for too many select bits (instead of clamping the
+    select width), so the part keeps working with the select it was given.
+
+### Testing
+
+- **sim_test:**
+  - Separate (3 bits): `out5` = 1, the others 0, and unknown with an
+    unknown `sel`.
+  - Bus (3 bits): no `out0`; `out` is 8 bits wide, 0x20 for `sel` = 5, and
+    unknown with an unknown `sel`.
+  - 8 select bits with the default: `out` is 256 bits wide.
+  - All 8 ctest suites pass.
+- **GUI**, on a scratch copy of the workspace:
+  - Two decoders placed; Properties shows Select bits, Enable and Outputs
+    (separate / bus).
+  - Bus turned one into the compact trapezoid with a single `out` pin.
+  - 8 select bits on the separate one showed it as a bus, with the warning
+    in orange under the parameters.
+
+### Outstanding issues
+
+- None known.
