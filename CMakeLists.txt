@@ -132,6 +132,7 @@ add_executable(logic
     src/editor/schematic_editor.cpp
     src/editor/symbol_editor.cpp
     src/editor/cell_editor.cpp
+    src/editor/symbol_page.cpp
     src/editor/model_editor.cpp
     src/editor/param_editor.cpp
     src/editor/bundle_ui.cpp

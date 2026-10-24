@@ -2926,3 +2926,171 @@ The user changed their mind about the look of the 7-segment display:
 ### Outstanding issues
 
 - None known.
+
+## 2026-10-24 23:23 +0300
+
+### Features implemented
+
+- **Automatic symbols:** a schematic cell with an empty symbol is shown as
+  a generated box with a pin per port, inputs on the left, outputs and
+  inouts on the right, labelled, with the name above.
+  - Before, such a cell drew as nothing until "Generate from ports" was
+    clicked.
+  - The box isn't saved, and it follows the ports: add, remove or rename a
+    port (or rename the cell) and every instance updates.
+  - Existing cells with an empty symbol get the box at once; drawn symbols
+    are unchanged.
+- **Symbol editor window:** a dockable window with a tab per cell. It
+  docks above Properties in the default layout; older layouts get it there
+  the first time.
+  - **An automatic symbol** shows as a read-only preview with an **Add
+    symbol** button, which makes the box the cell's own symbol to draw on.
+  - **A drawn symbol** has the symbol tools. Its properties have **Reset to
+    automatic** (with a confirmation) next to "Generate from ports".
+  - The page is read-only while any running simulation uses the cell,
+    including the cell's own.
+- **The Editor tab only shows the circuit:** the Schematic/Symbol radio and
+  the Tab key are gone.
+- **Libraries panel:**
+  - **A click** places the cell in the schematic of the active tab; the
+    next canvas click drops it. If it can't be placed, the tooltip says
+    why: no schematic open, simulating, the schematic is used by a
+    simulation, or it would contain itself. It also shows builtins'
+    descriptions.
+  - **A double click** opens the cell, as does the menu's **Edit** (was
+    "Open").
+  - **Right-click** shows **Add symbol** for automatic symbols, otherwise
+    **Edit symbol**. Builtins have neither.
+- **Undo, the Edit menu and the Properties panel** act on the Editor or the
+  Symbol editor, whichever was focused last.
+
+### How it works
+
+- **Model:**
+  - `model::generated_symbol(ports, name, order, new_id)` is the box
+    generator, taken out of `cell::generate_symbol`, which now calls it.
+  - `cell::auto_symbol()`: a schematic cell whose symbol has no shapes and
+    no pins.
+  - `cell::check()` skips the pin warnings for it.
+  - `workspace::interface_of` returns `auto_symbol_of(c)` for such cells: a
+    per-cell cache regenerated when the ports or the name differ, with
+    local ids. Everything that draws or connects instances goes through
+    `interface_of`, so the box works everywhere: canvas, netlist, sim view,
+    bounds and hit tests.
+  - Saving is unchanged: an empty symbol stays empty.
+- **`editor::symbol_page`** (`src/editor/symbol_page.{h,cpp}`):
+  - It owns a `symbol_editor`, the symbol toolbar (moved from
+    `cell_editor::edit_toolbar`), its canvas, the properties, copy/paste
+    and undo/redo.
+  - `symbol_editor::draw` draws `auto_symbol_of` (shapes and labelled
+    pins, no handles) for automatic symbols; the page then only pans and
+    zooms.
+  - The canvas code shared with the cell editor is
+    `editor::canvas_widget` (`canvas_widget.h`): the size in whole pixels,
+    the input, drawing into the framebuffer, and the image.
+  - `tool_button` moved to `context.h`.
+- **Shared undo:**
+  - `app::histories` maps cell ids to `shared_ptr<model::history>`, given
+    to both the cell editor and the symbol page and dropped when neither is
+    open.
+  - `history::restore_count()` counts undos and redos. Each side compares
+    it every frame and revalidates its selection when the other one
+    replaced the cell.
+- **App:**
+  - `symbol_pages`, `symbol_panel()`, `open_symbol(c, add)`,
+    `close_symbol`, `find_symbol`.
+  - A second texture/framebuffer (`symbol_tex/fb`), because both windows
+    are visible in the same frame and draw at different sizes.
+  - `last_focus` is set by `IsWindowFocused(RootAndChildWindows)` in each
+    window. `focused_symbol()` routes Ctrl+Z/Y/C/X/V, the Edit menu and the
+    Properties panel.
+  - `simulated_by(cell, own)` gives the lock text for editors (others'
+    simulations) and symbol pages (any).
+  - Deleting a cell closes its symbol page too.
+  - `dock_symbol_editor()` splits the Properties dock node when the window
+    has no saved settings, waiting until Properties exists. On the first
+    frame it doesn't yet, and the window would otherwise be created
+    floating.
+- **Libraries click:** `Selectable` → `e->place(c.id)` and
+  `SetWindowFocus("Editor")`.
+  - The row is highlighted while that cell is being placed.
+  - A double click calls `cell_editor::cancel_place()` and then
+    `open_editor`.
+  - The release that ends a double click is ignored
+    (`MouseClickedLastCount >= 2`). Otherwise it started placing again
+    before the tab switch took effect: found in the GUI test.
+- **Decided** (the user's choices):
+  - The automatic symbol is live until customised, rather than generated
+    and saved once.
+  - The symbol editor is its own window with tabs, rather than following
+    the active tab.
+  - A click that can't place does nothing and the tooltip says why.
+
+### Testing
+
+- **model_test:**
+  - New `test_auto_symbol`:
+    - a box with one pin per port, not stored
+    - it follows added and removed ports
+    - a symbol of its own is used and stays
+    - clearing it is automatic again
+    - only schematic cells
+  - `test_ports_and_check` and `test_builtins` were updated for automatic
+    symbols.
+  - All 9 ctest suites pass.
+- **GUI** with xdotool on a scratch copy of the workspace and of the real
+  `imgui.ini` (the layout from before the window):
+  - The Symbol editor docked above Properties, and the Editor toolbar has
+    no radio.
+  - One click on `cell1` in Libraries and a canvas click placed it in
+    `asfd` as a box with `in1`.
+  - Right-click > Add symbol opened `cell1` in the Symbol editor with the
+    box editable, and Properties showed the symbol properties.
+  - A line drawn there showed on the instance at once. Ctrl+Z undid it,
+    and Ctrl+Y redid it.
+  - Reset to automatic brought the box back and the page showed Add symbol
+    again.
+  - Double-clicking `cell1` opened its tab and left `asfd` on the Select
+    tool. Hovering it showed "'cell1' would contain itself".
+  - Adding an output port in `cell1` added an `out1` pin to the instance in
+    `asfd`.
+  - With the simulation running, the symbol page was greyed out.
+- **Note:** xdotool's `key ctrl+z` can send both keys in one frame, which
+  the app doesn't take as the chord. Holding ctrl with
+  `keydown`/`keyup` works.
+
+### Recommended features
+
+- A hover preview of a cell's symbol in the Libraries panel.
+- Drag a cell from Libraries onto the canvas to place it.
+
+### Outstanding issues
+
+- External (C model and HDL) cells keep their generated, saved symbols.
+  The automatic box only applies to schematic cells.
+
+## 2026-10-24 23:39 +0300
+
+### Changes made
+
+- **Fix:** right-clicking a builtin cell in the Libraries panel opened an
+  empty menu. Builtins can't be edited, have no symbol to add or edit, and
+  their library is read-only, so the menu had no items.
+
+### How it works
+
+- `app::library_cell` opens the context menu only when it has something
+  in it: the cell can be edited (schematic or external), or isn't a
+  builtin (symbol items), or its library isn't read-only (rename,
+  category, delete). Builtins only show their tooltip.
+
+### Testing
+
+- **GUI** with xdotool, on a scratch copy of the workspace: right-clicking
+  AND showed no menu, only the tooltip. Right-clicking `mos6502` (a plugin
+  cell) shows Edit and Edit symbol.
+- All 9 ctest suites pass.
+
+### Outstanding issues
+
+- None known.

@@ -519,6 +519,7 @@ interface_view workspace::interface_of(const instance& i) const
     static const std::vector<model_port> no_model_ports;
     if (!p) {
         if (auto e = external_interface(*c, i)) return {&e->iface.ports, &e->iface.symbol, &no_links, &no_pulls, &e->iface.model_ports};
+        if (c->auto_symbol()) return {&c->ports, &auto_symbol_of(*c), &no_links, &no_pulls, &no_model_ports};
         auto groups = c->port_groups();
         if (!groups || groups->empty()) return {&c->ports, &c->symbol, &no_links, &no_pulls, &no_model_ports};
 
@@ -569,6 +570,18 @@ const external_provider* workspace::provider_of(const cell& c) const
     for (auto p : providers)
         if (p->handles(c)) return p;
     return nullptr;
+}
+
+const model::symbol& workspace::auto_symbol_of(const cell& c) const
+{
+    auto& e = auto_symbols[c.id];
+    if (e.symbol.shapes.empty() || e.ports != c.ports || e.name != c.name) {
+        e.ports = c.ports;
+        e.name = c.name;
+        id next = 1;
+        e.symbol = generated_symbol(c.ports, c.name, pin_order::position, [&] { return next++; });
+    }
+    return e.symbol;
 }
 
 bool workspace::refresh_interface(cell& c, std::string& error)

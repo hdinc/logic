@@ -40,6 +40,10 @@ public:
     bool undo(cell& c);
     bool redo(cell& c);
 
+    // counts the undos and redos, so several editors of the cell notice
+    // when another one replaced it
+    size_t restore_count() const { return restores; }
+
 private:
     bool unchanged(const cell& c) const;
 
@@ -47,6 +51,7 @@ private:
     std::deque<cell_state> undo_stack;
     std::vector<cell_state> redo_stack;
     size_t limit;
+    size_t restores = 0;
 };
 
 }

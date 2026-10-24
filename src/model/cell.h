@@ -6,6 +6,7 @@
 #include "schematic.h"
 #include "symbol.h"
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <variant>
@@ -155,6 +156,11 @@ enum class pin_order {
     declaration
 };
 
+// a box with the ports' pins: inputs on the left, outputs and inouts on the
+// right, labelled, with the name above. buses get thick stubs, bundles
+// thicker ones. new_id gives the ids of the shapes and pins.
+symbol generated_symbol(const std::vector<port>& ports, const std::string& name, pin_order order, const std::function<id()>& new_id);
+
 // anything that can be placed in a schematic: user circuits, builtin
 // primitives, c models and hdl models
 struct cell {
@@ -202,9 +208,13 @@ struct cell {
 
     std::string unique_port_name(const std::string& prefix) const;
 
-    // replaces the symbol with a box, inputs on the left, outputs and inouts
-    // on the right. buses get thick stubs, bundles thicker ones.
+    // replaces the symbol with generated_symbol of the ports
     void generate_symbol(pin_order order = pin_order::position);
+
+    // a schematic cell with an empty symbol: it's shown as the generated
+    // box of its ports (see workspace::interface_of), which follows the
+    // ports until a symbol of its own is made
+    bool auto_symbol() const { return get_schematic() && symbol.shapes.empty() && symbol.pins.empty(); }
 
     // replaces the ports with the given ones, e.g. found in a model. ports
     // with the same name keep their id, position and description (unless the

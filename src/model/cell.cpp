@@ -67,6 +67,8 @@ std::vector<std::string> cell::check() const
         if (p.width < 1 || p.width > max_width)
             r.push_back("port '" + p.name + "' width must be between 1 and " + std::to_string(max_width));
 
+        // the automatic symbol has a pin for every port
+        if (auto_symbol()) continue;
         auto n = std::count_if(symbol.pins.begin(), symbol.pins.end(), [&](const pin& s) { return s.port == p.id; });
         if (n == 0)
             r.push_back("port '" + p.name + "' has no pin on the symbol");
@@ -196,7 +198,7 @@ bool cell::set_ports(const std::vector<port>& list)
     return true;
 }
 
-void cell::generate_symbol(pin_order order)
+symbol generated_symbol(const std::vector<port>& ports, const std::string& name, pin_order order, const std::function<id()>& new_id)
 {
     std::vector<const port*> left, right;
     for (auto& p : ports)
@@ -225,9 +227,9 @@ void cell::generate_symbol(pin_order order)
     int top = first + grid;
     int bottom = first - rows * grid;
 
-    symbol = {};
+    symbol r;
 
-    auto add_line = [&](glm::ivec2 a, glm::ivec2 b) { symbol.shapes.push_back({new_id(), line{a, b}}); };
+    auto add_line = [&](glm::ivec2 a, glm::ivec2 b) { r.shapes.push_back({new_id(), line{a, b}}); };
     add_line({-half_w, top}, {half_w, top});
     add_line({half_w, top}, {half_w, bottom});
     add_line({half_w, bottom}, {-half_w, bottom});
@@ -240,19 +242,25 @@ void cell::generate_symbol(pin_order order)
         int y = first;
         for (auto p : side) {
             glm::ivec2 pin_pos{x + stub, y};
-            symbol.shapes.push_back({new_id(), line{{x, y}, pin_pos}, p->bundle != no_id ? bundle_stroke : p->width > 1 ? bus_stroke
+            r.shapes.push_back({new_id(), line{{x, y}, pin_pos}, p->bundle != no_id ? bundle_stroke : p->width > 1 ? bus_stroke
                                                                                                                         : 0.0f});
-            symbol.pins.push_back({new_id(), p->id, pin_pos});
+            r.pins.push_back({new_id(), p->id, pin_pos});
             // labels against the box: right side ones end there
             int lx = is_left ? x + 3 : x - 3;
-            symbol.shapes.push_back({new_id(), text{{lx, y - 2}, p->name, label_size, is_left ? text_align::left : text_align::right}});
+            r.shapes.push_back({new_id(), text{{lx, y - 2}, p->name, label_size, is_left ? text_align::left : text_align::right}});
             y -= grid;
         }
     };
     add_side(left, true);
     add_side(right, false);
 
-    symbol.shapes.push_back({new_id(), text{{-half_w, top + 3}, name, 8.0f}});
+    r.shapes.push_back({new_id(), text{{-half_w, top + 3}, name, 8.0f}});
+    return r;
+}
+
+void cell::generate_symbol(pin_order order)
+{
+    symbol = generated_symbol(ports, name, order, [this] { return new_id(); });
 }
 
 const char* to_string(direction d)

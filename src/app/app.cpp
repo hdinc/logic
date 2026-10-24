@@ -24,6 +24,8 @@ app::app(Hd::Window& w, std::filesystem::path r)
     , components(renderer)
     , editor_tex(Hd::Texture::emptyTexture(3840, 2160))
     , editor_fb(editor_tex)
+    , symbol_tex(Hd::Texture::emptyTexture(3840, 2160))
+    , symbol_fb(symbol_tex)
 {
     for (auto& e : io::load_workspace(ws, root))
         message(e);
@@ -352,11 +354,18 @@ void app::draw_gui()
     menu_bar();
     auto dockspace = DockSpaceOverViewport();
     default_layout(dockspace);
+    dock_symbol_editor();
 
     if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S)) save_all();
 
     // text inputs have their own undo
-    if (auto e = find_editor(active_cell); e && !GetIO().WantTextInput) {
+    if (auto p = focused_symbol(); p && !GetIO().WantTextInput) {
+        if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z)) p->undo();
+        if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_C)) p->copy();
+        if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_X)) p->cut();
+        if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_V)) p->paste();
+        if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y) || IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z)) p->redo();
+    } else if (auto e = find_editor(active_cell); e && !GetIO().WantTextInput) {
         if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z)) e->undo();
         if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_C)) e->copy();
         if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_X)) e->cut();
@@ -378,6 +387,7 @@ void app::draw_gui()
 
     library_panel();
     editor_panel();
+    symbol_panel();
     for (auto& e : editors)
         if (auto& s = e->simulation()) s->waveforms_gui(e->cell().name);
     open_instance_tabs();
@@ -387,6 +397,30 @@ void app::draw_gui()
     settings_window();
     themes.gui(theme_name, [&] { use_theme(); }, [&] { apply_theme(); });
     exit_dialog();
+}
+
+void app::dock_symbol_editor()
+{
+    using namespace ImGui;
+
+    // layouts saved before the window existed: above the properties. the
+    // window waits until the properties exist (the first frame).
+    if (symbol_docked) return;
+    if (FindWindowSettingsByID(ImHashStr("Symbol editor")) || FindWindowByName("Symbol editor")) {
+        symbol_docked = true;
+        return;
+    }
+    auto props = FindWindowByName("Properties");
+    if (!props) return;
+    symbol_docked = true;
+    if (!props->DockNode) return;
+
+    ImGuiID node = props->DockNode->ID;
+    ImGuiID below;
+    ImGuiID above = DockBuilderSplitNode(node, ImGuiDir_Up, 0.5f, nullptr, &below);
+    DockBuilderDockWindow("Symbol editor", above);
+    DockBuilderDockWindow("Properties", below);
+    DockBuilderFinish(node);
 }
 
 void app::default_layout(unsigned int dockspace)
@@ -407,6 +441,8 @@ void app::default_layout(unsigned int dockspace)
 
     DockBuilderDockWindow("Libraries", left);
     DockBuilderDockWindow("Hierarchy", left_bottom);
+    ImGuiID right_top = DockBuilderSplitNode(right, ImGuiDir_Up, 0.5f, nullptr, &right);
+    DockBuilderDockWindow("Symbol editor", right_top);
     DockBuilderDockWindow("Properties", right);
     DockBuilderDockWindow("Messages", bottom);
     DockBuilderDockWindow("Editor", center);
@@ -449,17 +485,27 @@ void app::menu_bar()
 
         if (BeginMenu("Edit")) {
             auto e = find_editor(active_cell);
-            if (auto b = find_bundle_editor(active_bundle)) {
-                if (MenuItem("Undo", "Ctrl+Z", false, b->can_undo())) b->undo();
-                if (MenuItem("Redo", "Ctrl+Y", false, b->can_redo())) b->redo();
+            auto b = find_bundle_editor(active_bundle);
+            if (auto p = focused_symbol()) {
+                if (MenuItem("Undo", "Ctrl+Z", false, p->can_undo())) p->undo();
+                if (MenuItem("Redo", "Ctrl+Y", false, p->can_redo())) p->redo();
+                Separator();
+                if (MenuItem("Cut", "Ctrl+X", false, p->can_copy() && !p->locked())) p->cut();
+                if (MenuItem("Copy", "Ctrl+C", false, p->can_copy())) p->copy();
+                if (MenuItem("Paste", "Ctrl+V", false, p->can_paste())) p->paste();
             } else {
-                if (MenuItem("Undo", "Ctrl+Z", false, e && e->can_undo())) e->undo();
-                if (MenuItem("Redo", "Ctrl+Y", false, e && e->can_redo())) e->redo();
+                if (b) {
+                    if (MenuItem("Undo", "Ctrl+Z", false, b->can_undo())) b->undo();
+                    if (MenuItem("Redo", "Ctrl+Y", false, b->can_redo())) b->redo();
+                } else {
+                    if (MenuItem("Undo", "Ctrl+Z", false, e && e->can_undo())) e->undo();
+                    if (MenuItem("Redo", "Ctrl+Y", false, e && e->can_redo())) e->redo();
+                }
+                Separator();
+                if (MenuItem("Cut", "Ctrl+X", false, e && e->can_copy() && !e->locked())) e->cut();
+                if (MenuItem("Copy", "Ctrl+C", false, e && e->can_copy())) e->copy();
+                if (MenuItem("Paste", "Ctrl+V", false, e && e->can_paste())) e->paste();
             }
-            Separator();
-            if (MenuItem("Cut", "Ctrl+X", false, e && e->can_copy() && !e->locked())) e->cut();
-            if (MenuItem("Copy", "Ctrl+C", false, e && e->can_copy())) e->copy();
-            if (MenuItem("Paste", "Ctrl+V", false, e && e->can_paste())) e->paste();
             EndMenu();
         }
 
@@ -521,8 +567,11 @@ void app::menu_bar()
 
     if (open_help) OpenPopup("Keys");
     if (BeginPopupModal("Keys", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        SeparatorText("Libraries");
+        BulletText("Click a cell: place it in the open schematic, double click: edit it");
+        BulletText("Right click a cell: edit it, add or edit its symbol, rename, category, delete");
         SeparatorText("Both editors");
-        BulletText("Wheel: zoom, right drag: pan, G: grid, Tab: schematic/symbol");
+        BulletText("Wheel: zoom, right drag: pan, G: grid");
         BulletText("Click/drag: select and move, drag on empty space: box select");
         BulletText("Ctrl+click: add to the selection (again: remove), Shift+click: remove from it");
         BulletText("Ctrl+drag / Shift+drag: box that adds to / removes from the selection");
@@ -539,7 +588,8 @@ void app::menu_bar()
         BulletText("R / M while placing or pasting: rotate / mirror it (Shift+R: the other way)");
         BulletText("Component bar (over the schematic): click an icon, then click in the schematic to place it");
         BulletText("Right click the component bar: top, bottom, left, right or hide (View > Component bar shows it again)");
-        SeparatorText("Symbol");
+        SeparatorText("Symbol editor");
+        BulletText("Cells without a symbol are a box that follows their ports, Add symbol makes it their own");
         BulletText("P: pin, L: line, B: bezier, A: arc, C: circle, T: text, R: rectangle");
         SeparatorText("Simulate");
         BulletText("F5: start / stop simulating the schematic");
@@ -623,6 +673,7 @@ void app::library_panel()
             Text("Delete '%s'? The file is removed on the next save.", c->name.c_str());
             if (Button("Delete")) {
                 close_editor(deleting);
+                close_symbol(deleting);
                 ws.delete_cell(deleting);
                 deleting = model::no_id;
                 CloseCurrentPopup();
@@ -681,12 +732,55 @@ void app::library_cell(model::library& lib, model::cell& c)
     if (renaming == c.id) {
         rename_input(lib, c.name, false);
     } else {
-        if (Selectable(c.name.c_str(), active_cell == c.id)) open_editor(c);
+        // a click places it in the schematic of the active tab, a double
+        // click opens it
+        auto e = active_instance_tab ? nullptr : find_editor(active_cell);
+        bool editable = c.get_schematic() || c.is_external();
+        // the release that ends a double click doesn't place it again
+        bool second = GetIO().MouseClickedLastCount[ImGuiMouseButton_Left] >= 2;
+        if (Selectable(c.name.c_str(), e && e->placing() == c.id) && !second && e && e->can_place(c.id)) {
+            e->place(c.id);
+            // the next click on the canvas places it
+            SetWindowFocus("Editor");
+        }
+        if (IsItemHovered() && IsMouseDoubleClicked(ImGuiMouseButton_Left) && editable) {
+            if (e) e->cancel_place();
+            open_editor(c);
+        }
+        if (BeginItemTooltip()) {
+            auto prim = ws.primitive_of(c);
+            if (prim && !prim->description().empty()) TextUnformatted(prim->description().c_str());
+            if (!e || !e->can_place(c.id)) {
+                if (!e || !e->cell().get_schematic())
+                    TextDisabled("open a schematic to place it");
+                else if (e->simulating())
+                    TextDisabled("stop the simulation to place it");
+                else if (e->locked())
+                    TextDisabled("'%s' is used by a simulation", e->cell().name.c_str());
+                else
+                    TextDisabled("'%s' would contain itself", e->cell().name.c_str());
+            } else {
+                TextDisabled("click: place it in '%s'", e->cell().name.c_str());
+            }
+            if (editable) TextDisabled("double click: edit it");
+            EndTooltip();
+        }
 
         if (!lib.read_only && IsItemHovered() && IsKeyPressed(ImGuiKey_F2)) start_rename(c.id, c.name);
 
-        if (BeginPopupContextItem()) {
-            if (Selectable("Open")) open_editor(c);
+        // builtins in their read-only library have nothing to offer
+        bool has_menu = editable || !ws.primitive_of(c) || !lib.read_only;
+        if (has_menu && BeginPopupContextItem()) {
+            if (editable && Selectable("Edit")) open_editor(c);
+            // builtins have generated symbols, the others can be drawn
+            if (!ws.primitive_of(c)) {
+                if (c.auto_symbol()) {
+                    if (Selectable("Add symbol")) open_symbol(c, true);
+                    SetItemTooltip("It's shown as a box that follows its ports, draw a symbol of its own instead");
+                } else if (Selectable("Edit symbol")) {
+                    open_symbol(c, false);
+                }
+            }
             if (!lib.read_only) {
                 if (Selectable("Rename (F2)")) start_rename(c.id, c.name);
                 if (BeginMenu("Category")) {
@@ -793,6 +887,7 @@ void app::editor_panel()
     using namespace ImGui;
 
     Begin("Editor", nullptr, ImGuiWindowFlags_NoCollapse);
+    if (IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) last_focus = focus::editor;
 
     if (editors.empty() && instance_tabs.empty() && bundle_editors.empty()) {
         TextDisabled("Open a cell from the library panel, or create one with 'New cell'.");
@@ -883,10 +978,51 @@ void app::editor_panel()
     End();
 }
 
+void app::symbol_panel()
+{
+    using namespace ImGui;
+
+    if (!symbol_docked) return;
+    Begin("Symbol editor", nullptr, ImGuiWindowFlags_NoCollapse);
+    if (IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) last_focus = focus::symbol;
+
+    active_symbol = model::no_id;
+    model::id close = model::no_id;
+    if (symbol_pages.empty())
+        TextWrapped("Right-click a cell in the libraries and choose Add symbol or Edit symbol.");
+    else if (BeginTabBar("symbols", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs)) {
+        for (auto& p : symbol_pages) {
+            auto id = p->cell().id;
+            // the ### part keeps the tab when the cell is renamed
+            auto label = p->cell().name + "###symbol" + std::to_string(id);
+
+            ImGuiTabItemFlags flags = 0;
+            if (select_symbol_tab == id) {
+                flags |= ImGuiTabItemFlags_SetSelected;
+                select_symbol_tab = model::no_id;
+            }
+
+            bool open = true;
+            if (BeginTabItem(label.c_str(), &open, flags)) {
+                active_symbol = id;
+                p->gui(symbol_tex, symbol_fb);
+                EndTabItem();
+            }
+            if (!open) close = id;
+        }
+        EndTabBar();
+    }
+    if (close != model::no_id) close_symbol(close);
+
+    End();
+}
+
 void app::properties_panel()
 {
     ImGui::Begin("Properties");
-    if (active_instance_tab)
+    if (auto p = focused_symbol())
+        p->property_panel();
+    else if (active_instance_tab)
         active_instance_tab->property_panel();
     else if (auto e = find_editor(active_cell))
         e->property_panel();
@@ -920,15 +1056,21 @@ void app::update_simulations()
         if (auto& s = e->simulation()) s->update();
     }
 
-    // cells of a running simulation can't be edited elsewhere
+    // cells of a running simulation can't be edited elsewhere, symbols not
+    // even while the cell itself is simulated: its instances use them
+    for (auto& e : editors)
+        e->set_locked_by(simulated_by(e->cell().id, false));
+    for (auto& p : symbol_pages)
+        p->set_locked_by(simulated_by(p->cell().id, true));
+}
+
+std::string app::simulated_by(model::id cell, bool own)
+{
     for (auto& e : editors) {
-        std::string by;
-        for (auto& other : editors) {
-            auto& s = other->simulation();
-            if (other != e && s && s->uses(e->cell().id)) by = other->cell().name;
-        }
-        e->set_locked_by(by);
+        auto& s = e->simulation();
+        if (s && (own || e->cell().id != cell) && (e->cell().id == cell || s->uses(cell))) return e->cell().name;
     }
+    return {};
 }
 
 void app::open_instance_tabs()
@@ -1004,12 +1146,57 @@ void app::open_editor(model::cell& c)
     }
 
     auto lib = ws.library_of(c.id);
-    editors.push_back(std::make_unique<editor::cell_editor>(editor::context{ws, *lib, c, renderer, &factory, &plugins, &hdl, &recent_cells}));
+    editors.push_back(std::make_unique<editor::cell_editor>(editor::context{ws, *lib, c, renderer, &factory, &plugins, &hdl, &recent_cells}, history_for(c)));
 }
 
 void app::close_editor(model::id cell)
 {
     std::erase_if(editors, [&](auto& e) { return e->cell().id == cell; });
+    forget_history(cell);
+}
+
+void app::open_symbol(model::cell& c, bool add)
+{
+    select_symbol_tab = c.id;
+    ImGui::SetWindowFocus("Symbol editor");
+    auto p = find_symbol(c.id);
+    if (!p) {
+        auto lib = ws.library_of(c.id);
+        symbol_pages.push_back(std::make_unique<editor::symbol_page>(editor::context{ws, *lib, c, renderer, &factory, &plugins, &hdl, &recent_cells}, history_for(c)));
+        p = symbol_pages.back().get();
+        p->set_locked_by(simulated_by(c.id, true));
+    }
+    if (add) p->add_symbol();
+}
+
+void app::close_symbol(model::id cell)
+{
+    std::erase_if(symbol_pages, [&](auto& p) { return p->cell().id == cell; });
+    forget_history(cell);
+}
+
+editor::symbol_page* app::find_symbol(model::id cell)
+{
+    for (auto& p : symbol_pages)
+        if (p->cell().id == cell) return p.get();
+    return nullptr;
+}
+
+editor::symbol_page* app::focused_symbol()
+{
+    return last_focus == focus::symbol ? find_symbol(active_symbol) : nullptr;
+}
+
+std::shared_ptr<model::history> app::history_for(model::cell& c)
+{
+    auto& h = histories[c.id];
+    if (!h) h = std::make_shared<model::history>(c);
+    return h;
+}
+
+void app::forget_history(model::id cell)
+{
+    if (!find_editor(cell) && !find_symbol(cell)) histories.erase(cell);
 }
 
 editor::cell_editor* app::find_editor(model::id cell)

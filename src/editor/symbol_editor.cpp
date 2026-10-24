@@ -497,6 +497,18 @@ void symbol_editor::draw()
     // origin of the symbol, the instance position in schematics
     r.draw_origin();
 
+    // the generated box, it can't be edited
+    if (ctx.cell.auto_symbol()) {
+        auto& box = ctx.ws.auto_symbol_of(ctx.cell);
+        r.fill_symbol(box, {0, 0}, {}, render::fill_of(r, &ctx.cell));
+        for (auto& s : box.shapes)
+            render::draw_shape(r, s, {0, 0}, {}, c.symbol);
+        for (auto& p : box.pins)
+            draw_pin(p, c.pin);
+        r.end();
+        return;
+    }
+
     // the fill as in schematics
     r.fill_symbol(sym, {0, 0}, {}, render::fill_of(r, &ctx.cell));
 
@@ -642,7 +654,11 @@ void symbol_editor::property_panel()
     }
 
     SeparatorText("Symbol");
-    Text("%zu shapes, %zu pins", sym.shapes.size(), sym.pins.size());
+    bool automatic = ctx.cell.auto_symbol();
+    if (automatic)
+        TextWrapped("Automatic: a box with the ports' pins that follows the ports, inputs on the left in the order of their positions.");
+    else
+        Text("%zu shapes, %zu pins", sym.shapes.size(), sym.pins.size());
 
     // the fill of its closed outlines, the theme's unless the cell has its own
     BeginDisabled(ctx.lib.read_only);
@@ -662,7 +678,13 @@ void symbol_editor::property_panel()
     }
     EndDisabled();
 
-    if (Button("Generate from ports")) {
+    if (automatic) {
+        if (Button("Add symbol")) {
+            ctx.cell.generate_symbol(model::pin_order::position);
+            ctx.modified();
+        }
+        SetItemTooltip("Make the box the cell's own symbol, to draw on it");
+    } else if (Button("Generate from ports")) {
         if (sym.shapes.empty() && sym.pins.empty()) {
             ctx.cell.generate_symbol(ctx.cell.is_external() ? model::pin_order::declaration : model::pin_order::position);
             ctx.modified();
@@ -670,7 +692,26 @@ void symbol_editor::property_panel()
             OpenPopup("Replace symbol?");
         }
     }
-    SetItemTooltip("Replace the symbol with a box, inputs on the left and outputs on the right");
+    if (!automatic) {
+        SetItemTooltip("Replace the symbol with a box, inputs on the left and outputs on the right");
+        if (ctx.cell.get_schematic()) {
+            SameLine();
+            if (Button("Reset to automatic")) OpenPopup("Reset symbol?");
+            SetItemTooltip("Remove the symbol, the cell is shown as a box that follows its ports");
+        }
+    }
+    if (BeginPopupModal("Reset symbol?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        TextUnformatted("This removes all shapes and pins of the symbol.");
+        if (Button("Reset")) {
+            sym = {};
+            selection.clear();
+            ctx.modified();
+            CloseCurrentPopup();
+        }
+        SameLine();
+        if (Button("Cancel")) CloseCurrentPopup();
+        EndPopup();
+    }
 
     if (BeginPopupModal("Replace symbol?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         TextUnformatted("This replaces all shapes and pins of the symbol.");

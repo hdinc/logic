@@ -80,10 +80,12 @@ static void test_ports_and_check()
     CHECK(c.find_port(a_id)->name == "in1");
     CHECK(c.find_port(b_id)->name == "in2");
 
-    // ports without pins are reported
-    CHECK(c.check().size() == 2);
+    // the automatic symbol has all pins
+    CHECK(c.auto_symbol() && c.check().empty());
 
+    // in a symbol of its own, ports without pins are reported
     c.symbol.pins.push_back({c.new_id(), a_id, {-20, 0}});
+    CHECK(!c.auto_symbol() && c.check().size() == 1);
     c.symbol.pins.push_back({c.new_id(), b_id, {-20, 10}});
     CHECK(c.check().empty());
 
@@ -121,6 +123,44 @@ static void test_generate_symbol()
     for (auto& p : c.symbol.pins)
         if (p.pos.x < 0) ys.push_back(p.pos.y);
     CHECK(ys.size() == 2 && ys[0] - ys[1] == model::grid);
+}
+
+static void test_auto_symbol()
+{
+    model::workspace ws;
+    auto& lib = ws.add_library("work");
+    auto& c = ws.create_cell(lib, "half_adder");
+    c.add_port(model::direction::input, {0, 0});
+    c.add_port(model::direction::input, {0, -20});
+    auto out = c.add_port(model::direction::output, {50, 0}).id;
+    model::instance i{1, c.id, "U1", {0, 0}, {}, {}};
+
+    // a box with a pin per port, not stored in the cell
+    CHECK(c.auto_symbol());
+    auto v = ws.interface_of(i);
+    CHECK(v.symbol != &c.symbol && v.symbol->pins.size() == 3);
+    CHECK(c.symbol.shapes.empty() && c.check().empty());
+    for (auto& p : c.ports)
+        CHECK(std::count_if(v.symbol->pins.begin(), v.symbol->pins.end(), [&](auto& pin) { return pin.port == p.id; }) == 1);
+
+    // it follows the ports
+    c.add_port(model::direction::output, {50, -20});
+    CHECK(ws.interface_of(i).symbol->pins.size() == 4);
+    c.remove_port(out);
+    CHECK(ws.interface_of(i).symbol->pins.size() == 3);
+
+    // a symbol of its own is used and stays, clearing it is automatic again
+    c.generate_symbol();
+    CHECK(!c.auto_symbol() && ws.interface_of(i).symbol == &c.symbol);
+    c.add_port(model::direction::input, {0, -40});
+    CHECK(ws.interface_of(i).symbol->pins.size() == 3);
+    c.symbol = {};
+    CHECK(c.auto_symbol() && ws.interface_of(i).symbol->pins.size() == 4);
+
+    // only schematic cells
+    model::cell ext;
+    ext.impl = model::c_model_impl{};
+    CHECK(!ext.auto_symbol());
 }
 
 static void test_transform_then()
@@ -421,9 +461,12 @@ static void test_builtins()
     i.params.clear();
     CHECK(ws.interface_of(i).ports->size() == 3);
 
-    // user cells use their own symbol, missing cells have none
+    // user cells use their own symbol (an empty one is automatic, see
+    // test_auto_symbol), missing cells have none
     auto& work = ws.add_library("work");
     auto& user = ws.create_cell(work, "user");
+    user.add_port(model::direction::input, {0, 0});
+    user.generate_symbol();
     i.cell = user.id;
     CHECK(ws.interface_of(i).symbol == &user.symbol);
     CHECK(ws.params_of(i).empty());
@@ -1028,6 +1071,7 @@ int main(int argc, char** argv)
     test_default_instance_names();
     test_ports_and_check();
     test_generate_symbol();
+    test_auto_symbol();
     test_transform_then();
     test_cycles();
     test_history();

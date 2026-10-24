@@ -11,8 +11,15 @@ standalone VCD viewer, `logic-wave`.
 
 - **Schematic editor**: wires, buses, splitters and tunnels (same-named
   tunnels are connected without a wire), copy/paste, undo/redo,
-  rotate and mirror, symbols for subcircuits. Pan and zoom with the right or
-  middle mouse button and the wheel.
+  rotate and mirror. Pan and zoom with the right or middle mouse button and
+  the wheel.
+- **Symbols**: a subcircuit without a symbol of its own is shown as a box
+  with its ports' pins that follows the ports. Right-click it in the
+  library panel and choose **Add symbol** to draw one in the **Symbol
+  editor** window (a tab per cell, next to the properties); **Reset to
+  automatic** goes back to the box.
+- **Library panel**: click a cell to place it in the open schematic,
+  double-click (or right-click > **Edit**) to edit it.
 - **Bundles**: named wires that go together, like SystemVerilog interfaces.
   A bundle type has fields with their own directions, nested bundles and a
   flipped view for the other side. Ports and wires can carry a whole
@@ -97,8 +104,8 @@ If you cloned without `--recursive`, run `git submodule update --init`.
 
 Without an argument, the program opens the `workspace` folder of the
 repository. It has two examples: `counter_6502`, a 6502 counting on a hex
-display, and `blink_328p`, an ATmega328P blinking an LED. Open a cell from
-the library panel and press F5 to simulate it.
+display, and `blink_328p`, an ATmega328P blinking an LED. Double-click a
+cell in the library panel to open it and press F5 to simulate it.
 
 **View > Settings** sets the fonts: one for the interface, a monospace one
 for the debugger, terminal and messages, and one for the text in schematics

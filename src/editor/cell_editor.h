@@ -3,7 +3,6 @@
 #include "model_editor.h"
 #include "schematic_editor.h"
 #include "sim_view.h"
-#include "symbol_editor.h"
 #include "../model/history.h"
 
 #include <Hd/FrameBuffer.h>
@@ -11,17 +10,18 @@
 
 #include <imgui.h>
 
+#include <memory>
 #include <optional>
 
 namespace logic::editor {
 
-// schematic and symbol view of one cell, switched with tab. f5 simulates the
-// cell: the editor then shows a sim_view of it and the cell can't be edited.
-// cells implemented outside the program (c models, hdl) have a model page
-// instead of the schematic.
+// the schematic of one cell. f5 simulates the cell: the editor then shows a
+// sim_view of it and the cell can't be edited. cells implemented outside the
+// program (c models, hdl) have a model page instead of the schematic. the
+// symbol is edited in a symbol_page, which shares the undo history.
 class cell_editor {
 public:
-    explicit cell_editor(context ctx);
+    cell_editor(context ctx, std::shared_ptr<model::history> hist);
     // stops the simulation, views of it in other tabs close
     ~cell_editor() { stop_simulation(); }
 
@@ -56,31 +56,35 @@ public:
     void undo();
     void redo();
 
-    // the selection of the shown view (schematic or symbol) through the
-    // system clipboard. pasting starts placing the copy at the mouse.
+    // the selection of the schematic through the system clipboard. pasting
+    // starts placing the copy at the mouse.
     bool can_copy() const;
     bool can_paste() const;
     void copy();
     void cut();
     void paste();
 
-    // placing instances from outside, e.g. the component bar. switches to
-    // the schematic. can't while simulating, locked, or if the cell would
-    // contain itself. place is also ignored while a tool is busy.
+    // placing instances from outside, e.g. the component bar. can't while
+    // simulating, locked, or if the cell would contain itself. place is also
+    // ignored while a tool is busy.
     bool can_place(model::id cell) const;
     void place(model::id cell);
     // the cell being placed in the schematic, no_id if none
-    model::id placing() const { return show_symbol || session || !schematic ? model::no_id : schematic->placing(); }
+    model::id placing() const { return session || !schematic ? model::no_id : schematic->placing(); }
+    // stops placing, back to the select tool
+    void cancel_place();
+
+    // after the cell was changed from outside, e.g. by an undo in its
+    // symbol page
+    void cell_replaced();
 
     // screen rectangle of the schematic canvas drawn by the last gui(),
-    // while things can be placed on it (not the symbol, not simulating or
-    // locked). the component bar is drawn over it.
+    // while things can be placed on it (not simulating or locked). the
+    // component bar is drawn over it.
     struct screen_rect {
         ImVec2 min, max;
     };
     std::optional<screen_rect> placing_canvas() const { return canvas_rect; }
-
-    bool show_symbol = false;
 
 private:
     std::optional<screen_rect> canvas_rect;
@@ -89,15 +93,14 @@ private:
     void edit_toolbar();
     void place_popup();
     void open_place_popup();
-    bool busy() const { return (schematic && schematic->busy()) || symbol.busy(); }
-    void after_undo();
+    bool busy() const { return schematic && schematic->busy(); }
 
     context ctx;
-    model::history hist;
+    std::shared_ptr<model::history> hist;
+    size_t seen_restores = 0;
     // null for cells without a schematic, they have the model page
     std::unique_ptr<schematic_editor> schematic;
     std::unique_ptr<model_editor> model_page;
-    symbol_editor symbol;
 
     // the place popup: its search text, the entry chosen with the keys
     bool focus_search = false;

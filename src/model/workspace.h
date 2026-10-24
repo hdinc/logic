@@ -124,6 +124,8 @@ public:
     // keep their symbol if the port names match. empty if the cell is
     // missing. the pointers stay valid until the cell is changed or deleted.
     interface_view interface_of(const instance& i) const;
+    // the generated box of a cell with an automatic symbol (cell::auto_symbol)
+    const model::symbol& auto_symbol_of(const cell& c) const;
 
     // parameters of the instance, empty for cells that are not primitives or
     // external
@@ -174,6 +176,14 @@ private:
         std::vector<model_port> model_ports;
     };
     mutable std::map<id, group_entry> group_cache;
+    // the generated boxes of cells with an automatic symbol, rebuilt when
+    // the ports or the name changed
+    struct auto_entry {
+        std::vector<port> ports;
+        std::string name;
+        model::symbol symbol;
+    };
+    mutable std::map<id, auto_entry> auto_symbols;
     // the model ports for the cell's ports from its leaves, by port name
     std::vector<model_port> map_model_ports(const std::vector<port>& ports, const std::vector<port>& leaves, const std::vector<port_group>& groups) const;
 };

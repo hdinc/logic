@@ -74,6 +74,7 @@ bool history::undo(cell& c)
     current = std::move(undo_stack.back());
     undo_stack.pop_back();
     restore_state(c, current);
+    restores++;
     return true;
 }
 
@@ -86,6 +87,7 @@ bool history::redo(cell& c)
     current = std::move(redo_stack.back());
     redo_stack.pop_back();
     restore_state(c, current);
+    restores++;
     return true;
 }
 

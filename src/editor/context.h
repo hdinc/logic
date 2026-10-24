@@ -34,6 +34,19 @@ struct context {
     }
 };
 
+// a toolbar button with the toggled look for the active tool, followed by
+// SameLine
+inline bool tool_button(const char* label, const char* tip, bool active)
+{
+    using namespace ImGui;
+    if (active) PushStyleColor(ImGuiCol_Button, GetStyleColorVec4(ImGuiCol_ButtonActive));
+    bool clicked = Button(label);
+    if (active) PopStyleColor();
+    SetItemTooltip("%s", tip);
+    SameLine();
+    return clicked;
+}
+
 // imgui text input for std::string, returns true when the string changed.
 // the hint is shown faintly while it's empty.
 inline bool input_string(const char* label, std::string& s, ImGuiInputTextFlags flags = 0, const char* hint = nullptr)

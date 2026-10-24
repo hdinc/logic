@@ -4,6 +4,7 @@
 #include "theme_editor.h"
 #include "../editor/bundle_editor.h"
 #include "../editor/cell_editor.h"
+#include "../editor/symbol_page.h"
 #include "../model/workspace.h"
 #include "../hdl/manager.h"
 #include "../plugin/registry.h"
@@ -17,6 +18,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <map>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -35,9 +37,12 @@ public:
 private:
     void draw_gui();
     void default_layout(unsigned int dockspace);
+    void dock_symbol_editor();
+    bool symbol_docked = false;
     void menu_bar();
     void library_panel();
     void editor_panel();
+    void symbol_panel();
     void properties_panel();
     void hierarchy_panel();
     void messages_panel();
@@ -62,6 +67,11 @@ private:
     void open_editor(model::cell& c);
     void close_editor(model::id cell);
     editor::cell_editor* find_editor(model::id cell);
+    // opens the cell's tab in the symbol editor, add: makes the automatic
+    // symbol the cell's own first
+    void open_symbol(model::cell& c, bool add);
+    void close_symbol(model::id cell);
+    editor::symbol_page* find_symbol(model::id cell);
 
     // bundle types are edited in tabs next to the cells
     void open_bundle_editor(model::library& lib, model::bundle_type& b);
@@ -105,10 +115,36 @@ private:
     // all editors draw into this, only the visible one each frame
     Hd::Texture editor_tex;
     Hd::FrameBuffer editor_fb;
+    // the same for the symbol pages, they are visible at the same time
+    Hd::Texture symbol_tex;
+    Hd::FrameBuffer symbol_fb;
 
     std::vector<std::unique_ptr<editor::cell_editor>> editors;
     model::id active_cell = model::no_id;
     model::id select_tab = model::no_id;
+
+    // the symbol editor window, a tab per cell
+    std::vector<std::unique_ptr<editor::symbol_page>> symbol_pages;
+    model::id active_symbol = model::no_id;
+    model::id select_symbol_tab = model::no_id;
+    // the undo history of each cell open in an editor or a symbol page,
+    // shared by both
+    std::map<model::id, std::shared_ptr<model::history>> histories;
+    std::shared_ptr<model::history> history_for(model::cell& c);
+    // drops the history when neither the editor nor the symbol page is open
+    void forget_history(model::id cell);
+
+    // undo, copy and paste and the properties panel act on the editor or
+    // the symbol editor, whichever was focused last
+    enum class focus {
+        editor,
+        symbol
+    } last_focus = focus::editor;
+    // the symbol page if the symbol editor was focused last, else null
+    editor::symbol_page* focused_symbol();
+    // the name of a cell whose running simulation uses the cell, empty if
+    // none. own: the cell's own simulation counts too.
+    std::string simulated_by(model::id cell, bool own);
 
     std::vector<std::unique_ptr<editor::bundle_editor>> bundle_editors;
     model::id active_bundle = model::no_id;
