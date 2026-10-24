@@ -4,6 +4,9 @@
 
 #include <imgui.h>
 
+#include <algorithm>
+#include <vector>
+
 namespace logic::editor {
 
 // turning and mirroring a selection as a whole: ctrl+r a quarter turn
@@ -76,9 +79,11 @@ public:
     bool done = false;
 };
 
-// click to select, drag to move, drag on empty space for a box selection,
-// shift adds to the selection. dragging inside the box around a multiple
-// selection moves it as well.
+// click to select, drag to move, drag on empty space for a box selection.
+// dragging inside the box around a multiple selection moves it as well.
+// ctrl+click adds an element to the selection (again removes it), shift+click
+// removes it. with ctrl or shift a drag is always a box selection that adds
+// or removes, nothing moves.
 //
 // the editor provides the selection and these functions:
 //   hit_test(p), handles_in(rect), selection_bounds(), is_selected(handle),
@@ -92,7 +97,6 @@ public:
         using namespace ImGui;
 
         auto m = e.view.mouse_world();
-        bool shift = GetIO().KeyShift;
 
         switch (state) {
         case state_t::idle: {
@@ -103,15 +107,24 @@ public:
             } else if (IsKeyPressed(ImGuiKey_Escape)) {
                 e.selection.clear();
             } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
+                auto& io = GetIO();
+                mode = io.KeyCtrl ? select_mode::add : io.KeyShift ? select_mode::remove : select_mode::replace;
                 auto hs = e.hit_test(m);
+                box_start = m;
+                if (mode != select_mode::replace) {
+                    // decided on release: a click on an element or a box
+                    hits = hs;
+                    state = hs.empty() ? state_t::box_select : state_t::modifier_click;
+                    break;
+                }
+
                 auto bounds = e.selection_bounds();
-                bool in_bounds = hs.empty() && !shift && bounds && bounds->contains(m);
+                bool in_bounds = hs.empty() && bounds && bounds->contains(m);
                 if (hs.empty() && !in_bounds) {
-                    if (!shift) e.selection.clear();
-                    box_start = m;
+                    e.selection.clear();
                     state = state_t::box_select;
                 } else {
-                    if (!hs.empty() && !e.is_selected(hs[0])) e.select(hs, shift);
+                    if (!hs.empty() && !e.is_selected(hs[0])) e.select(hs, false);
                     drag_start = m;
                     drag_applied = {0, 0};
                     drag_moved = false;
@@ -137,9 +150,21 @@ public:
             }
         } break;
 
+        case state_t::modifier_click: {
+            if (IsMouseDragging(ImGuiMouseButton_Left)) {
+                state = state_t::box_select;
+            } else if (!IsMouseDown(ImGuiMouseButton_Left)) {
+                if (mode == select_mode::add) toggle(e, hits);
+                else deselect(e, hits);
+                state = state_t::idle;
+            }
+        } break;
+
         case state_t::box_select: {
             if (!IsMouseDown(ImGuiMouseButton_Left)) {
-                e.select(e.handles_in(model::make_rect(box_start, m)), true);
+                auto hs = e.handles_in(model::make_rect(box_start, m));
+                if (mode == select_mode::remove) deselect(e, hs);
+                else e.select(hs, true);
                 state = state_t::idle;
             }
         } break;
@@ -164,11 +189,38 @@ public:
     bool busy() const override { return state == state_t::moving && drag_moved; }
 
 private:
+    using handle = typename Editor::handle;
+
+    static void deselect(Editor& e, const std::vector<handle>& hs)
+    {
+        std::erase_if(e.selection, [&](auto& h) { return std::find(hs.begin(), hs.end(), h) != hs.end(); });
+    }
+
+    // removes the handles if all of them are selected, else adds them
+    static void toggle(Editor& e, const std::vector<handle>& hs)
+    {
+        if (std::all_of(hs.begin(), hs.end(), [&](auto& h) { return e.is_selected(h); })) deselect(e, hs);
+        else e.select(hs, true);
+    }
+
     enum class state_t {
         idle,
         moving,
         box_select,
+        // pressed on an element with ctrl or shift, a click or a box
+        modifier_click,
     } state = state_t::idle;
+
+    // what the click or box does with the selection, from the keys held at
+    // the press: none replaces it, ctrl adds, shift removes
+    enum class select_mode {
+        replace,
+        add,
+        remove,
+    } mode = select_mode::replace;
+
+    // under the mouse at a modifier press
+    std::vector<handle> hits;
 
     glm::vec2 drag_start{0, 0};
     glm::ivec2 drag_applied{0, 0};

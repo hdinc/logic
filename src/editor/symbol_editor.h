@@ -13,7 +13,9 @@ namespace logic::editor {
 // edits the symbol of a cell: shapes and the pins that connect to its ports
 //
 //   left click/drag  select and move, drag on empty space for box select
-//   shift            add to selection, keep drawing after a click
+//   ctrl+click       add to selection (again: remove), ctrl+drag: box adds
+//   shift+click      remove from selection, shift+drag: box removes
+//   shift            keep drawing after a click
 //   p                place a pin, linked to the first port without a pin
 //   l / b / c        draw a line / bezier (two ends, then control) / circle
 //   a                draw an arc (two ends, then a point on it)

@@ -563,7 +563,9 @@ void app::menu_bar()
     if (BeginPopupModal("Keys", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         SeparatorText("Both editors");
         BulletText("Wheel: zoom, right drag: pan, G: grid, Tab: schematic/symbol");
-        BulletText("Click/drag: select and move, drag on empty space: box select, Shift: add");
+        BulletText("Click/drag: select and move, drag on empty space: box select");
+        BulletText("Ctrl+click: add to the selection (again: remove), Shift+click: remove from it");
+        BulletText("Ctrl+drag / Shift+drag: box that adds to / removes from the selection");
         BulletText("Delete: delete selection, Esc: cancel tool / clear selection");
         BulletText("Shift+click while placing: keep placing");
         BulletText("Ctrl+Z: undo, Ctrl+Y / Ctrl+Shift+Z: redo, Ctrl+S: save all");

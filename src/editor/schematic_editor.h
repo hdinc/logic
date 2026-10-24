@@ -19,7 +19,9 @@ namespace logic::editor {
 // edits the wires, instances and port connectors of a schematic cell
 //
 //   left click/drag  select and move, drag on empty space for box select
-//   shift            add to selection, keep placing after a click
+//   ctrl+click       add to selection (again: remove), ctrl+drag: box adds
+//   shift+click      remove from selection, shift+drag: box removes
+//   shift            keep placing after a click
 //   w                draw wires, click to add points, esc to end the wire
 //   i / o            place an input / output port
 //   space            place an instance (popup opened by the cell editor)

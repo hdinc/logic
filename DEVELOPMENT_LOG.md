@@ -2459,3 +2459,76 @@ The user changed their mind about the look of the 7-segment display:
 - **GUI:** View > Theme lists Dark, Light and Black. Black shows the black
   canvas and windows, with a simulated two-digit display. I switched back
   to Dark afterwards.
+
+## 2026-10-24 21:13 +0300
+
+### Changes made
+
+- **Selection modifiers in the select tool** (schematic and symbol editors):
+  - Ctrl+click adds the element under the mouse to the selection.
+    Ctrl+clicking it again removes it.
+  - Shift+click removes the element from the selection.
+  - Ctrl+drag is a box selection that adds to the selection, and shift+drag
+    is one that removes from it. This works from empty space, from inside
+    the selection's bounds, and from an element.
+  - Neither modifier moves anything.
+- **Shift+click no longer adds to the selection.** It was undocumented
+  except in the Keys window, and the user expected ctrl. In the placing
+  and drawing tools, shift still means "keep placing".
+- The Keys help window and the shortcut comments in `schematic_editor.h`
+  and `symbol_editor.h` describe the new modifiers.
+
+### How it works
+
+- `select_tool<Editor>` in `src/editor/tool.h` stores a `select_mode`
+  (`replace`, `add` or `remove`) from the keys held at the press. Ctrl wins
+  over shift. The enum isn't called `mode_t` because POSIX already uses
+  that name.
+- **With a modifier, a press on an element** goes to the new state
+  `modifier_click` and keeps the `hit_test` handles in `hits`:
+  - If the mouse drags past ImGui's threshold, it becomes `box_select` from
+    the press point.
+  - On release, `add` calls `toggle(hits)`: if every handle is selected,
+    they are all removed, otherwise added. `remove` calls `deselect(hits)`.
+  - Toggling works on the whole hit group, so a wire's two ends, the ends at
+    a junction, and a shape's points act together.
+- **With a modifier, a press on empty space** goes straight to
+  `box_select`, without clearing the selection.
+- **Releasing a box** calls `deselect` on the handles inside it in `remove`
+  mode. Otherwise it calls `select(..., true)`, as before; `replace` has
+  already cleared the selection at the press.
+- **Plain clicks and drags** (select, move, box, moving from inside the
+  bounds) are unchanged.
+- The helpers work on the editors' public `selection` vector and
+  `Editor::handle`, so the editor interfaces don't change.
+- Decided: shift+drag removes with a box, to mirror ctrl+drag. A ctrl+drag
+  that starts on an element is a box rather than a move. The user asked for
+  "ctrl+click and drag appends".
+
+### Testing
+
+- Build is clean, and all 8 ctest suites pass. There's no unit test: the
+  tools depend on ImGui input.
+- GUI, driven with xdotool on a second instance with
+  `examples/counter_6502` (closed afterwards without saving):
+  - ctrl+click on the CPU selected it, and a second ctrl+click deselected it
+  - ctrl+click on the CPU, the clock and a wire selected all three, with
+    both ends of the wire
+  - shift+click on the CPU removed it
+  - ctrl+drag around the inverter added it and the wire ends there
+  - shift+drag around the clock removed it
+  - ctrl+drag starting on the CPU drew a box and moved nothing; Undo stayed
+    disabled
+  - a plain click on the CPU replaced the selection with it
+- The symbol editor uses the same template code. It wasn't checked in the
+  GUI, because the example has no symbol to click on.
+
+### Recommended features
+
+- A box that selects an instance when it touches the instance, not only
+  when it contains the instance's handle point. Today a ctrl+drag over part
+  of an instance doesn't select it.
+
+### Outstanding issues
+
+- None known.
