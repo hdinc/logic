@@ -45,10 +45,9 @@ private:
     void open_instance_tabs();
     void exit_dialog();
     void settings_window();
-    void components_panel();
-    // docks the component bar next to the editor for its orientation
-    void dock_component_bar();
-    void set_bar_orientation(component_bar::orientation o);
+    // the component bar over the schematic canvas of e, drawn by
+    // editor_panel after the editor. a click starts placing the part.
+    void components_panel(editor::cell_editor& e, ImVec2 canvas_min, ImVec2 canvas_max);
 
     // theme and canvas options, kept in imgui.ini
     void add_settings_handler();
@@ -100,8 +99,6 @@ private:
     sim::factory_chain factory;
     render::renderer renderer;
     component_bar components;
-    // dock the bar before the windows are drawn next frame
-    bool dock_bar = false;
 
     // all editors draw into this, only the visible one each frame
     Hd::Texture editor_tex;
@@ -159,7 +156,7 @@ private:
     ui::font_picker mono_font_picker{true};
     ui::font_picker canvas_font_picker;
     // settings at the last check, a change marks imgui.ini for saving
-    using settings = std::tuple<std::string, bool, bool, render::grid_style, render::instance_names, bool, bool, component_bar::orientation, component_bar::icon_size, int, ui::font_ref, ui::font_ref, ui::font_ref>;
+    using settings = std::tuple<std::string, bool, bool, render::grid_style, render::instance_names, bool, bool, component_bar::edge, component_bar::icon_size, int, ui::font_ref, ui::font_ref, ui::font_ref>;
     settings current_settings() const;
     settings saved_settings;
 

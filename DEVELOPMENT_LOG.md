@@ -2532,3 +2532,195 @@ The user changed their mind about the look of the 7-segment display:
 ### Outstanding issues
 
 - None known.
+
+## 2026-10-24 21:29 +0300
+
+### Changes made
+
+- **The component bar is part of the Editor window** instead of a separate
+  dockable "Components" window:
+  - **Vertical:** a column left of the editor tabs. It starts four icons
+    wide and can be resized from its right border.
+  - **Horizontal:** a row above the tabs.
+  - It can no longer be undocked, moved to another dock, or left behind
+    when the Editor window moves.
+- **Removed the bar's docking code:** `app::dock_component_bar`, `dock_bar`,
+  `set_bar_orientation`, `component_bar::dir_changed`, and the bar's split
+  in `default_layout`. Changing orientation or icon size takes effect in the
+  next frame and needs no re-docking.
+- README: the component bar description.
+
+### How it works
+
+- `component_bar::gui` draws a child region with borders
+  (`BeginChild`/`EndChild`) in the current window, not its own `Begin`.
+  - **Vertical:** `ImGuiChildFlags_ResizeX` with an initial width of four
+    buttons plus padding and scrollbar. ImGui saves the resized width in
+    `imgui.ini`.
+  - **Horizontal:** the height fits one row of icons and its scrollbar.
+  - The two orientations use different child ids (`components_column`,
+    `components_row`). With a single id, the resizable column kept the
+    full width the row had had.
+- `app::editor_panel` calls `components_panel()` right after
+  `Begin("Editor")`. For a vertical bar it then does `SameLine()` and puts
+  the tab bar in a `tabs` child; a horizontal bar is followed directly by
+  the tabs.
+- `components_panel()` now returns true when an icon was clicked.
+  `editor_panel` then calls `SetWindowFocus()` on the window that holds the
+  tabs. The canvas only takes keys (Esc, R, M, ...) while its own window is
+  focused, so focusing the outer Editor window, as before, would leave
+  placing impossible to cancel with Esc when the bar is vertical.
+- **Older layouts:** an `imgui.ini` that still has the Components dock
+  node loads fine. Nothing opens a window in that node, so ImGui drops it
+  and the editor takes the space.
+- Rejected: keeping a dockable window and only docking it more firmly
+  (e.g. `NoUndocking`). The window would still have its own tab and dock
+  node, and the bar wouldn't belong to the editor.
+
+### Testing
+
+- Build is clean, and all 8 ctest suites pass.
+- GUI, driven with xdotool, started in a scratch directory with a copy of
+  the real `imgui.ini` (the old layout with the Components dock):
+  - The old dock node disappeared, and the horizontal bar showed inside the
+    Editor window above the tabs.
+  - View > Component bar > Vertical put the bar left of the tabs, four
+    icons wide. Dragging its right border widened it, and the width was
+    still there after a restart.
+  - Clicking the AND icon, in both orientations, started placing an AND
+    gate on the canvas. Esc over the canvas cancelled it; before the focus
+    fix it didn't with the vertical bar.
+  - Right-clicking the bar opens its menu (orientation, icon size).
+
+### Recommended features
+
+- Collapse the vertical bar to a thin strip with a button, to give the
+  canvas the full width when the bar isn't needed.
+
+### Outstanding issues
+
+- Existing `imgui.ini` files keep an unused `[Window][Components]` entry,
+  because ImGui keeps the settings of windows that no longer exist. It's
+  harmless.
+
+## 2026-10-24 22:17 +0300
+
+### Changes made
+
+- **The component bar is a translucent strip over the schematic canvas.**
+  It replaces the bordered column or row inside the Editor window from the
+  previous entry.
+  - No search box, no scrollbar, and it can't be resized. Every side has the
+    same layout: framed icon buttons by category, with a line between
+    groups.
+  - **Side:** top, bottom, left or right of the canvas, or off. It's chosen
+    by right-clicking the strip (Top, Bottom, Left, Right, Hide), in
+    View > Component bar, or in Settings. A hidden strip comes back from
+    View or Settings.
+  - **Size:** as long as its icons, at most the canvas minus 8 px margins,
+    and centered along its edge.
+  - **Look:** faint (55 % opacity) while you work on the canvas and nearly
+    solid (95 %) while the mouse is over it, eased. Tooltips and the
+    right-click menu stay fully opaque.
+  - **Scrolling:** smooth when the mouse is within 1.5 buttons of either
+    end, faster closer to the edge (up to 700 px/s). The wheel scrolls two
+    buttons per notch and also eases. Fades at the ends show that more
+    icons are there.
+  - **Where it shows:** only over the schematic while editing. It's hidden
+    in the symbol view, while simulating, in locked cells, on model pages,
+    and in bundle and instance tabs.
+- **Only a fixed subset of the builtins is on the bar:**
+  - Constant, Clock
+  - AND, OR, XOR, NOT, NAND, NOR, Buffer, Tri-state buffer
+  - Multiplexer
+  - Splitter, Tunnel
+  - Register, Counter
+  - LED, Button, Switch, 7-segment display, Hex display
+
+  The others are placed from the library panel or with Space.
+- **Settings:** `imgui.ini` stores `ComponentBar=top|bottom|left|right|off`.
+  The old `horizontal` loads as top and `vertical` as left.
+- README and the Keys help window describe the strip.
+
+### How it works
+
+- **`component_bar`** (`src/app/component_bar.{h,cpp}`):
+  - `edge {top, bottom, left, right, off}` replaces `orientation`.
+  - `groups()` keeps only the kinds in `shown_kinds`.
+  - `gui(ws, target, canvas_min, canvas_max)` runs in the window that holds
+    the canvas, after the canvas is drawn. It computes the strip's length
+    from the button, spacing and separator counts, so the size is right in
+    the first frame. It places the strip 8 px inside the chosen edge,
+    centered along it at a whole pixel so the icons stay sharp.
+  - The strip is one `BeginChild("component_bar")` with rounded corners, a
+    border, and `ChildBg` = `WindowBg`. It uses
+    `NoScrollbar | NoScrollWithMouse` and its own padding.
+  - The translucency is `ImGuiStyleVar_Alpha`, eased toward the target
+    based on last frame's hover. Tooltips and the menu push `Alpha` 1.
+  - Icons are placed with `SetCursorPos` along the strip's axis. Separators
+    are lines drawn in the middle of the gap between groups.
+- **`scroll_strip()`:**
+  - Edge zones and the wheel move `scroll_target`, which is clamped to
+    `[0, GetScrollMax]`.
+  - `scroll` eases toward it by `1 - exp(-15·dt)` and is applied with
+    `SetScrollX/Y`.
+  - The fades are `AddRectFilledMultiColor` in the strip's background
+    color, from solid to clear, drawn over the icons.
+- **Focus:** releasing the left button over the strip gives focus back to
+  the canvas window (`SetWindowFocus()` after `EndChild`). So Esc, R and M
+  work, and the next canvas click places the part.
+- **Hover:** the strip is a child window drawn after the canvas, so the
+  canvas `InvisibleButton` isn't hovered under it. Clicks and the wheel
+  over the strip don't reach the editor, and the wheel doesn't zoom the
+  canvas.
+- **`cell_editor::placing_canvas()`:** the canvas's screen rectangle from
+  the last `gui()`. It's set only while the schematic canvas is shown and
+  editable, so the strip shows only where builtins can be placed.
+  `app::editor_panel` calls `components_panel(e, min, max)` right after
+  `e->gui()` in each cell tab.
+- **Removed:**
+  - the search box and filter
+  - collapsible groups
+  - the resizable column and the `components_row` / `components_column`
+    children
+  - the `tabs` child around the tab bar
+  - the focus call after a click in `editor_panel`
+- **Decided:**
+  - A fixed, hard-coded subset (the user's choice) rather than one that can
+    be edited from the menu.
+  - The strip is as long as its icons, not the whole edge, so it covers
+    less of the schematic.
+  - Centered along its edge (the user's choice, after first trying it at
+    the top or left end).
+
+### Testing
+
+- Build is clean, and all 8 ctest suites pass.
+- GUI, driven with xdotool, started in a scratch directory with a copy of
+  the real `imgui.ini` (`ComponentBar=vertical`, large icons) on
+  `examples/counter_6502`:
+  - **Old setting:** `vertical` loaded as a column on the left, with a fade
+    at the bottom where more icons were.
+  - **Edge scroll:** holding the mouse at the bottom end scrolled smoothly to
+    the last icon.
+  - **Wheel:** two notches eased the strip back up.
+  - **Sides:** right-click > Top, Right and Bottom moved the strip to each
+    edge. As a row, it fits its icons.
+  - **Hide:** the strip disappeared. View > Component bar showed "Off"
+    ticked, and Top brought it back.
+  - **Placing:** clicking the AND icon started placing an AND gate, and Esc
+    cancelled it.
+  - **Centering:** with small icons the row is centered along the top edge.
+  - **Wheel over the strip:** the canvas didn't zoom.
+  - **Symbol view (Tab) and simulation (F5):** no strip.
+
+### Recommended features
+
+- Fade the strip out and let the mouse through while a drag or a wire
+  passes over it, so it never blocks editing near its edge.
+- Number keys 1–9 for the first strip items.
+
+### Outstanding issues
+
+- Parts that aren't in the subset can't be added to the bar without
+  changing `shown_kinds` in `component_bar.cpp`.

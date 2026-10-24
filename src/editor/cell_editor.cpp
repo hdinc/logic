@@ -50,6 +50,8 @@ void cell_editor::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
 {
     using namespace ImGui;
 
+    canvas_rect.reset();
+
     // stopped from a view in another tab
     if (session && session->stopped) stop_simulation();
 
@@ -126,6 +128,7 @@ void cell_editor::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     // the texture is bigger than the view, only show the drawn corner
     SetCursorPos(cursor);
     Image((ImTextureID)tex.Id(), size, {0, size.y / tex.GetHeight()}, {size.x / tex.GetWidth(), 0});
+    if (!show_symbol && !locked()) canvas_rect = screen_rect{screen_pos, {screen_pos.x + size.x, screen_pos.y + size.y}};
 
     place_popup();
 

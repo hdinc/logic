@@ -1,12 +1,12 @@
 #include "component_bar.h"
-#include "../editor/context.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <imgui.h>
 #include <imgui_internal.h>
 
 #include <algorithm>
-#include <cctype>
+#include <cmath>
+#include <set>
 
 namespace logic::app {
 
@@ -16,13 +16,27 @@ constexpr int atlas_size = 1024;
 constexpr int slots_per_row = atlas_size / component_bar::slot_size;
 constexpr int max_slots = slots_per_row * slots_per_row;
 
-bool contains_ignore_case(const std::string& s, const std::string& sub)
-{
-    auto it = std::search(s.begin(), s.end(), sub.begin(), sub.end(), [](char a, char b) {
-        return std::tolower((unsigned char)a) == std::tolower((unsigned char)b);
-    });
-    return it != s.end();
-}
+// the builtins on the bar, the rest are placed from the library panel or
+// with space
+const std::set<std::string> shown_kinds = {
+    "constant", "clock",
+    "and", "or", "xor", "not", "nand", "nor", "buffer", "tristate",
+    "mux",
+    "splitter", "tunnel",
+    "register", "counter",
+    "led", "button", "switch", "seg7_display", "hex_display",
+};
+
+// space between the strip and the canvas edge, and inside the strip
+constexpr float margin = 8.0f;
+constexpr float pad = 4.0f;
+// a group separator: a line with this much room on both sides
+constexpr float separator_gap = 6.0f;
+// the ends where the mouse scrolls the strip, in buttons, and the speed at
+// the very end in pixels per second
+constexpr float edge_zone = 1.5f;
+constexpr float edge_speed = 700.0f;
+constexpr float fade = 16.0f;
 
 glm::ivec2 slot_pos(int slot)
 {
@@ -55,14 +69,12 @@ std::vector<component_bar::group> component_bar::groups(const model::workspace& 
         it->cells.push_back(c);
     };
 
-    // only the builtins, by category in the order they are registered.
-    // other cells are placed from the library panel or with space.
+    // a subset of the builtins, by category in the order they are registered
     for (auto& lib : ws.libraries) {
         for (auto& c : lib->cells) {
-            if (!ws.primitive_of(*c)) continue;
-            auto& cat = c->category;
-            if (!search.empty() && !contains_ignore_case(c->name, search) && !contains_ignore_case(cat, search)) continue;
-            add(cat.empty() ? lib->name : cat, c.get());
+            auto prim = ws.primitive_of(*c);
+            if (!prim || !shown_kinds.count(prim->kind())) continue;
+            add(c->category.empty() ? lib->name : c->category, c.get());
         }
     }
     return gs;
@@ -141,31 +153,22 @@ bool component_bar::icon(const model::workspace& ws, const model::cell& c, int s
     bool active = t.placing == c.id;
 
     PushID(&c);
-    // framed buttons in a row, plain icons in the vertical bar
-    bool framed = dir == orientation::horizontal;
-    if (active)
-        PushStyleColor(ImGuiCol_Button, GetStyleColorVec4(ImGuiCol_ButtonActive));
-    else if (framed)
-        PushStyleColor(ImGuiCol_Button, GetStyleColorVec4(ImGuiCol_FrameBg));
-    else
-        PushStyleColor(ImGuiCol_Button, {0, 0, 0, 0});
-    PushStyleVar(ImGuiStyleVar_FrameBorderSize, framed ? GetStyle().FrameBorderSize : 0.0f);
+    PushStyleColor(ImGuiCol_Button, GetStyleColorVec4(active ? ImGuiCol_ButtonActive : ImGuiCol_FrameBg));
     ImVec4 tint{1, 1, 1, can ? 1.0f : 0.35f};
     bool clicked = ImageButton("icon", (ImTextureID)atlas.Id(), {(float)px, (float)px}, uv0, uv1, {0, 0, 0, 0}, tint);
-    PopStyleVar();
     PopStyleColor();
     PopID();
 
+    // the tooltip isn't translucent like the strip
+    PushStyleVar(ImGuiStyleVar_Alpha, 1.0f);
     if (BeginItemTooltip()) {
         TextUnformatted(c.name.c_str());
         auto pr = ws.primitive_of(c);
         if (pr && !pr->description().empty()) TextDisabled("%s", pr->description().c_str());
-        if (!t.can_place)
-            TextDisabled("open a schematic to place it");
-        else if (!can)
-            TextDisabled("can't be placed here now");
+        if (!can) TextDisabled("can't be placed here now");
         EndTooltip();
     }
+    PopStyleVar();
 
     return clicked && can;
 }
@@ -174,113 +177,158 @@ void component_bar::context_menu()
 {
     using namespace ImGui;
 
-    if (BeginPopupContextWindow("bar_menu", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
-        if (MenuItem("Vertical", nullptr, dir == orientation::vertical)) {
-            dir_changed = dir != orientation::vertical;
-            dir = orientation::vertical;
-        }
-        if (MenuItem("Horizontal", nullptr, dir == orientation::horizontal)) {
-            dir_changed = dir != orientation::horizontal;
-            dir = orientation::horizontal;
-        }
+    PushStyleVar(ImGuiStyleVar_Alpha, 1.0f);
+    if (BeginPopupContextWindow("bar_menu")) {
+        const char* edges[] = {"Top", "Bottom", "Left", "Right"};
+        for (int k = 0; k < 4; k++)
+            if (MenuItem(edges[k], nullptr, side == (edge)k)) side = (edge)k;
+        if (MenuItem("Hide")) side = edge::off;
+        SetItemTooltip("View > Component bar shows it again");
         Separator();
         const char* names[] = {"Small icons", "Medium icons", "Large icons"};
-        for (int k = 0; k < 3; k++) {
-            if (MenuItem(names[k], nullptr, size == (icon_size)k)) {
-                // the docked bar fits the new size
-                dir_changed = dir_changed || size != (icon_size)k;
-                size = (icon_size)k;
-            }
-        }
+        for (int k = 0; k < 3; k++)
+            if (MenuItem(names[k], nullptr, size == (icon_size)k)) size = (icon_size)k;
         EndPopup();
     }
+    PopStyleVar();
 }
 
-model::id component_bar::gui(const model::workspace& ws, const target& t)
+void component_bar::scroll_strip(bool row, float button)
+{
+    using namespace ImGui;
+
+    auto& io = GetIO();
+    float dt = io.DeltaTime;
+    float max = row ? GetScrollMaxX() : GetScrollMaxY();
+
+    if (hovered && max > 0) {
+        // near an end: towards it, faster closer to the edge
+        auto pos = GetWindowPos();
+        auto size = GetWindowSize();
+        float m = row ? io.MousePos.x - pos.x : io.MousePos.y - pos.y;
+        float len = row ? size.x : size.y;
+        float zone = edge_zone * button;
+        float v = 0;
+        if (m < zone)
+            v = -(1 - m / zone);
+        else if (m > len - zone)
+            v = 1 - (len - m) / zone;
+        scroll_target += v * edge_speed * dt;
+        // jumps on the target, the shown scroll follows smoothly
+        float wheel = io.MouseWheel + (row ? -io.MouseWheelH : 0);
+        scroll_target -= wheel * 2 * button;
+    }
+    scroll_target = std::clamp(scroll_target, 0.0f, max);
+    scroll += (scroll_target - scroll) * (1 - std::exp(-15 * dt));
+    if (std::abs(scroll_target - scroll) < 0.5f) scroll = scroll_target;
+    scroll = std::clamp(scroll, 0.0f, max);
+    if (row)
+        SetScrollX(scroll);
+    else
+        SetScrollY(scroll);
+
+    // fades where more icons are, over them in the strip's color
+    auto pos = GetWindowPos();
+    auto size = GetWindowSize();
+    auto dl = GetWindowDrawList();
+    auto solid = GetColorU32(ImGuiCol_WindowBg);
+    auto clear = GetColorU32(ImGuiCol_WindowBg, 0.0f);
+    PushClipRect(pos, {pos.x + size.x, pos.y + size.y}, false);
+    if (scroll > 0.5f) {
+        if (row)
+            dl->AddRectFilledMultiColor(pos, {pos.x + fade, pos.y + size.y}, solid, clear, clear, solid);
+        else
+            dl->AddRectFilledMultiColor(pos, {pos.x + size.x, pos.y + fade}, solid, solid, clear, clear);
+    }
+    if (scroll < max - 0.5f) {
+        if (row)
+            dl->AddRectFilledMultiColor({pos.x + size.x - fade, pos.y}, {pos.x + size.x, pos.y + size.y}, clear, solid, solid, clear);
+        else
+            dl->AddRectFilledMultiColor({pos.x, pos.y + size.y - fade}, {pos.x + size.x, pos.y + size.y}, clear, clear, solid, solid);
+    }
+    PopClipRect();
+}
+
+model::id component_bar::gui(const model::workspace& ws, const target& t, ImVec2 canvas_min, ImVec2 canvas_max)
 {
     using namespace ImGui;
 
     model::id clicked = model::no_id;
-    bool horizontal = dir == orientation::horizontal;
-
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
-    if (horizontal) flags |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
-    if (!Begin("Components", nullptr, flags)) {
-        End();
-        return clicked;
-    }
-    context_menu();
+    if (side == edge::off) return clicked;
+    bool row = side == edge::top || side == edge::bottom;
 
     auto gs = groups(ws);
     std::vector<const model::cell*> cells;
     for (auto& g : gs)
         cells.insert(cells.end(), g.cells.begin(), g.cells.end());
+    if (cells.empty()) return clicked;
     draw_icons(ws, cells);
 
+    // buttons along the strip, their length and thickness
     auto& style = GetStyle();
-    float button = icon_px() + 2 * style.FramePadding.x;
+    ImVec2 button{icon_px() + 2 * style.FramePadding.x, icon_px() + 2 * style.FramePadding.y};
+    float step = row ? button.x : button.y;
+    float thick = row ? button.y : button.x;
+    float spacing = row ? style.ItemSpacing.x : style.ItemSpacing.y;
+    float content = cells.size() * step + (cells.size() - 1) * spacing + (gs.size() - 1) * 2 * separator_gap;
+
+    // as long as the icons, at most the canvas minus the margins
+    ImVec2 canvas{canvas_max.x - canvas_min.x, canvas_max.y - canvas_min.y};
+    float len = std::min(content + 2 * pad, (row ? canvas.x : canvas.y) - 2 * margin);
+    if (len < step + 2 * pad || (row ? canvas.y : canvas.x) < thick + 2 * pad + 2 * margin) return clicked;
+    ImVec2 size = row ? ImVec2{len, thick + 2 * pad} : ImVec2{thick + 2 * pad, len};
+
+    // centered along its edge, whole pixels so the icons stay sharp
+    ImVec2 pos{canvas_min.x + margin, canvas_min.y + margin};
+    if (side == edge::bottom) pos.y = canvas_max.y - margin - size.y;
+    if (side == edge::right) pos.x = canvas_max.x - margin - size.x;
+    if (row)
+        pos.x = std::floor((canvas_min.x + canvas_max.x - size.x) / 2);
+    else
+        pos.y = std::floor((canvas_min.y + canvas_max.y - size.y) / 2);
+
+    // faint over the canvas, nearly solid while the mouse is on it
+    float target_alpha = hovered ? 0.95f : 0.55f;
+    alpha += (target_alpha - alpha) * (1 - std::exp(-GetIO().DeltaTime / 0.05f));
+
+    SetCursorScreenPos(pos);
+    PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+    PushStyleVar(ImGuiStyleVar_WindowPadding, {pad, pad});
+    PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+    PushStyleColor(ImGuiCol_ChildBg, GetStyleColorVec4(ImGuiCol_WindowBg));
+    BeginChild("component_bar", size, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    hovered = IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+    context_menu();
+
+    float at = pad;
     int slot = 0;
-
-    if (horizontal) {
-        SetNextItemWidth(160);
-        editor::input_string("##search", search);
-        if (search.empty() && !IsItemActive()) {
-            // placeholder
-            auto min = GetItemRectMin();
-            GetWindowDrawList()->AddText({min.x + style.FramePadding.x, min.y + style.FramePadding.y}, GetColorU32(ImGuiCol_TextDisabled), "Search...");
+    auto sep = GetColorU32(ImGuiCol_Separator);
+    for (size_t k = 0; k < gs.size(); k++) {
+        if (k > 0) {
+            // a line between groups, in the middle of the gap
+            float mid = at - spacing / 2 + separator_gap;
+            auto wp = GetWindowPos();
+            float s = row ? GetScrollX() : GetScrollY();
+            if (row)
+                GetWindowDrawList()->AddLine({wp.x + mid - s, wp.y + pad}, {wp.x + mid - s, wp.y + pad + thick}, sep);
+            else
+                GetWindowDrawList()->AddLine({wp.x + pad, wp.y + mid - s}, {wp.x + pad + thick, wp.y + mid - s}, sep);
+            at += 2 * separator_gap;
         }
-        SameLine();
-
-        BeginChild("row", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
-        bool first = true;
-        for (auto& g : gs) {
-            if (!first) {
-                SameLine();
-                SeparatorEx(ImGuiSeparatorFlags_Vertical);
-                SameLine();
-            }
-            for (auto c : g.cells) {
-                if (!first) SameLine();
-                first = false;
-                if (icon(ws, *c, slot++, t)) clicked = c->id;
-            }
+        for (auto c : gs[k].cells) {
+            SetCursorPos(row ? ImVec2{at, pad} : ImVec2{pad, at});
+            if (icon(ws, *c, slot++, t)) clicked = c->id;
+            at += step + spacing;
         }
-        if (gs.empty()) TextDisabled("nothing found");
-        // the wheel scrolls the row
-        if (IsWindowHovered() && GetIO().MouseWheel != 0) SetScrollX(GetScrollX() - GetIO().MouseWheel * button);
-        EndChild();
-    } else {
-        SetNextItemWidth(-FLT_MIN);
-        editor::input_string("##search", search);
-        if (search.empty() && !IsItemActive()) {
-            auto min = GetItemRectMin();
-            GetWindowDrawList()->AddText({min.x + style.FramePadding.x, min.y + style.FramePadding.y}, GetColorU32(ImGuiCol_TextDisabled), "Search components...");
-        }
-
-        float avail = GetContentRegionAvail().x;
-        int per_row = std::max(1, (int)((avail + style.ItemSpacing.x) / (button + style.ItemSpacing.x)));
-
-        for (auto& g : gs) {
-            Separator();
-            // groups stay open while searching
-            bool open = !search.empty() || !closed.count(g.name);
-            SetNextItemOpen(open);
-            if (!TreeNodeEx(g.name.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_NoTreePushOnOpen)) {
-                if (search.empty()) closed.insert(g.name);
-                slot += (int)g.cells.size();
-                continue;
-            }
-            if (search.empty()) closed.erase(g.name);
-
-            for (size_t k = 0; k < g.cells.size(); k++) {
-                if (k % per_row) SameLine();
-                if (icon(ws, *g.cells[k], slot++, t)) clicked = g.cells[k]->id;
-            }
-        }
-        if (gs.empty()) TextDisabled("nothing found");
     }
 
-    End();
+    scroll_strip(row, step);
+    EndChild();
+    PopStyleColor();
+    PopStyleVar(3);
+
+    // the canvas window gets the keys again (esc, r, m) and the next click
+    if (hovered && IsMouseReleased(ImGuiMouseButton_Left)) SetWindowFocus();
     return clicked;
 }
 

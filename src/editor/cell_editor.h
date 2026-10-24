@@ -9,6 +9,10 @@
 #include <Hd/FrameBuffer.h>
 #include <Hd/Texture.h>
 
+#include <imgui.h>
+
+#include <optional>
+
 namespace logic::editor {
 
 // schematic and symbol view of one cell, switched with tab. f5 simulates the
@@ -68,9 +72,19 @@ public:
     // the cell being placed in the schematic, no_id if none
     model::id placing() const { return show_symbol || session || !schematic ? model::no_id : schematic->placing(); }
 
+    // screen rectangle of the schematic canvas drawn by the last gui(),
+    // while things can be placed on it (not the symbol, not simulating or
+    // locked). the component bar is drawn over it.
+    struct screen_rect {
+        ImVec2 min, max;
+    };
+    std::optional<screen_rect> placing_canvas() const { return canvas_rect; }
+
     bool show_symbol = false;
 
 private:
+    std::optional<screen_rect> canvas_rect;
+
     void toolbar();
     void edit_toolbar();
     void place_popup();

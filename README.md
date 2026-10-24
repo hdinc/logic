@@ -25,9 +25,12 @@ standalone VCD viewer, `logic-wave`.
   subtractor, multiplier, divider, negator, comparator, barrel shifter and
   bit extender. Plexers: multiplexer, demultiplexer, decoder, priority
   encoder, bit counter and bit selector.
-- **Component bar**: the builtin parts as small icons by category,
-  vertical or as a row above the editor, in three sizes (right-click the
-  bar). Other cells are placed from the library panel or with Space.
+- **Component bar**: the most used builtin parts as icons by category, in
+  a translucent strip over the schematic along its top, bottom, left or
+  right edge, or hidden (right-click the bar, or View > Component bar). It
+  scrolls smoothly when the mouse is near one of its ends or with the
+  wheel, and has three icon sizes. Other cells are placed from the library
+  panel or with Space.
 - **Categories**: cells are grouped by category in the library panel. Set
   a cell's category in its properties or from the library panel's context
   menu.

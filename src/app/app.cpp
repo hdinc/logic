@@ -138,6 +138,20 @@ render::grid_style grid_style_from(const char* s)
     return render::grid_style::dots;
 }
 
+// component_bar::edge in order, for imgui.ini and the menus
+const char* bar_edges[] = {"top", "bottom", "left", "right", "off"};
+const char* bar_edge_labels[] = {"Top", "Bottom", "Left", "Right", "Off"};
+
+// files from before the edges: a row was at the top, a column at the left
+component_bar::edge bar_edge_from(const char* s)
+{
+    if (std::strcmp(s, "horizontal") == 0) return component_bar::edge::top;
+    if (std::strcmp(s, "vertical") == 0) return component_bar::edge::left;
+    for (int k = 0; k < 5; k++)
+        if (std::strcmp(s, bar_edges[k]) == 0) return (component_bar::edge)k;
+    return component_bar::edge::top;
+}
+
 }
 
 void app::add_settings_handler()
@@ -176,7 +190,7 @@ void app::add_settings_handler()
                 : std::strcmp(str, "custom") == 0             ? render::instance_names::custom
                                                               : render::instance_names::all;
         else if (std::sscanf(line, "ComponentBar=%31s", str) == 1)
-            a->components.dir = std::strcmp(str, "horizontal") == 0 ? component_bar::orientation::horizontal : component_bar::orientation::vertical;
+            a->components.side = bar_edge_from(str);
         else if (std::sscanf(line, "FontSize=%d", &i) == 1) {
             int size = std::clamp(i, 12, 40);
             a->font_size = size;
@@ -200,7 +214,7 @@ void app::add_settings_handler()
     };
     h.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* h, ImGuiTextBuffer* buf) {
         auto a = (app*)h->UserData;
-        buf->appendf("[Logic][Settings]\nTheme=%s\nGrid=%d\nGridStyle=%s\nComponentBar=%s\nFontSize=%d\n", a->theme_name.c_str(), a->renderer.show_grid ? 1 : 0, grid_style_name(a->renderer.grid), a->components.dir == component_bar::orientation::horizontal ? "horizontal" : "vertical", a->font_size);
+        buf->appendf("[Logic][Settings]\nTheme=%s\nGrid=%d\nGridStyle=%s\nComponentBar=%s\nFontSize=%d\n", a->theme_name.c_str(), a->renderer.show_grid ? 1 : 0, grid_style_name(a->renderer.grid), bar_edges[(int)a->components.side], a->font_size);
         // the file's path is the rest of the line
         const char* names[] = {"all", "custom", "none"};
         const char* sizes[] = {"small", "medium", "large"};
@@ -214,7 +228,7 @@ void app::add_settings_handler()
 
 app::settings app::current_settings() const
 {
-    return {theme_name, renderer.show_grid, renderer.show_origin, renderer.grid, renderer.names, renderer.thick_buses, renderer.fill_symbols, components.dir, components.size, font_size, ui_font, mono_font, canvas_font};
+    return {theme_name, renderer.show_grid, renderer.show_origin, renderer.grid, renderer.names, renderer.thick_buses, renderer.fill_symbols, components.side, components.size, font_size, ui_font, mono_font, canvas_font};
 }
 
 void app::apply_theme()
@@ -318,11 +332,12 @@ void app::settings_window()
         renderer.names = (render::instance_names)names;
 
         SeparatorText("Component bar");
-        int bar = (int)components.dir;
-        RadioButton("Vertical", &bar, (int)component_bar::orientation::vertical);
-        SameLine();
-        RadioButton("Horizontal", &bar, (int)component_bar::orientation::horizontal);
-        set_bar_orientation((component_bar::orientation)bar);
+        int bar = (int)components.side;
+        for (int k = 0; k < 5; k++) {
+            if (k > 0) SameLine();
+            RadioButton(bar_edge_labels[k], &bar, k);
+        }
+        components.side = (component_bar::edge)bar;
     }
     End();
 }
@@ -334,9 +349,6 @@ void app::draw_gui()
     menu_bar();
     auto dockspace = DockSpaceOverViewport();
     default_layout(dockspace);
-    // first start with an older imgui.ini: the bar has no place yet
-    if (!FindWindowSettingsByID(ImHashStr("Components")) && !FindWindowByName("Components")) dock_bar = true;
-    if (dock_bar) dock_component_bar();
 
     if (IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S)) save_all();
 
@@ -361,7 +373,6 @@ void app::draw_gui()
     for (auto& m : hdl.take_messages())
         message(m);
 
-    components_panel();
     library_panel();
     editor_panel();
     for (auto& e : editors)
@@ -386,7 +397,6 @@ void app::default_layout(unsigned int dockspace)
     DockBuilderRemoveNodeChildNodes(dockspace);
     ImGuiID center = dockspace;
     ImGuiID left = DockBuilderSplitNode(center, ImGuiDir_Left, 0.15f, nullptr, &center);
-    ImGuiID bar = DockBuilderSplitNode(center, ImGuiDir_Left, 0.14f, nullptr, &center);
     ImGuiID right = DockBuilderSplitNode(center, ImGuiDir_Right, 0.22f, nullptr, &center);
     ImGuiID bottom = DockBuilderSplitNode(center, ImGuiDir_Down, 0.15f, nullptr, &center);
 
@@ -397,70 +407,17 @@ void app::default_layout(unsigned int dockspace)
     DockBuilderDockWindow("Properties", right);
     DockBuilderDockWindow("Messages", bottom);
     DockBuilderDockWindow("Editor", center);
-    DockBuilderDockWindow("Components", bar);
     DockBuilderFinish(dockspace);
-    components.dir = component_bar::orientation::vertical;
 }
 
-void app::set_bar_orientation(component_bar::orientation o)
-{
-    if (components.dir == o) return;
-    components.dir = o;
-    dock_bar = true;
-}
-
-void app::dock_component_bar()
-{
-    using namespace ImGui;
-
-    // vertical left of the editor, horizontal above it. if the editor isn't
-    // docked the bar stays where it is.
-    auto editor = FindWindowByName("Editor");
-    if (!editor || !editor->DockNode) {
-        dock_bar = editor == nullptr;
-        return;
-    }
-    dock_bar = false;
-
-    auto node = editor->DockNode;
-    auto size = node->Size;
-    auto& style = GetStyle();
-    bool horizontal = components.dir == component_bar::orientation::horizontal;
-
-    ImGuiID rest;
-    ImGuiID bar;
-    if (horizontal) {
-        // one row of icons, its scrollbar and the tab
-        float h = components.icon_px() + 2 * style.FramePadding.y + 2 * style.WindowPadding.y + style.ScrollbarSize + GetFrameHeight() + 4;
-        bar = DockBuilderSplitNode(node->ID, ImGuiDir_Up, std::min(0.5f, h / std::max(size.y, 1.0f)), nullptr, &rest);
-        DockBuilderSetNodeSize(bar, {size.x, h});
-    } else {
-        float w = 4 * (components.icon_px() + 2 * style.FramePadding.x + style.ItemSpacing.x) + 2 * style.WindowPadding.x + style.ScrollbarSize;
-        bar = DockBuilderSplitNode(node->ID, ImGuiDir_Left, std::min(0.5f, w / std::max(size.x, 1.0f)), nullptr, &rest);
-        DockBuilderSetNodeSize(bar, {w, size.y});
-    }
-    DockBuilderDockWindow("Components", bar);
-    DockBuilderFinish(node->ID);
-}
-
-void app::components_panel()
+void app::components_panel(editor::cell_editor& e, ImVec2 canvas_min, ImVec2 canvas_max)
 {
     component_bar::target t;
-    if (auto e = find_editor(active_cell); e && !active_instance_tab) {
-        t.can_place = [e](model::id c) { return e->can_place(c); };
-        t.placing = e->placing();
-    }
+    t.can_place = [&e](model::id c) { return e.can_place(c); };
+    t.placing = e.placing();
 
-    auto clicked = components.gui(ws, t);
-    if (components.dir_changed) {
-        components.dir_changed = false;
-        dock_bar = true;
-    }
-    if (clicked != model::no_id) {
-        if (auto e = find_editor(active_cell)) e->place(clicked);
-        // the next click on the canvas places the instance
-        ImGui::SetWindowFocus("Editor");
-    }
+    auto clicked = components.gui(ws, t, canvas_min, canvas_max);
+    if (clicked != model::no_id) e.place(clicked);
 }
 
 void app::menu_bar()
@@ -537,8 +494,8 @@ void app::menu_bar()
                 EndMenu();
             }
             if (BeginMenu("Component bar")) {
-                if (MenuItem("Vertical", nullptr, components.dir == component_bar::orientation::vertical)) set_bar_orientation(component_bar::orientation::vertical);
-                if (MenuItem("Horizontal", nullptr, components.dir == component_bar::orientation::horizontal)) set_bar_orientation(component_bar::orientation::horizontal);
+                for (int k = 0; k < 5; k++)
+                    if (MenuItem(bar_edge_labels[k], nullptr, components.side == (component_bar::edge)k)) components.side = (component_bar::edge)k;
                 EndMenu();
             }
             if (BeginMenu("Theme")) {
@@ -576,8 +533,8 @@ void app::menu_bar()
         BulletText("Q: duplicate the element under the mouse and place it");
         BulletText("Ctrl+R / Ctrl+M: rotate / mirror the selection (Shift: the other way)");
         BulletText("R / M while placing or pasting: rotate / mirror it (Shift+R: the other way)");
-        BulletText("Components bar: click an icon, then click in the schematic to place it");
-        BulletText("Right click the components bar: vertical or horizontal");
+        BulletText("Component bar (over the schematic): click an icon, then click in the schematic to place it");
+        BulletText("Right click the component bar: top, bottom, left, right or hide (View > Component bar shows it again)");
         SeparatorText("Symbol");
         BulletText("P: pin, L: line, B: bezier, A: arc, C: circle, T: text, R: rectangle");
         SeparatorText("Simulate");
@@ -861,6 +818,7 @@ void app::editor_panel()
             if (BeginTabItem(label.c_str(), &open, flags)) {
                 active_cell = id;
                 e->gui(editor_tex, editor_fb);
+                if (auto r = e->placing_canvas(); r && !active_instance_tab) components_panel(*e, r->min, r->max);
                 active_view = e->simulation_view();
                 EndTabItem();
             }
