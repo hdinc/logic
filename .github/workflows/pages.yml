@@ -1,0 +1,80 @@
+# builds the web version (see "Web build" in README.md) and publishes it
+# to github pages, https://hdinc.github.io/logic/, on every pushed tag
+name: Deploy web build
+
+on:
+  push:
+    tags: ['*']
+  # a manual run from the actions tab, for a branch or a tag
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# one deployment at a time, a newer tag waits for the running one
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  # the version the web build is tested with
+  EMSDK_VERSION: 6.0.13
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # the Hd submodule has an ssh url, which needs a key. both repos are
+      # public, so fetch over https.
+      - name: Submodules
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git submodule update --init --recursive --depth 1
+
+      # glm and nlohmann_json are taken from the host, see CMakeLists.txt
+      - name: Host headers
+        run: sudo apt-get update && sudo apt-get install -y libglm-dev nlohmann-json3-dev
+
+      - name: Emscripten
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install "$EMSDK_VERSION"
+          "$RUNNER_TEMP/emsdk/emsdk" activate "$EMSDK_VERSION"
+
+      # the glfw and freetype ports are downloaded and built on the first build
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/emsdk/upstream/emscripten/cache
+          key: emscripten-cache-${{ env.EMSDK_VERSION }}
+
+      - name: Build
+        run: |
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-web -j "$(nproc)"
+
+      # only the page's files, not the build tree
+      - name: Collect site
+        run: |
+          mkdir site
+          find build-web -maxdepth 1 -type f \( -name '*.html' -o -name '*.js' -o -name '*.wasm' -o -name '*.data' \) -exec cp {} site/ \;
+          ls -l site
+          touch site/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -119,6 +119,11 @@ server can't, the service worker adds them and the page reloads once on the
 first visit. The workspace is kept in the browser's IndexedDB and starts
 with an empty `work` library.
 
+Every pushed tag deploys the web build to <https://hdinc.github.io/logic/>
+(`.github/workflows/pages.yml`, Emscripten 6.0.13). It can also be run by
+hand from the Actions tab. The repository's Pages source has to be "GitHub
+Actions".
+
 ## Running
 
 ```sh

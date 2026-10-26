@@ -3290,3 +3290,73 @@ The user changed their mind about the look of the 7-segment display:
 
 - Try the web build in Firefox and Safari and on a real GPU.
 - The Pages workflow and workspace import/export.
+
+## 2026-10-26 20:22 +0300
+
+### Changes made
+
+- README's "Web build" section says how the site is deployed.
+
+### Features implemented
+
+- **Pages deployment:** `.github/workflows/pages.yml` builds the web version
+  and publishes it to <https://hdinc.github.io/logic/> on every pushed tag,
+  or when it's started by hand from the Actions tab (`workflow_dispatch`).
+
+### How it works
+
+- The workflow is in this repository and deploys with
+  `actions/upload-pages-artifact` and `actions/deploy-pages`. GitHub serves a
+  repository's Pages site at `hdinc.github.io/<repo>/`, so no
+  `hdinc.github.io` repository is needed, and no token or deploy key.
+  - Rejected: a workflow in a separate Pages repository. It can't see this
+    repository's tags without a `repository_dispatch` sent from here, and it
+    would still have to clone and build this repository.
+  - Rejected: pushing the build into a `hdinc.github.io` repository. That
+    only makes sense while this repository is private, and it needs a
+    token. Both repositories are public now.
+- **build job** (ubuntu-24.04): checkout, then the submodules over https. The
+  Hd submodule URL is ssh (`git@github.com:hdinc/Hd/`), which needs a key in
+  CI, so `url."https://github.com/".insteadOf` rewrites it. glm and
+  nlohmann_json come from apt (`libglm-dev`, `nlohmann-json3-dev`) into
+  `/usr/include`, the default `LOGIC_HOST_INCLUDE`. emsdk is cloned and
+  `EMSDK_VERSION` (6.0.13, the version used locally) is installed. The
+  Emscripten cache (the GLFW and FreeType ports, system libraries) is kept
+  with `actions/cache`, keyed by that version. After
+  `emcmake cmake` and `cmake --build`, the top-level `.html`, `.js`, `.wasm`
+  and `.data` files of `build-web` are copied into `site/`, with
+  `.nojekyll`, and uploaded. A pattern instead of a fixed list, so a new
+  output file isn't missed.
+- **deploy job:** deploys the uploaded files into the `github-pages`
+  environment. `concurrency: pages` without cancelling, so a newer tag waits
+  for a running deployment.
+- `exeres.myar` in the build folder isn't needed by the page. On the web it's
+  compiled into the wasm as a C array (`Hd/cmake/resource.cmake`).
+
+### Testing
+
+- A local release web build (Emscripten 6.0.13) outputs `index.html`,
+  `index.js`, `index.wasm` and `coi-serviceworker.js`, which are the files
+  the copy step picks up.
+- The emsdk repository has the `6.0.13` tag, and the workflow file parses as
+  YAML. The workflow hasn't run on GitHub yet.
+
+### Recommended features
+
+- Deploy only version tags (`v*`) if other tags are used later.
+- A build-only check of the web version on pushes to master, without
+  deploying.
+
+### Outstanding issues
+
+- The Pages source of the repository must be set to "GitHub Actions"
+  (Settings → Pages) before the first deployment.
+- The tagged commit's Hd submodule commit must be on GitHub, or the checkout
+  fails.
+
+### Next steps
+
+- Set the Pages source, push a tag and check the site at
+  <https://hdinc.github.io/logic/>.
+- Try the web build in Firefox and Safari and on a real GPU.
+- Workspace import/export in the browser.
