@@ -105,8 +105,12 @@ public:
     // the cross at 0, 0 when show_origin is on
     void draw_origin();
 
-    // size of a pixel in world units
-    float pixel() const { return g.pixel(); }
+    // size of a pixel of the interface in world units, `scale` pixels of
+    // the framebuffer. g.pixel() is a framebuffer pixel.
+    float pixel() const { return g.pixel() * scale; }
+    // framebuffer pixels per interface pixel, more than 1 on hi-dpi screens
+    // (imgui's DisplayFramebufferScale). set by the app every frame.
+    float scale = 1.0f;
 
     void line(glm::vec2 a, glm::vec2 b, glm::vec4 color, float width = stroke) { g.line(a, b, width, color); }
     void circle(glm::vec2 c, float radius, glm::vec4 color) { g.circle(c, radius, color); }

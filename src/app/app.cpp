@@ -372,6 +372,8 @@ void app::draw_gui()
 {
     using namespace ImGui;
 
+    // the canvases draw at the screen's resolution, see canvas_widget
+    renderer.scale = GetIO().DisplayFramebufferScale.x;
     menu_bar();
     auto dockspace = DockSpaceOverViewport();
     default_layout(dockspace);

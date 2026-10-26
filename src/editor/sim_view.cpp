@@ -1,5 +1,6 @@
 #include "sim_view.h"
 #include "bundle_ui.h"
+#include "canvas_widget.h"
 #include "number_ui.h"
 #include "../sim/numbers.h"
 #include "../ui/fonts.h"
@@ -78,11 +79,8 @@ void sim_view::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     auto& sc = current();
     auto& e = editor_of(*sc.cell);
 
-    // whole pixels, the framebuffer is shown 1:1 so small text stays sharp
-    auto size = GetContentRegionAvail();
-    size.x = std::min(std::floor(size.x), (float)tex.GetWidth());
-    size.y = std::min(std::floor(size.y), (float)tex.GetHeight());
-    if (size.x < 1.0f || size.y < 1.0f) return;
+    auto [size, px] = canvas_room(tex);
+    if (size.x < 1.0f) return;
 
     auto screen_pos = GetCursorScreenPos();
     auto cursor = GetCursorPos();
@@ -111,12 +109,12 @@ void sim_view::gui(Hd::Texture& tex, Hd::FrameBuffer& fb)
     // the net under the mouse, with its wires and tunnels
     de.highlight_net = hovered && &de == &e ? de.net_at(de.view.mouse_world()) : -1;
 
-    fb.Bind((int)size.x, (int)size.y);
+    fb.Bind((int)px.x, (int)px.y);
     de.draw();
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     SetCursorPos(cursor);
-    Image((ImTextureID)tex.Id(), size, {0, size.y / tex.GetHeight()}, {size.x / tex.GetWidth(), 0});
+    Image((ImTextureID)tex.Id(), size, {0, px.y / tex.GetHeight()}, {px.x / tex.GetWidth(), 0});
 
     instance_menu();
     port_value_popup();

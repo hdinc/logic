@@ -53,8 +53,9 @@ public:
     };
     icon_size size = icon_size::small;
     int icon_px() const;
-    // the atlas holds icons up to this size
-    static constexpr int slot_size = 48;
+    // the icons' size in framebuffer pixels, the atlas is drawn at the
+    // screen's resolution
+    int icon_pixels() const;
 
 private:
     struct group {

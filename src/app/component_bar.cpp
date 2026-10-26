@@ -12,9 +12,9 @@ namespace logic::app {
 
 namespace {
 
-constexpr int atlas_size = 1024;
-constexpr int slots_per_row = atlas_size / component_bar::slot_size;
-constexpr int max_slots = slots_per_row * slots_per_row;
+// a slot per icon, as big as an icon in framebuffer pixels: 225 large
+// icons at a display scale of 3
+constexpr int atlas_size = 2048;
 
 // the builtins on the bar, the rest are placed from the library panel or
 // with space
@@ -43,9 +43,17 @@ constexpr float edge_zone = 1.5f;
 constexpr float edge_speed = 700.0f;
 constexpr float fade = 16.0f;
 
-glm::ivec2 slot_pos(int slot)
+// slots of px framebuffer pixels
+int max_slots(int px)
 {
-    return {slot % slots_per_row * component_bar::slot_size, slot / slots_per_row * component_bar::slot_size};
+    int per_row = atlas_size / px;
+    return per_row * per_row;
+}
+
+glm::ivec2 slot_pos(int slot, int px)
+{
+    int per_row = atlas_size / px;
+    return {slot % per_row * px, slot / per_row * px};
 }
 
 // half the size of the box icons are drawn in, with a little margin
@@ -94,6 +102,11 @@ int component_bar::icon_px() const
     }
 }
 
+int component_bar::icon_pixels() const
+{
+    return std::max(1, (int)std::lround(icon_px() * r.scale));
+}
+
 void component_bar::draw_icons(const model::workspace& ws, const std::vector<const model::cell*>& cells)
 {
     auto text = ImGui::GetStyleColorVec4(ImGuiCol_Text);
@@ -107,8 +120,8 @@ void component_bar::draw_icons(const model::workspace& ws, const std::vector<con
     glClearColor(color.r, color.g, color.b, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    int px = icon_px();
-    for (size_t k = 0; k < cells.size() && k < (size_t)max_slots; k++) {
+    int px = icon_pixels();
+    for (size_t k = 0; k < cells.size() && k < (size_t)max_slots(px); k++) {
         // the part's icon, or its symbol if it has none
         auto prim = ws.primitive_of(*cells[k]);
         auto icon = prim ? prim->icon() : model::symbol{};
@@ -123,13 +136,13 @@ void component_bar::draw_icons(const model::workspace& ws, const std::vector<con
             half = std::max({b.max.x - b.min.x, b.max.y - b.min.y, 10.0f}) / 2 * 1.1f;
         }
 
-        auto p = slot_pos((int)k);
+        auto p = slot_pos((int)k, px);
         glViewport(p.x, p.y, px, px);
         auto vp = glm::ortho(mid.x - half, mid.x + half, mid.y - half, mid.y + half);
 
         r.g.begin(vp);
         // thin lines, about 1.3 pixels at the small size and 1.8 at most
-        float line_px = std::clamp(px / 24.0f, 1.3f, 1.8f);
+        float line_px = std::clamp(icon_px() / 24.0f, 1.3f, 1.8f);
         r.stroke_scale = line_px * r.pixel() / render::stroke;
         // no pin dots, icons have no pins and a symbol shows its body
         std::vector<bool> connected(sym.pins.size(), true);
@@ -146,13 +159,14 @@ bool component_bar::icon(const model::workspace& ws, const model::cell& c, int s
 {
     using namespace ImGui;
 
-    if (slot >= max_slots) return false;
+    int px = icon_pixels();
+    if (slot >= max_slots(px)) return false;
 
-    auto p = slot_pos(slot);
-    int px = icon_px();
+    auto p = slot_pos(slot, px);
     // gl textures start at the bottom
     ImVec2 uv0{(float)p.x / atlas_size, (float)(p.y + px) / atlas_size};
     ImVec2 uv1{(float)(p.x + px) / atlas_size, (float)p.y / atlas_size};
+    float size = (float)icon_px();
 
     bool can = t.can_place && t.can_place(c.id);
     bool active = t.placing == c.id;
@@ -160,7 +174,7 @@ bool component_bar::icon(const model::workspace& ws, const model::cell& c, int s
     PushID(&c);
     PushStyleColor(ImGuiCol_Button, GetStyleColorVec4(active ? ImGuiCol_ButtonActive : ImGuiCol_FrameBg));
     ImVec4 tint{1, 1, 1, can ? 1.0f : 0.35f};
-    bool clicked = ImageButton("icon", (ImTextureID)atlas.Id(), {(float)px, (float)px}, uv0, uv1, {0, 0, 0, 0}, tint);
+    bool clicked = ImageButton("icon", (ImTextureID)atlas.Id(), {size, size}, uv0, uv1, {0, 0, 0, 0}, tint);
     PopStyleColor();
     PopID();
 

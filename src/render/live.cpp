@@ -91,9 +91,10 @@ void draw_seg7(renderer& r, const model::param_values& params, const std::vector
             poly.push_back(world(p));
         auto color = color_at(k);
         r.fill(poly, color);
-        // fills have hard edges, a pixel wide line along them smooths them
+        // fills have hard edges, a framebuffer pixel wide line along them
+        // smooths them
         for (size_t i = 0; i < poly.size(); i++)
-            r.line(poly[i], poly[(i + 1) % poly.size()], color, r.pixel());
+            r.line(poly[i], poly[(i + 1) % poly.size()], color, r.g.pixel());
     }
     auto dp = params.find("dp");
     if (dp != params.end() && std::get_if<bool>(&dp->second) && std::get<bool>(dp->second)) r.circle(world({24, -21}), 3.0f, color_at(7));

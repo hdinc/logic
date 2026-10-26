@@ -3409,3 +3409,89 @@ The user changed their mind about the look of the 7-segment display:
   from the Actions tab.
 - Try the web build in Firefox and Safari and on a real GPU.
 - Workspace import/export in the browser.
+
+## 2026-10-26 20:50 +0300
+
+### Changes made
+
+- **Sharp canvases on hi-dpi screens.** On a screen with a device pixel ratio
+  above 1 (most phones, laptops and Retina Macs, and the browser when it
+  zooms), the schematic, the simulation view, the symbol editor and the
+  component bar's icons were blurry. ImGui's own text stayed sharp.
+  - Cause: the canvases were drawn into their framebuffer at their size in
+    ImGui units (CSS pixels on the web), then shown with `Image()`, which
+    ImGui scales by `DisplayFramebufferScale` for the screen. At a scale of 2
+    the texture was stretched over twice the pixels.
+  - The canvases are now drawn at the screen's resolution and shown 1:1.
+
+### Features implemented
+
+- None, a fix.
+
+### How it works
+
+- `canvas_room()` in `src/editor/canvas_widget.h` returns the room left in
+  the ImGui window in whole ImGui units, and the same in framebuffer pixels
+  (times `io.DisplayFramebufferScale`). `canvas_widget` (cell editor, symbol
+  editor) and `sim_view::gui` bind the framebuffer at the pixel size, draw,
+  and show that corner of the texture at the ImGui size. The units are
+  limited so the pixels fit the 3840×2160 textures.
+- `editor::canvas` keeps working in ImGui units (`begin_frame` gets the ImGui
+  size). Zoom, the mouse, and hit-test distances (`canvas::pixels`) stay the
+  same on screen.
+- `render::renderer::scale` holds the framebuffer pixels per interface
+  pixel. `app::draw_gui` sets it every frame. `renderer::pixel()` is now an
+  interface pixel (`g.pixel() * scale`). Its users mean a size the user
+  sees: hairlines (origin, guides, selection box), the grid's fade by
+  pixels per grid step, and the component bar's icon line widths.
+  `Hd::Renderer2D` stays in framebuffer pixels, for antialiasing, the
+  smallest drawn width and hinted text, so those are as sharp as the screen
+  allows.
+- The grid shader gets the framebuffer pixel (`u_px`) for its antialiasing,
+  and `u_scale` (location 6) for the dots' and lines' size, so they keep
+  their size on screen.
+- The 7-segment display's fills are smoothed by a line one framebuffer pixel
+  wide (`r.g.pixel()`), since it only covers the hard edge.
+- The component bar draws each icon at `icon_pixels()` (the icon size times
+  the scale) into slots of that size. The atlas grew from 1024 to 2048 (225
+  large icons at a scale of 3). The fixed `slot_size` of 48 is gone.
+- Rejected: scaling the whole canvas world (making `begin_frame` take
+  framebuffer pixels). Every pixel-based size, hit tolerance and the mouse
+  mapping would have had to change, and the native app would behave
+  differently from the web.
+- At a fractional scale (e.g. 2.625), the framebuffer size is rounded to
+  whole pixels, so it may be up to a pixel off from the shown size. That is
+  a much smaller resampling than before.
+
+### Testing
+
+- Native build. All 9 ctest suites pass.
+- Native GUI at scale 1 (VNC, X11): `counter_6502` opens with the same grid,
+  symbols, text and component bar as before, and no shader errors.
+- Web build (Emscripten 6.0.13) in headless Chromium with
+  `--force-device-scale-factor=2` (`devicePixelRatio` 2, canvas 2400 pixels
+  for a 1200 pixel window), over the DevTools protocol:
+  - New cell, then an AND gate and a switch placed from the component bar.
+    Each landed where it was clicked.
+  - Screenshots at device resolution: the gate's outline, the pins, the
+    labels, the grid dots and the bar's icons have one-pixel antialiased
+    edges, not stretched ones.
+  - The simulation view (Simulate) is sharp too.
+
+### Recommended features
+
+- Snap the component bar's position to framebuffer pixels at fractional
+  scales, so its icons fall on whole pixels.
+
+### Outstanding issues
+
+- Not tried on a real hi-dpi browser or a Retina Mac, only Chromium's forced
+  scale factor.
+- The symbol editor wasn't looked at in the browser test, but it goes
+  through the same `canvas_widget` as the cell editor.
+
+### Next steps
+
+- Check the deployed site on a phone or a hi-dpi laptop after the next
+  version tag.
+- Try the web build in Firefox and Safari.

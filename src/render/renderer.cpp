@@ -228,7 +228,7 @@ void renderer::draw_grid(const glm::mat4& vp)
     auto inv = glm::inverse(vp);
     glUniformMatrix4fv(0, 1, GL_FALSE, glm::value_ptr(inv));
     glUniform4fv(1, 1, &color.x);
-    glUniform1f(2, pixel());
+    glUniform1f(2, g.pixel());
     glUniform1f(3, spacing);
     glUniform1f(4, fine);
     // 0 dots, 1 lines, 2 checkers
@@ -236,6 +236,7 @@ void renderer::draw_grid(const glm::mat4& vp)
     if (grid == grid_style::lines) mode = 1;
     if (grid == grid_style::checkers) mode = 2;
     glUniform1i(5, mode);
+    glUniform1f(6, scale);
 
     grid_vao.Bind();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
