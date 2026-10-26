@@ -120,7 +120,7 @@ bool component::connect(std::string& error)
     process = std::make_unique<hdl::child_process>();
     if (!process->start(how.args, how.dir, env, error)) return false;
     // the simulator's output ($display and errors) goes to the log
-    output_reader = std::thread([this, p = process.get(), log = log, n = name] {
+    output_reader = std::thread([p = process.get(), log = log, n = name] {
         p->read_output([&](const std::string& line) { log->add(n + ": " + line); });
     });
 

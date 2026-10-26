@@ -5,10 +5,34 @@ project(logic C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# the web build: the editor and the builtin simulator, without plugins and
+# hdl cells. see "Web build" in README.md.
+if(EMSCRIPTEN)
+    # the simulator and the hdl manager have threads, and exceptions are
+    # caught. every object, the ports too, is built for both.
+    add_compile_options(-pthread -fwasm-exceptions)
+    add_link_options(-pthread -fwasm-exceptions)
+    # glm and nlohmann_json are header only, taken from the host. not the
+    # whole host include folder, its libc headers would shadow emscripten's.
+    set(LOGIC_HOST_INCLUDE /usr/include CACHE PATH "Where the host's glm and nlohmann headers are")
+    set(host_headers ${CMAKE_BINARY_DIR}/host_include)
+    file(MAKE_DIRECTORY ${host_headers})
+    foreach(d glm nlohmann)
+        file(CREATE_LINK ${LOGIC_HOST_INCLUDE}/${d} ${host_headers}/${d} SYMBOLIC)
+    endforeach()
+    add_library(glm::glm INTERFACE IMPORTED)
+    target_include_directories(glm::glm INTERFACE ${host_headers})
+    add_library(nlohmann_json::nlohmann_json INTERFACE IMPORTED)
+    target_include_directories(nlohmann_json::nlohmann_json INTERFACE ${host_headers})
+    set(LOGIC_USE_FONTCONFIG OFF CACHE BOOL "" FORCE)
+endif()
+
 add_subdirectory(Hd)
 
-find_package(glm REQUIRED)
-find_package(nlohmann_json REQUIRED)
+if(NOT EMSCRIPTEN)
+    find_package(glm REQUIRED)
+    find_package(nlohmann_json REQUIRED)
+endif()
 find_package(Threads REQUIRED)
 
 set(LOGIC_WARNINGS -Wall -Wextra -Wpedantic -Wsuggest-override -Wno-sign-compare)
@@ -147,6 +171,35 @@ add_resource_dir(logic res)
 
 target_link_libraries(logic logic_core logic_ui Hd)
 target_compile_options(logic PRIVATE ${LOGIC_WARNINGS})
+
+if(EMSCRIPTEN)
+    # index.html, .js and .wasm with coi-serviceworker.js: a folder that any
+    # static host can serve, github pages too
+    target_sources(logic PRIVATE src/web/web.cpp)
+    # kept in the browser's IndexedDB, see web/pre.js
+    target_compile_definitions(logic PRIVATE LOGIC_DEFAULT_WORKSPACE="/home/web_user/workspace")
+    set_target_properties(logic PROPERTIES OUTPUT_NAME index SUFFIX .html)
+    target_link_options(logic PRIVATE
+        -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2
+        # layout(location = n) uniforms, glsl es 3.00 has none
+        -sGL_EXPLICIT_UNIFORM_LOCATION=1
+        -sALLOW_MEMORY_GROWTH=1
+        -sSTACK_SIZE=8MB -sDEFAULT_PTHREAD_STACK_SIZE=2MB
+        # threads are started with the page, one past these can't start
+        # while the main thread waits for it. the hdl manager, 4 for the
+        # canvas font (Hd/src/Hd/Msdf.cpp) and one per running simulation.
+        -sPTHREAD_POOL_SIZE=16
+        -sENVIRONMENT=web,worker
+        -sFORCE_FILESYSTEM=1 -lidbfs.js
+        "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=[\$addRunDependency,\$removeRunDependency]"
+        --pre-js ${CMAKE_SOURCE_DIR}/web/pre.js
+        --shell-file ${CMAKE_SOURCE_DIR}/web/shell.html)
+    set_property(TARGET logic APPEND PROPERTY LINK_DEPENDS ${CMAKE_SOURCE_DIR}/web/pre.js ${CMAKE_SOURCE_DIR}/web/shell.html)
+    configure_file(web/coi-serviceworker.js ${CMAKE_BINARY_DIR}/coi-serviceworker.js COPYONLY)
+    # no viewer, plugins or tests
+    return()
+endif()
+
 target_compile_definitions(logic PRIVATE LOGIC_DEFAULT_WORKSPACE="${CMAKE_SOURCE_DIR}/workspace")
 
 # the standalone waveform viewer, in its own directory for its resources

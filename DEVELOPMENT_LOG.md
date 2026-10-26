@@ -3151,3 +3151,142 @@ The user changed their mind about the look of the 7-segment display:
 ### Outstanding issues
 
 - None known.
+
+## 2026-10-26 16:05 +0300
+
+### Features implemented
+
+- **Web build (WebAssembly):** the editor and the builtin simulator run in a
+  browser, built with Emscripten (`emcmake cmake -B build-web`, see "Web
+  build" in README.md). The schematic and symbol editors, the component bar,
+  wiring, undo, simulation on its thread, waveforms and saving work. C model
+  plugins and HDL cells (Verilator, Icarus, GHDL) aren't part of it: the
+  "New C model cell", "New HDL cell", "Reload plugins" and "Exit" menu items
+  are hidden there.
+- **Hosting:** the output folder (`index.html`, `.js`, `.wasm`,
+  `coi-serviceworker.js`) can be served as it is by any static host, from a
+  sub-path too, so it's ready for GitHub Pages.
+- **Saving in the browser:** the workspace and imgui.ini live in
+  `/home/web_user`, kept in IndexedDB. The page asks before it's closed with
+  unsaved changes.
+
+### Changes made
+
+- Hd: an Emscripten branch in its CMake (glfw from the `contrib.glfw3` port,
+  FreeType from the `freetype` port, a `glad` header for GLES 3, no install
+  rules), shaders turned into GLSL ES 3.00 when they're loaded, the WebGL 2
+  context hints, no GL debug output or frame pacing in the browser, the
+  canvas follows the window, `glFramebufferTexture2D` (on every platform),
+  resources as a C array, and at most 4 threads for the canvas font's
+  distance fields in the browser.
+- logic: `app::run` is split into `run` and `frame`. `src/web` holds the
+  page glue, and `web/` holds the page shell, the pre-js, the vendored
+  coi-serviceworker (v0.1.7, MIT) and `serve.py`.
+- Fixes found by clang/libc++: an ambiguous `std::to_string` of a file time
+  (`src/hdl/job.cpp`, `__int128` in libc++) and an unused lambda capture
+  (`src/cosim/component.cpp`).
+
+### How it works
+
+- **Threads kept:** the simulator's runner and the HDL manager keep their
+  `std::thread`s (`-pthread`), so the simulator didn't need a single-threaded
+  mode. Threads need SharedArrayBuffer, so the page has to be cross-origin
+  isolated. GitHub Pages can't send the COOP/COEP headers, so
+  coi-serviceworker adds them. The alternative, a single-threaded runner that
+  steps in each frame, was rejected by the user's choice. It would have
+  worked on any host without a service worker.
+- **Thread pool:** browser threads are workers started with the page
+  (`PTHREAD_POOL_SIZE=16`). A thread past the pool only starts once the main
+  thread returns to the browser, so a main thread that waits for it (a
+  join, or `runner::wait_idle`) never wakes up. This first hung at startup,
+  when `Hd::Font` started 8 msdf threads besides the HDL manager's. In the
+  browser msdf now uses 4. 16 covers the manager, the 4 msdf threads and 11
+  simulations at once.
+- **Service worker reload:** coi-serviceworker reloads by itself on
+  `updatefound`, before the worker controls the page, so the page could come
+  back without isolation. `index.js` also started on the first, non-isolated
+  load and failed (`DataCloneError`). The shell turns coi's reload off and
+  reloads itself once `navigator.serviceWorker.ready` resolves. It starts
+  emscripten's script, kept in a `<template>` (emcc requires the
+  `{{{ SCRIPT }}}` placeholder), only when `crossOriginIsolated` is true.
+  After 3 tries, or with no service worker (private mode, plain http), the
+  page shows why it can't run.
+- **Shaders:** GLSL ES 3.00 has no `layout(location = n) uniform`.
+  Emscripten's `-sGL_EXPLICIT_UNIFORM_LOCATION` removes these and maps the
+  numbers to the real locations, so the C++ code keeps its literal uniform
+  locations. `Hd::Shader` replaces `#version 330 core` with `#version 300 es`
+  plus precision lines and drops the `GL_ARB_explicit_uniform_location`
+  extension line.
+- **Resources:** wasm-ld can't link a binary file (`ld -r -b binary`).
+  `add_resource_dir` runs `myar-bin`, itself built to wasm, under node
+  (`CMAKE_CROSSCOMPILING_EMULATOR`, `-sNODERAWFS`), and `cmake/bin2c.cmake`
+  writes the archive as `<pfix>res_myar[]` and `<pfix>res_myar_size`, which
+  `Resource.cpp` reads in the browser.
+- **Storage:** `web/pre.js` mounts IDBFS at `/home/web_user` with
+  `autoPersist`, which writes each file back to IndexedDB as it closes. It
+  reads the folder back in a `preRun` that holds a run dependency, so `main`
+  starts with the saved files. `main` changes into that folder (imgui.ini)
+  and makes the workspace folder. Manual `FS.syncfs` calls after saving were
+  dropped, since `autoPersist` covers them. The repo's `workspace/` isn't
+  preloaded: its examples need the 6502 and AVR plugins.
+- **Main loop:** in the browser `app::run` hands `frame` to
+  `emscripten_set_main_loop_arg` and returns, and `main` makes the app with
+  `new` so it stays alive. This avoids `simulate_infinite_loop`, whose
+  unwinding would run destructors with `-fwasm-exceptions`. Each frame tells
+  the page whether there are unsaved changes (`web::set_unsaved`, used by
+  `beforeunload`).
+- **Host headers:** glm and nlohmann_json are linked into
+  `build-web/host_include` from the host instead of searching
+  `/usr/include`, whose libc headers would shadow Emscripten's.
+- **Hi-dpi:** the GLFW port scales the framebuffer by the device pixel
+  ratio, like macOS. The interface keeps its size and text is sharp.
+- **HDL and plugin code:** it still compiles in the browser build and only
+  fails at run time (Emscripten stubs fork, sockets and dlopen), so
+  `logic_core` didn't need any `#ifdef`s.
+
+### Testing
+
+- **Browser** (headless Chromium driven over the DevTools protocol,
+  SwiftShader WebGL 2): the page loads with `crossOriginIsolated`, then a new
+  cell, placing a switch and an LED, wiring them, simulating (the switch
+  toggled lights the LED), Ctrl+S, reloading the page (the cell is still
+  there, and IndexedDB holds the cell, `library.json` and imgui.ini), and
+  the File menu without the plugin, HDL and Exit items.
+- **Hi-dpi:** at device scale factor 2 the layout is the same, text is sharp
+  and a part lands where it was clicked.
+- **GitHub Pages setup:** the release build served from `/logic/` by a plain
+  `python -m http.server` without COOP/COEP. In 3 of 3 runs the page
+  reloaded once, ended up isolated and started without errors. Before the
+  shell fix it could end up stuck on "Loading…".
+- **Native:** builds, and all 9 ctest suites pass. The app starts and runs
+  its frame loop on X11.
+
+### Recommended features
+
+- A GitHub Actions workflow that builds the web version and deploys it to
+  Pages.
+- Importing and exporting a workspace (a .zip) in the browser, and example
+  cells that only use builtin parts.
+- C model plugins as wasm side modules (`MAIN_MODULE`/`SIDE_MODULE`), and the
+  bundled 6502 plugin linked in statically.
+- HDL cells prebuilt on the desktop as wasm modules shipped with the
+  workspace.
+
+### Outstanding issues
+
+- Tested only in headless Chromium. Firefox and Safari, and real GPUs,
+  aren't tested yet.
+- The page needs a service worker on hosts without COOP/COEP headers. It
+  doesn't run where service workers are off (some private modes) or over
+  plain http other than localhost.
+- More than 11 simulations at once would exhaust the thread pool and hang
+  the page.
+- Emscripten warns that `-pthread` with memory growth can slow down JS code
+  that touches memory (the GL calls). No slowdown was seen.
+- File dialogs only see the browser's in-memory file system, and fonts can
+  only be the bundled one (there are no system fonts).
+
+### Next steps
+
+- Try the web build in Firefox and Safari and on a real GPU.
+- The Pages workflow and workspace import/export.

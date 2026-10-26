@@ -104,7 +104,8 @@ std::string source_fingerprint(const job& j)
         for (auto it = fs::directory_iterator(absolute_in(j.dir, inc), ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
             std::error_code e2;
             auto size = it->file_size(e2);
-            auto time = it->last_write_time(e2).time_since_epoch().count();
+            // libc++ counts in __int128
+            auto time = (long long)it->last_write_time(e2).time_since_epoch().count();
             entries.push_back(it->path().filename().string() + " " + std::to_string(size) + " " + std::to_string(time));
         }
         std::sort(entries.begin(), entries.end());

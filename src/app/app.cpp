@@ -14,6 +14,11 @@
 #include <cstring>
 #include <stdexcept>
 
+#ifdef __EMSCRIPTEN__
+#include "../web/web.h"
+#include <emscripten.h>
+#endif
+
 namespace logic::app {
 
 app::app(Hd::Window& w, std::filesystem::path r)
@@ -50,6 +55,10 @@ app::~app()
 
 void app::reload_plugins()
 {
+#ifdef __EMSCRIPTEN__
+    // plugins are shared libraries, the browser can't load them
+    return;
+#endif
     for (auto& m : plugin::sync_libraries(ws, plugins, root / "plugins"))
         message(m);
     // stable order in the library panel: the user's, builtin, plugins
@@ -68,26 +77,38 @@ void app::run()
 
     gui.Functions.add([&] { draw_gui(); });
 
-    while (!should_exit) {
-        window.PollEvents();
+#ifdef __EMSCRIPTEN__
+    // the browser calls frame on each animation frame, run returns now
+    emscripten_set_main_loop_arg([](void* a) { static_cast<app*>(a)->frame(); }, this, 0, false);
+#else
+    while (!should_exit)
+        frame();
+#endif
+}
 
-        if (window.ShouldClose()) {
-            glfwSetWindowShouldClose(window.Id(), false);
-            if (has_unsaved())
-                exit_requested = true;
-            else
-                should_exit = true;
-        }
+void app::frame()
+{
+    window.PollEvents();
 
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        if (font_update_pending) update_font();
-        if (canvas_font_pending) update_canvas_font();
-        gui.Draw();
-
-        window.SwapBuffers();
+    if (window.ShouldClose()) {
+        glfwSetWindowShouldClose(window.Id(), false);
+        if (has_unsaved())
+            exit_requested = true;
+        else
+            should_exit = true;
     }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    if (font_update_pending) update_font();
+    if (canvas_font_pending) update_canvas_font();
+    gui.Draw();
+
+    window.SwapBuffers();
+#ifdef __EMSCRIPTEN__
+    web::set_unsaved(has_unsaved());
+#endif
 }
 
 void app::update_font()
@@ -469,17 +490,20 @@ void app::menu_bar()
         if (BeginMenu("File")) {
             if (auto work = ws.find_library("work")) new_cell_items(*work);
             if (MenuItem("Save all", "Ctrl+S", false, has_unsaved())) save_all();
+#ifndef __EMSCRIPTEN__
             // cells change in place, not under a running simulation
             bool simulating = std::any_of(editors.begin(), editors.end(), [](auto& e) { return e->simulating(); });
             if (MenuItem("Reload plugins", nullptr, false, !simulating)) reload_plugins();
             SetItemTooltip("Finds new plugins and takes the ports, parameters and symbols of rebuilt ones");
             Separator();
+            // closing the tab ends the program in the browser
             if (MenuItem("Exit")) {
                 if (has_unsaved())
                     exit_requested = true;
                 else
                     should_exit = true;
             }
+#endif
             EndMenu();
         }
 
@@ -1211,10 +1235,13 @@ void app::new_cell_items(model::library& lib)
     using namespace ImGui;
     if (MenuItem("New cell")) new_cell(lib);
     SetItemTooltip("A circuit drawn as a schematic");
+#ifndef __EMSCRIPTEN__
+    // plugins and the hdl tools don't run in the browser
     if (MenuItem("New C model cell")) new_cell(lib, model::c_model_impl{});
     SetItemTooltip("A part simulated by a model in a plugin, e.g. a microcontroller");
     if (MenuItem("New HDL cell")) new_cell(lib, model::hdl_impl{});
     SetItemTooltip("A part written in Verilog, SystemVerilog or VHDL");
+#endif
     Separator();
     if (MenuItem("New bundle type")) new_bundle(lib);
     SetItemTooltip("Named wires that go together, like an interface in SystemVerilog");

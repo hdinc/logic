@@ -96,6 +96,29 @@ cmake --build build -j
 
 If you cloned without `--recursive`, run `git submodule update --init`.
 
+### Web build
+
+The editor and the builtin simulator also run in a browser, built with
+Emscripten. C model plugins and HDL cells aren't part of it (they need shared
+libraries, child processes and a native compiler). You need Emscripten and
+the host's glm and nlohmann_json headers (`-DLOGIC_HOST_INCLUDE=...` if they
+aren't in `/usr/include`). The GLFW and FreeType ports are downloaded on the
+first build.
+
+```sh
+emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
+cmake --build build-web -j
+web/serve.py build-web    # http://localhost:8000/
+```
+
+`build-web` then has `index.html`, `index.js`, `index.wasm` and
+`coi-serviceworker.js`, a folder any static host can serve as it is, from a
+sub-path too (GitHub Pages). The simulator runs on a thread, which needs a
+cross-origin isolated page. `serve.py` sends the headers for that. Where the
+server can't, the service worker adds them and the page reloads once on the
+first visit. The workspace is kept in the browser's IndexedDB and starts
+with an empty `work` library.
+
 ## Running
 
 ```sh
@@ -192,3 +215,4 @@ The HDL tests are skipped when Verilator isn't installed.
 | `sdk` | the C model SDK and example models |
 | `plugins` | the 6502 and AVR plugins |
 | `Hd` | window, OpenGL and ImGui setup (a submodule) |
+| `web`, `src/web` | the web build's page, service worker and glue |

@@ -32,7 +32,11 @@ public:
     app(Hd::Window& window, std::filesystem::path root);
     ~app();
 
+    // the main loop. in the browser it hands frame to the browser and
+    // returns, app must outlive it.
     void run();
+    // one frame: events, gui, swap
+    void frame();
 
 private:
     void draw_gui();

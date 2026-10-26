@@ -5,6 +5,11 @@
 #include <cstdio>
 #include <exception>
 
+#ifdef __EMSCRIPTEN__
+#include "web/web.h"
+#include <unistd.h>
+#endif
+
 // usage: logic [workspace folder]
 // without an argument the workspace folder in the repository is used
 int main(int argc, char** argv)
@@ -17,8 +22,17 @@ int main(int argc, char** argv)
         Hd::Window& window = Hd::Window::getInstance();
         window.VSync(true);
 
+#ifdef __EMSCRIPTEN__
+        // the workspace and imgui.ini are kept in the browser
+        chdir(logic::web::home);
+        std::filesystem::create_directories(root);
+        // run returns and the browser runs the frames, the app lives on
+        auto a = new logic::app::app(window, root);
+        a->run();
+#else
         logic::app::app a(window, root);
         a.run();
+#endif
     } catch (std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return 1;
