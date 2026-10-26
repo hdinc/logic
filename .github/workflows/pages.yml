@@ -1,10 +1,11 @@
 # builds the web version (see "Web build" in README.md) and publishes it
-# to github pages, https://hdinc.github.io/logic/, on every pushed tag
+# to github pages, https://hdinc.github.io/logic/, on every pushed version
+# tag (v0.0.1). the github-pages environment only lets v* tags deploy.
 name: Deploy web build
 
 on:
   push:
-    tags: ['*']
+    tags: ['v*']
   # a manual run from the actions tab, for a branch or a tag
   workflow_dispatch:
 
@@ -26,7 +27,7 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # the Hd submodule has an ssh url, which needs a key. both repos are
       # public, so fetch over https.
@@ -46,7 +47,7 @@ jobs:
           "$RUNNER_TEMP/emsdk/emsdk" activate "$EMSDK_VERSION"
 
       # the glfw and freetype ports are downloaded and built on the first build
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/emsdk/upstream/emscripten/cache
           key: emscripten-cache-${{ env.EMSDK_VERSION }}
@@ -65,7 +66,7 @@ jobs:
           ls -l site
           touch site/.nojekyll
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
@@ -77,4 +78,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

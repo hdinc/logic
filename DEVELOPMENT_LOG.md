@@ -3360,3 +3360,52 @@ The user changed their mind about the look of the 7-segment display:
   <https://hdinc.github.io/logic/>.
 - Try the web build in Firefox and Safari and on a real GPU.
 - Workspace import/export in the browser.
+
+## 2026-10-26 20:38 +0300
+
+### Changes made
+
+- The Pages workflow runs only for version tags (`v*`) instead of any tag.
+  The `github-pages` environment allows `master` and `v*` tags to deploy,
+  so another tag would have built and then failed to deploy.
+- Updated the actions to versions that run on Node 24:
+  `actions/checkout@v7`, `actions/cache@v6`,
+  `actions/upload-pages-artifact@v5` (with `upload-artifact` v7) and
+  `actions/deploy-pages@v5`. GitHub warned that the old versions target the
+  deprecated Node 20.
+- README: deploys come from version tags.
+
+### Features implemented
+
+- First deployment: `v0.0.1` is live at <https://hdinc.github.io/logic/>.
+
+### How it works
+
+- The first run of `v0.0.1` built, but the deploy was rejected: the
+  `github-pages` environment only allowed `master`. A tag rule `v*` was
+  added in Settings → Environments, and the failed job was re-run.
+- Each action's `action.yml` at the new tag runs with `node24`.
+  `upload-pages-artifact` is a composite action and uses
+  `upload-artifact` v7.
+
+### Testing
+
+- The `v0.0.1` run passed after the environment rule was added (build
+  2m42s, deploy 9s), and `https://hdinc.github.io/logic/` returns 200.
+- The updated workflow hasn't run on GitHub yet.
+
+### Recommended features
+
+- A build-only check of the web version on pushes to master, without
+  deploying.
+
+### Outstanding issues
+
+- None known for the deployment.
+
+### Next steps
+
+- Check the updated workflow with the next version tag, or with a manual run
+  from the Actions tab.
+- Try the web build in Firefox and Safari and on a real GPU.
+- Workspace import/export in the browser.
