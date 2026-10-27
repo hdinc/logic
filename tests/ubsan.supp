@@ -1,0 +1,6 @@
+# UndefinedBehaviorSanitizer suppressions for the sanitizer build
+# (LOGIC_SANITIZE), for third party code we don't change.
+# imgui's TreeNodeBehavior shifts by TreeDepth - 1, which is -1 for a
+# clipped top level node with tree lines (the library panel). the result is
+# only tested against a mask, harmless on the platforms we build for.
+shift-exponent:imgui_widgets.cpp

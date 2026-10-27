@@ -4449,3 +4449,144 @@ The user changed their mind about the look of the 7-segment display:
 ### Outstanding issues
 
 - None known.
+
+## 2026-10-27 16:10 +0300
+
+### Features implemented
+
+- **Sanitizer build:** `-DLOGIC_SANITIZE=ON` builds everything with
+  AddressSanitizer and UndefinedBehaviorSanitizer:
+  - **Coverage:** the app, the tests, the Hd submodule and the plugins.
+  - **What it reports:** use after free, buffer overflows, leaks and
+    undefined behavior, where they happen, even when they wouldn't crash.
+    For example in the web build, freed memory stays readable, which is
+    why the tab-closing crash didn't show there.
+  - **Usage** (now in README > Tests > Sanitizers):
+    `cmake -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLOGIC_SANITIZE=ON`,
+    `cmake --build build-asan -j4`,
+    `ctest --test-dir build-asan --output-on-failure`.
+
+### Changes made
+
+- **Test bug found by ASan:** `test_bundles` in `model_test` read
+  `f.bus->id` after `ws.delete_bundle` had freed the bundle. The id is now
+  kept before deleting.
+- `.gitignore`: `build-asan/`.
+
+### How it works
+
+- **CMake:**
+  - `option(LOGIC_SANITIZE)` adds
+    `-fsanitize=address,undefined -fno-omit-frame-pointer` with
+    `add_compile_options`/`add_link_options` before `add_subdirectory(Hd)`,
+    so every target gets them.
+  - **The resource packer:** `myar`/`myar-bin` (Hd) run during the build.
+    They get the flags removed again, because LeakSanitizer failed the
+    build on what the packer doesn't free before exiting.
+  - **Test environment:** at the end of `CMakeLists.txt`, every test gets
+    `LSAN_OPTIONS=suppressions=tests/lsan.supp` and
+    `UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:suppressions=tests/ubsan.supp`.
+- **Suppressions for code we don't change:**
+  - `tests/lsan.supp`: `libsimavr.so`. simavr doesn't free its irqs and
+    their names (`avr_init_irq`, `avr_alloc_irq`) in `avr_terminate`, about
+    50 KB in 720 allocations in `plugin_test`. The AVR plugin frees what it
+    owns.
+  - `tests/ubsan.supp`: `shift-exponent` in `imgui_widgets.cpp`. imgui's
+    `TreeNodeBehavior` shifts by `TreeDepth - 1`, which is −1 for a clipped
+    top-level node drawing tree lines (the library panel). It stopped the
+    sanitized app at startup.
+- **Why undefined behavior is recoverable:** UBSan suppressions only apply
+  to recoverable checks, so `-fno-sanitize-recover` was dropped. The tests
+  still stop at the first report that isn't suppressed (`halt_on_error=1`).
+- **Memory:**
+  - A sanitized compile needs several times the memory of a normal one.
+    The first try with `-j16` used up WSL's 7 GB and froze it.
+  - The README says to keep the jobs low (`-j4` with 8 GB). The rebuild
+    here used `-j3`.
+- **Rejected:**
+  - Patching imgui in the Hd submodule: the submodule is changed only on
+    request.
+  - Turning leak checking off for all tests: leaks in our own code would go
+    unnoticed.
+
+### Testing
+
+- `build-asan`:
+  - **First run:** model_test failed with the use after free above, and
+    plugin_test with simavr's leaks. The other 7 suites passed.
+  - **After the fixes and suppressions:** all 9 suites pass (font_test
+    takes about 2 minutes sanitized).
+- **The sanitized app** (private Xvnc, run as in the README):
+  - It starts, simulates and closes a running tab with no report.
+  - **Proof:** with the old tab-closing code put back for a moment, ASan
+    reported the bug from the previous entry exactly:
+    `heap-use-after-free` in `sim_view::current` ←
+    `sim_view::hierarchy_panel` (`sim_view.cpp:793`) ←
+    `app::hierarchy_panel`, freed by `cell_editor::stop_simulation` in
+    `~cell_editor`. The fix was then restored and the app rebuilt.
+- The normal build's 9 suites pass.
+
+### Recommended features
+
+- A CI job that runs the sanitizer build's tests on every push (the
+  workflow in `.github/workflows` only deploys the web build).
+- The web build with `-fsanitize=address` (Emscripten supports it) for
+  browser-only paths.
+- Report the imgui shift upstream, then drop the suppression.
+
+### Outstanding issues
+
+- The imgui shift by −1 is real undefined behavior, suppressed rather than
+  fixed.
+- simavr's leaks are suppressed; they grow with every AVR instance
+  created.
+
+## 2026-10-27 16:34 +0300
+
+### Changes made
+
+- **Fixes in the Hd submodule's resource packer (`Hd/deps/myar`)**, found by
+  the sanitizer build:
+  - **Leaks:** `archiver::read_file` read each file into a `new char[]`
+    that was never deleted, and never closed the file. That was 15
+    allocations, one per file in `res/`. It now reads straight into the
+    returned `std::vector` and closes the file. `main.cpp` also closes the
+    two `FILE*` it opened on the "file exists" and "extract" paths.
+  - **Misaligned reads:** `reader::load` read the file count at offset 4
+    and each 24-byte header from offset 12 by casting the byte buffer to
+    `long*` and `myar_header*`. Those addresses aren't 8-byte aligned,
+    which is undefined behavior (fine on x86, not everywhere). It now
+    copies them out with `memcpy`. The app hit this at startup, loading
+    its resources; the tests don't load them.
+- **The packer is sanitized like everything else:** the CMake block that
+  removed the sanitizer flags from `myar`/`myar-bin` (previous entry) is
+  gone.
+- **imgui is left unchanged, as third-party code (decided with the
+  user):** its shift by −1 stays suppressed in `tests/ubsan.supp`. For
+  that, UBSan reports stay recoverable at compile time, and the tests use
+  `halt_on_error=1`. A short attempt to fix it in
+  `imgui_widgets.cpp` (a `TreeDepth > 0` guard) was reverted.
+
+### How it works
+
+- Only Hd's working tree is changed (`deps/myar/main.cpp` and
+  `deps/myar/myar.cpp`). The submodule commit and its bump in this
+  repository are left for when they are asked for.
+
+### Testing
+
+- `build-asan`, rebuilt with `-j3`:
+  - The packer, now sanitized, ran during the build and generated
+    `libres.myar` without a LeakSanitizer report.
+  - All 9 suites pass.
+- **The sanitized app** (private Xvnc, with `tests/ubsan.supp`):
+  - **Before the `memcpy` change:** misaligned-load reports in
+    `myar.cpp:42`.
+  - **After:** no reports. It loads its fonts, opens a cell, simulates and
+    closes the running tab.
+- The normal build's 9 suites pass. The web build compiles (it packs and
+  reads resources the same way).
+
+### Outstanding issues
+
+- The imgui shift by −1 is suppressed, not fixed (third-party code).

@@ -979,9 +979,10 @@ static void test_bundles(const std::filesystem::path& dir)
     CHECK(changed.find_library("work")->find_cell("sub")->ports[0].width == 9);
     f.hs->fields[2].width = 8;
 
-    // a deleted bundle removes its file
-    ws.delete_bundle(f.bus->id);
-    CHECK(!ws.find_bundle(f.bus->id));
+    // a deleted bundle removes its file. f.bus goes with it.
+    auto bus_id = f.bus->id;
+    ws.delete_bundle(bus_id);
+    CHECK(!ws.find_bundle(bus_id));
     io::save_library(*f.lib, dir);
     CHECK(!std::filesystem::exists(dir / "work" / "bundles" / "bus.json"));
     CHECK(std::filesystem::exists(dir / "work" / "bundles" / "hs.json"));

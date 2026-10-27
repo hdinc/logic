@@ -1,0 +1,4 @@
+# LeakSanitizer suppressions for the sanitizer build (LOGIC_SANITIZE).
+# simavr allocates its irqs and their names (avr_init_irq, avr_alloc_irq)
+# and doesn't free them in avr_terminate. the avr plugin frees what it owns.
+leak:libsimavr.so

@@ -209,6 +209,31 @@ ctest --test-dir build
 
 The HDL tests are skipped when Verilator isn't installed.
 
+### Sanitizers
+
+A build with AddressSanitizer and UndefinedBehaviorSanitizer reports memory
+errors (use after free, overflows, leaks) and undefined behavior where they
+happen, also when they wouldn't crash (e.g. in the web build, where freed
+memory stays readable):
+
+```sh
+cmake -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLOGIC_SANITIZE=ON
+cmake --build build-asan -j4
+ctest --test-dir build-asan --output-on-failure
+```
+
+- A sanitized compile needs much more memory: keep the jobs low (`-j4` with
+  8 GB).
+- Known reports in third-party code are suppressed: `tests/lsan.supp`
+  (simavr's leaks) and `tests/ubsan.supp` (one shift in imgui). Any other
+  report stops the test. To run the app itself the same way:
+
+```sh
+LSAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1:suppressions=$PWD/tests/ubsan.supp build-asan/logic
+```
+
+  Leak checks are off there: the graphics drivers keep memory until exit.
+
 ## Source layout
 
 | Folder | Contents |

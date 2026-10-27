@@ -27,6 +27,20 @@ if(EMSCRIPTEN)
     set(LOGIC_USE_FONTCONFIG OFF CACHE BOOL "" FORCE)
 endif()
 
+# memory errors (use after free, overflows, leaks) and undefined behavior
+# are reported where they happen instead of maybe crashing later, e.g.
+# cmake -B build-asan -DLOGIC_SANITIZE=ON. every target, Hd and the plugins
+# too, so set before them. see "Tests" in README.md.
+option(LOGIC_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+if(LOGIC_SANITIZE)
+    # undefined behavior is recoverable so known cases in third party code
+    # can be suppressed (tests/ubsan.supp), the tests still stop at the
+    # first one that isn't (UBSAN_OPTIONS below)
+    set(sanitize_flags -fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_compile_options(${sanitize_flags})
+    add_link_options(${sanitize_flags})
+endif()
+
 add_subdirectory(Hd)
 
 if(NOT EMSCRIPTEN)
@@ -304,3 +318,11 @@ target_link_libraries(hdl_test logic_core)
 target_compile_options(hdl_test PRIVATE ${LOGIC_WARNINGS})
 add_test(NAME hdl_test COMMAND hdl_test ${CMAKE_SOURCE_DIR}/tests/hdl ${CMAKE_BINARY_DIR}/hdl_test_cache)
 set_tests_properties(hdl_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
+
+# the sanitizers' reports: leaks and undefined behavior in third party code
+# are suppressed, anything else fails the test where it happens
+if(LOGIC_SANITIZE)
+    get_directory_property(logic_tests TESTS)
+    set_tests_properties(${logic_tests} PROPERTIES ENVIRONMENT
+        "LSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tests/lsan.supp;UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:suppressions=${CMAKE_SOURCE_DIR}/tests/ubsan.supp")
+endif()
