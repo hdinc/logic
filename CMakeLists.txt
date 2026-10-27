@@ -208,12 +208,47 @@ if(EMSCRIPTEN)
         -sPTHREAD_POOL_SIZE=16
         -sENVIRONMENT=web,worker
         -sFORCE_FILESYSTEM=1 -lidbfs.js
-        "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=[\$addRunDependency,\$removeRunDependency]"
+        "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=[\$addRunDependency,\$removeRunDependency,\$stringToNewUTF8]"
+        # copied into a new workspace by main, now that the plugins they
+        # use are linked in
+        --preload-file ${CMAKE_SOURCE_DIR}/workspace/examples@/examples
         --pre-js ${CMAKE_SOURCE_DIR}/web/pre.js
         --shell-file ${CMAKE_SOURCE_DIR}/web/shell.html)
-    set_property(TARGET logic APPEND PROPERTY LINK_DEPENDS ${CMAKE_SOURCE_DIR}/web/pre.js ${CMAKE_SOURCE_DIR}/web/shell.html)
+    file(GLOB_RECURSE example_files CONFIGURE_DEPENDS workspace/examples/*)
+    set_property(TARGET logic APPEND PROPERTY LINK_DEPENDS ${CMAKE_SOURCE_DIR}/web/pre.js ${CMAKE_SOURCE_DIR}/web/shell.html ${example_files})
     configure_file(web/coi-serviceworker.js ${CMAKE_BINARY_DIR}/coi-serviceworker.js COPYONLY)
-    # no viewer, plugins or tests
+
+    # the bundled plugins are linked in, there's no dlopen. each one's entry
+    # gets its own name, src/plugin/static_plugins.cpp lists them.
+    function(logic_add_static_model target)
+        add_library(${target} STATIC ${ARGN})
+        target_include_directories(${target} PRIVATE sdk/include)
+        target_compile_definitions(${target} PRIVATE logic_plugin_entry=${target}_plugin_entry)
+        target_link_libraries(logic_core PUBLIC ${target})
+    endfunction()
+    logic_add_static_model(logic_chips plugins/chips/chips.cpp plugins/chips/m6502.cpp)
+
+    # simavr from deps/simavr with only the cores of the avr plugin. elf
+    # files are read by the program (src/io/firmware.cpp), not by simavr.
+    file(GLOB simavr_sources deps/simavr/simavr/sim/*.c)
+    list(FILTER simavr_sources EXCLUDE REGEX "/(run_avr|sim_elf|sim_dwarf)\\.c$")
+    add_library(simavr_web STATIC ${simavr_sources}
+        deps/simavr/simavr/cores/sim_megax8.c
+        deps/simavr/simavr/cores/sim_mega328.c
+        deps/simavr/simavr/cores/sim_tinyx5.c
+        deps/simavr/simavr/cores/sim_tiny85.c
+        deps/simavr_config/sim_elf_stub.c)
+    # sim_core_config.h and sim_core_decl.h, simavr's makefile generates them
+    target_include_directories(simavr_web PUBLIC deps/simavr_config deps/simavr/simavr/sim)
+    target_include_directories(simavr_web PRIVATE deps/simavr/simavr/cores)
+    target_compile_options(simavr_web PRIVATE -std=gnu99 -w)
+    target_compile_definitions(simavr_web PRIVATE NO_COLOR)
+    logic_add_static_model(logic_avr plugins/avr/avr.cpp plugins/avr/mcu.cpp plugins/avr/disasm.cpp)
+    target_link_libraries(logic_avr PRIVATE simavr_web)
+    target_compile_options(logic_avr PRIVATE ${LOGIC_WARNINGS})
+    target_compile_definitions(logic_core PRIVATE LOGIC_STATIC_PLUGINS)
+
+    # no viewer or tests
     return()
 endif()
 

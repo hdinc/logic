@@ -4646,3 +4646,138 @@ The user changed their mind about the look of the 7-segment display:
 
 - Old `exeres.myar` and `libres.myar` files stay in existing build folders
   until they are cleaned. Nothing reads them.
+
+## 2026-10-27 23:10 +0300
+
+### Features implemented
+
+- **The 6502 and AVR plugins in the web build:** `logic_chips` (MOS 6502)
+  and `logic_avr` (ATmega328P, ATtiny85) are linked into `index.wasm`. They
+  show up as read-only libraries and in the component bar, as on the
+  desktop. "New C model cell" is back in the browser's File menu.
+- **Uploading files in the browser:**
+  - An upload button (Font Awesome "upload") next to the "..." of every file
+    parameter, e.g. an MCU's firmware. It opens the browser's file picker,
+    copies the file into the library's folder and sets the parameter to it.
+  - Files dropped on the page are copied into the folder of the library of
+    the cell being edited (`work` for a read-only one). The Messages panel
+    says where they went.
+  - A file with the same name is replaced, so a rebuilt firmware can be
+    uploaded again under its name.
+  - Uploads go to IndexedDB like the rest of the workspace and survive a
+    reload.
+- **Examples in the browser:** the repo's `workspace/examples` (the 6502
+  counter and the ATmega328P blink) is packed into `index.data`. `main`
+  copies it into the workspace when the workspace has no `examples` folder.
+
+### Changes made
+
+- `deps/simavr`: a new submodule (buserror/simavr, tag v1.8, the same
+  version as the system's simavr here).
+- `deps/simavr_config`, for the web build only:
+  - `sim_core_config.h` and `sim_core_decl.h` are written by hand (simavr's
+    Makefile generates them), with only the mega328 and tiny85 cores.
+  - `sim_elf_stub.c` stubs `elf_read_firmware` and `avr_load_firmware`.
+    There's no libelf, and the plugin gets its firmware from the program.
+- `CMakeLists.txt` (web branch): `simavr_web`, `logic_chips` and `logic_avr`
+  as static libraries linked into `logic_core`, the examples preloaded, and
+  `$stringToNewUTF8` for the page glue.
+- `src/plugin/registry.cpp`: plugins linked into the program are found by
+  name before the plugin folders, and `scan()` lists them. The abi and model
+  checks moved into `enter()`, which both paths use.
+- `src/web`: `upload`/`take_upload` and `set_drop_dir`/`take_dropped`.
+  `web/pre.js` has the JS side.
+- `src/editor/param_editor.cpp`: the upload button (web only).
+  `src/app/app.cpp`: plugins are synced in the browser too, and each frame
+  sets the drop folder and reports dropped files.
+- README: the "Web build" section (plugins, GPL-3, examples, uploading) and
+  `deps` in the layout table.
+
+### How it works
+
+- **Linked in, not loaded:**
+  - Both plugins export `logic_plugin_entry`. In the web build each one is
+    compiled with `-Dlogic_plugin_entry=<target>_plugin_entry`, so the
+    plugin sources don't change.
+  - `registry::load` checks a static list (`static_plugins()`, filled under
+    `LOGIC_STATIC_PLUGINS`) before it resolves a file.
+  - A static plugin has no `lib`, `copy` or mtime. It's cached in `loaded`
+    under `static:<name>` and never reloaded.
+  - On the desktop the list is empty, so nothing changes there.
+- **Rejected: wasm side modules (`MAIN_MODULE`/`SIDE_MODULE`).** They would
+  let users load their own plugins, but they make the main wasm much bigger
+  and need emsdk to build a plugin. They're left for later.
+- **simavr from source:**
+  - Built from `simavr/sim/*.c` without `run_avr.c` (its `main`),
+    `sim_elf.c` (libelf) and `sim_dwarf.c` (only used by `sim_elf.c`).
+  - `sim_gdb.c` stays, since `sim_avr.c` calls it. It compiles against
+    Emscripten's socket stubs and is never started.
+  - The cores need their shared halves too (`sim_megax8.c`,
+    `sim_tinyx5.c`). simavr ships the avr-libc register headers it needs in
+    `cores/avr`, so avr-libc isn't needed.
+- **GPL-3:** simavr is GPL-3, so the published page is a combined GPL-3
+  work. The user accepted this, and the README says so. The desktop plugin
+  stays a separate library, as before.
+- **Uploads:**
+  - `Module.logicUpload` makes a detached `<input type=file>` and calls
+    `click()`. When the file is chosen it writes it with `FS.writeFile`,
+    which closes the file, so IDBFS `autoPersist` stores it.
+  - It records the path under the caller's ImGui id. The button polls
+    `take_upload` each frame.
+  - The click happens in the frame after ImGui sees the mouse release, not
+    inside the browser's event handler. Chrome allows it through the
+    transient user activation that follows a click.
+  - The upload button is only on file parameters, not on the plugin and HDL
+    file choosers that share `browse_button`. Uploading a `.so` would be
+    useless.
+- **Drops:**
+  - The drop handler copies the `FileList` before its first `await`, since
+    the browser empties it once the handler returns.
+  - The program sets `Module.logicDropDir` only when it changes.
+  - Dropped files aren't matched to the parameter under the mouse. The user
+    picks them with "...".
+
+### Testing
+
+- **Native:** builds without warnings, and all 9 ctest suites pass
+  (plugin_test loads the plugins from files as before).
+- **Web build:** compiles and links. `index.wasm` is 4.73 MB, against
+  4.50 MB for the published one, and `index.data` (the examples) is 90 KB.
+- **Browser** (headless Chromium 156 over the DevTools protocol, SwiftShader
+  WebGL 2, a fresh profile):
+  - The `examples` library was in the new workspace.
+  - `counter_6502` showed the mos6502 part with its ports and simulated.
+  - In `blink_328p`, the ATmega328P's properties showed Firmware with "..."
+    and the upload button. Uploading a renamed copy of the firmware
+    (`my_blink.elf`, chosen with `Page.setInterceptFileChooserDialog` and
+    `DOM.setFileInputFiles`) set the parameter to `my_blink.elf` and marked
+    the library modified.
+  - Simulating, the LED's pixel switched between lit and dark every
+    ~250 ms, as the firmware does.
+  - Save all, then a `.hex` file dropped with `Input.dispatchDragEvent`
+    landed in `workspace/examples`, and the Messages panel said so.
+  - After a reload, IndexedDB had `my_blink.elf`, `dropped.hex` and the cell
+    with `"firmware": "my_blink.elf"`, and the cell simulated again with
+    the LED blinking.
+
+### Recommended features
+
+- Importing and exporting a workspace or library (a .zip), to move projects
+  between the desktop and the browser and to get files back out.
+- User plugins as wasm side modules.
+- A download button next to file parameters.
+
+### Outstanding issues
+
+- Only tested in headless Chromium. Safari may not open the file picker
+  from a frame callback. If it doesn't, the picker has to be opened from a
+  `pointerup` listener in `pre.js`.
+- The examples come back on the next load if the `examples` folder is
+  deleted.
+- Uploading over a file that a running simulation uses doesn't reload it.
+  The simulation has to be restarted.
+
+### Next steps
+
+- Try uploads in Firefox and Safari.
+- Workspace import/export as a .zip.

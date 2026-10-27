@@ -4,3 +4,6 @@
 [submodule "deps/ImGuiFileDialog"]
 	path = deps/ImGuiFileDialog
 	url = https://github.com/aiekick/ImGuiFileDialog.git
+[submodule "deps/simavr"]
+	path = deps/simavr
+	url = https://github.com/buserror/simavr.git

@@ -25,6 +25,7 @@ inline constexpr const char* output = "\xef\x8b\xb5"; // right-from-bracket
 inline constexpr const char* cell = "\xef\x8b\x9b"; // microchip
 inline constexpr const char* waveforms = "\xef\xa0\xbe"; // wave-square
 inline constexpr const char* signals = "\xef\x83\xbe"; // square-plus
+inline constexpr const char* upload = "\xef\x82\x93"; // upload
 
 }
 

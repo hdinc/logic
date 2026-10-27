@@ -1,12 +1,34 @@
 #include "param_editor.h"
 #include "context.h"
 #include "file_dialog.h"
+#include "../ui/icons.h"
 
 #include <algorithm>
+
+#ifdef __EMSCRIPTEN__
+#include "../web/web.h"
+#endif
 
 namespace logic::editor {
 
 namespace {
+
+#ifdef __EMSCRIPTEN__
+// a button that copies a file from the user's computer into base, path is
+// then that file. true once it's written, a few frames after the click.
+bool upload_button(std::string& path, const std::filesystem::path& base)
+{
+    using namespace ImGui;
+    auto id = GetID("upload");
+    auto dir = base.empty() ? std::filesystem::path(LOGIC_DEFAULT_WORKSPACE) : base;
+    if (Button(ui::icon::upload)) web::upload(id, dir);
+    SetItemTooltip("Upload a file from your computer into the library's folder, replacing one with the same name");
+    std::filesystem::path file;
+    if (!web::take_upload(id, file)) return false;
+    path = base.empty() ? file.string() : file.filename().string();
+    return true;
+}
+#endif
 
 // a combo of the bundle types of the workspace, grouped by library
 bool edit_bundle(const char* label, std::string& value, const model::workspace& ws)
@@ -164,10 +186,17 @@ bool edit_params(const std::vector<model::param_def>& defs, model::param_values&
                 // the path, "..." and the label
                 auto& style = GetStyle();
                 float button = CalcTextSize("...").x + style.FramePadding.x * 2.0f;
+#ifdef __EMSCRIPTEN__
+                button += CalcTextSize(ui::icon::upload).x + style.FramePadding.x * 2.0f + style.ItemInnerSpacing.x;
+#endif
                 SetNextItemWidth(CalcItemWidth() - button - style.ItemInnerSpacing.x);
                 edited = input_string("##path", s);
                 SameLine(0, style.ItemInnerSpacing.x);
                 edited |= browse_button("browse", s, base, firmware_files);
+#ifdef __EMSCRIPTEN__
+                SameLine(0, style.ItemInnerSpacing.x);
+                edited |= upload_button(s, base);
+#endif
                 SameLine(0, style.ItemInnerSpacing.x);
                 TextUnformatted(d.label.c_str());
             } else if (ws && d.role == model::param_def::bundle) {

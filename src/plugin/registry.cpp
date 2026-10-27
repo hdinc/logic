@@ -405,8 +405,77 @@ fs::path registry::resolve(const std::string& plugin, const fs::path& library_di
     return {};
 }
 
+namespace {
+
+#ifdef LOGIC_STATIC_PLUGINS
+extern "C" const logic_plugin* logic_chips_plugin_entry(uint32_t host_abi_version);
+extern "C" const logic_plugin* logic_avr_plugin_entry(uint32_t host_abi_version);
+#endif
+
+struct static_plugin {
+    const char* name;
+    logic_plugin_entry_fn entry;
+};
+
+// plugins linked into the program, found by name before the plugin folders.
+// the web build has them, it can't load libraries (see CMakeLists.txt).
+const std::vector<static_plugin>& static_plugins()
+{
+    static const std::vector<static_plugin> list = {
+#ifdef LOGIC_STATIC_PLUGINS
+        {"logic_chips", logic_chips_plugin_entry},
+        {"logic_avr", logic_avr_plugin_entry},
+#endif
+    };
+    return list;
+}
+
+const static_plugin* find_static(const std::string& plugin)
+{
+    for (auto& s : static_plugins())
+        if (plugin == s.name) return &s;
+    return nullptr;
+}
+
+// asks the plugin for its models and checks them. false with an error, file
+// names the plugin in it.
+bool enter(loaded_plugin& p, logic_plugin_entry_fn entry, const std::string& file, std::string& error)
+{
+    p.info = entry(LOGIC_MODEL_ABI_VERSION);
+    if (!p.info) {
+        error = file + " doesn't support abi version " + std::to_string(LOGIC_MODEL_ABI_VERSION);
+        return false;
+    }
+    if (p.info->abi_version != LOGIC_MODEL_ABI_VERSION) {
+        error = file + " was built for abi version " + std::to_string(p.info->abi_version) + ", this program has " + std::to_string(LOGIC_MODEL_ABI_VERSION);
+        return false;
+    }
+    for (uint32_t k = 0; k < p.info->model_count; k++) {
+        auto& d = p.info->models[k];
+        // everything up to load_state is required to be known
+        if (d.struct_size < LOGIC_MODEL_DESC_MIN_SIZE || !d.name || !d.get_ports || !d.create || !d.destroy || !d.reset || !d.eval) {
+            error = file + ": model " + std::to_string(k) + " is incomplete";
+            return false;
+        }
+    }
+    return true;
+}
+
+}
+
 std::shared_ptr<loaded_plugin> registry::load(const std::string& plugin, const fs::path& library_dir, std::string& error) const
 {
+    if (auto s = find_static(plugin)) {
+        std::lock_guard lk(m);
+        // never changes, no file or copy
+        auto& slot = loaded["static:" + plugin];
+        if (slot) return slot;
+        auto p = std::make_shared<loaded_plugin>();
+        if (!enter(*p, s->entry, plugin, error)) return nullptr;
+        slot = p;
+        return p;
+    }
+
     auto path = resolve(plugin, library_dir);
     if (path.empty()) {
         error = plugin.empty() ? "no plugin is set" : "plugin '" + plugin + "' not found";
@@ -445,24 +514,7 @@ std::shared_ptr<loaded_plugin> registry::load(const std::string& plugin, const f
         error = path.filename().string() + " is not a logic plugin, it doesn't export " LOGIC_PLUGIN_ENTRY_NAME;
         return nullptr;
     }
-    p->info = entry(LOGIC_MODEL_ABI_VERSION);
-    if (!p->info) {
-        error = path.filename().string() + " doesn't support abi version " + std::to_string(LOGIC_MODEL_ABI_VERSION);
-        return nullptr;
-    }
-    if (p->info->abi_version != LOGIC_MODEL_ABI_VERSION) {
-        error = path.filename().string() + " was built for abi version " + std::to_string(p->info->abi_version) + ", this program has "
-            + std::to_string(LOGIC_MODEL_ABI_VERSION);
-        return nullptr;
-    }
-    for (uint32_t k = 0; k < p->info->model_count; k++) {
-        auto& d = p->info->models[k];
-        // everything up to load_state is required to be known
-        if (d.struct_size < LOGIC_MODEL_DESC_MIN_SIZE || !d.name || !d.get_ports || !d.create || !d.destroy || !d.reset || !d.eval) {
-            error = path.filename().string() + ": model " + std::to_string(k) + " is incomplete";
-            return nullptr;
-        }
-    }
+    if (!enter(*p, entry, path.filename().string(), error)) return nullptr;
 
     slot = p;
     return p;
@@ -472,6 +524,8 @@ std::vector<registry::available> registry::scan() const
 {
     std::vector<available> r;
     std::set<std::string> names;
+    for (auto& s : static_plugins())
+        if (names.insert(s.name).second) r.push_back({s.name, {}});
     std::error_code ec;
     for (auto& d : search_dirs) {
         for (auto it = fs::directory_iterator(d, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {

@@ -26,6 +26,9 @@ int main(int argc, char** argv)
         // the workspace and imgui.ini are kept in the browser
         chdir(logic::web::home);
         std::filesystem::create_directories(root);
+        // the examples, preloaded at /examples, unless the workspace has them
+        if (!std::filesystem::exists(root / "examples"))
+            std::filesystem::copy("/examples", root / "examples", std::filesystem::copy_options::recursive);
         // run returns and the browser runs the frames, the app lives on
         auto a = new logic::app::app(window, root);
         a->run();

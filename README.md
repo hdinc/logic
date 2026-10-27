@@ -103,9 +103,12 @@ If you cloned without `--recursive`, run `git submodule update --init`.
 
 ### Web build
 
-The editor and the builtin simulator also run in a browser, built with
-Emscripten. C model plugins and HDL cells aren't part of it (they need shared
-libraries, child processes and a native compiler). You need Emscripten and
+The editor and the simulator also run in a browser, built with Emscripten.
+The bundled 6502 and AVR plugins are linked into the program, with simavr
+built from `deps/simavr` (only the ATmega328P and ATtiny85 cores). Plugins
+of your own and HDL cells aren't part of it (they need shared libraries,
+child processes and a native compiler). simavr is GPL-3, so the web build as
+a whole is distributed under the GPL-3. You need Emscripten and
 the host's glm and nlohmann_json headers (`-DLOGIC_HOST_INCLUDE=...` if they
 aren't in `/usr/include`). The GLFW and FreeType ports are downloaded on the
 first build.
@@ -121,8 +124,20 @@ web/serve.py build-web    # http://localhost:8000/
 sub-path too (GitHub Pages). The simulator runs on a thread, which needs a
 cross-origin isolated page. `serve.py` sends the headers for that. Where the
 server can't, the service worker adds them and the page reloads once on the
-first visit. The workspace is kept in the browser's IndexedDB and starts
-with an empty `work` library.
+first visit. The workspace is kept in the browser's IndexedDB. It starts
+with an empty `work` library and a copy of the `examples` library (the 6502
+counter and the ATmega328P blink), which comes back if it's deleted.
+
+Files from your computer, such as firmware, get into the browser in two ways:
+
+- The upload button next to a file parameter's "..." button copies the
+  chosen file into the library's folder and sets the parameter to it.
+- Files dropped on the page are copied into the folder of the library of the
+  cell being edited (`work` for a read-only one). The Messages panel says
+  where they went, and "..." then finds them.
+
+A file with the same name is replaced, so uploading a rebuilt firmware again
+updates it.
 
 Every pushed version tag (`v0.0.1`) deploys the web build to <https://hdinc.github.io/logic/>
 (`.github/workflows/pages.yml`, Emscripten 6.0.13). It can also be run by
@@ -251,6 +266,7 @@ LSAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1:suppressions=$PWD/t
 | `plugins` | the 6502 and AVR plugins |
 | `Hd` | window, OpenGL and ImGui setup (a submodule) |
 | `web`, `src/web` | the web build's page, service worker and glue |
+| `deps` | ImGuiFileDialog and simavr (submodules), and simavr's core list for the web build (`deps/simavr_config`) |
 
 ## Third-party assets
 

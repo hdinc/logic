@@ -55,10 +55,7 @@ app::~app()
 
 void app::reload_plugins()
 {
-#ifdef __EMSCRIPTEN__
-    // plugins are shared libraries, the browser can't load them
-    return;
-#endif
+    // in the browser only the plugins linked into the program
     for (auto& m : plugin::sync_libraries(ws, plugins, root / "plugins"))
         message(m);
     // stable order in the library panel: the user's, builtin, plugins
@@ -108,6 +105,12 @@ void app::frame()
     window.SwapBuffers();
 #ifdef __EMSCRIPTEN__
     web::set_unsaved(has_unsaved());
+    // files dropped on the page go to the library of the cell being edited
+    auto lib = ws.library_of(active_cell);
+    if (!lib || lib->read_only) lib = ws.find_library("work");
+    web::set_drop_dir(lib && !lib->dir.empty() ? lib->dir : root);
+    for (auto& f : web::take_dropped())
+        message("uploaded " + f.string());
 #endif
 }
 
@@ -1264,10 +1267,10 @@ void app::new_cell_items(model::library& lib)
     using namespace ImGui;
     if (MenuItem("New cell")) new_cell(lib);
     SetItemTooltip("A circuit drawn as a schematic");
-#ifndef __EMSCRIPTEN__
-    // plugins and the hdl tools don't run in the browser
     if (MenuItem("New C model cell")) new_cell(lib, model::c_model_impl{});
     SetItemTooltip("A part simulated by a model in a plugin, e.g. a microcontroller");
+#ifndef __EMSCRIPTEN__
+    // the hdl tools don't run in the browser
     if (MenuItem("New HDL cell")) new_cell(lib, model::hdl_impl{});
     SetItemTooltip("A part written in Verilog, SystemVerilog or VHDL");
 #endif

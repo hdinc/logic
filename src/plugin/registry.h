@@ -63,14 +63,16 @@ public:
     std::filesystem::path resolve(const std::string& plugin, const std::filesystem::path& library_dir) const;
 
     // loads the plugin or returns the loaded one if the file didn't change.
-    // null with an error.
+    // a name of a plugin linked into the program (the web build) is that
+    // one. null with an error.
     std::shared_ptr<loaded_plugin> load(const std::string& plugin, const std::filesystem::path& library_dir, std::string& error) const;
 
     struct available {
         std::string name;
+        // empty for a plugin linked into the program
         std::filesystem::path path;
     };
-    // the plugin files in search_dirs
+    // the plugins linked into the program and the plugin files in search_dirs
     std::vector<available> scan() const;
 
     // parameter definitions of a model as the program uses them
