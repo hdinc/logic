@@ -77,7 +77,8 @@ private:
     glm::ivec2 start{0, 0};
 };
 
-// places a port at the click, shift keeps placing
+// places a port at the click, r rotates (shift+r the other way), m mirrors,
+// shift keeps placing
 class port_tool : public tool<schematic_editor> {
 public:
     explicit port_tool(model::direction d) { preview.dir = d; }
@@ -90,10 +91,15 @@ public:
         preview.name = e.ctx.cell.unique_port_name(preview.dir == model::direction::input ? "in" : "out");
         if (!hovered) return;
 
+        int turns;
+        bool mirror;
         if (IsKeyPressed(ImGuiKey_Escape)) {
             done = true;
+        } else if (placing_transform_shortcut(turns, mirror)) {
+            preview.xf = preview.xf.then(turns, mirror);
         } else if (IsMouseClicked(ImGuiMouseButton_Left)) {
             auto& p = e.ctx.cell.add_port(preview.dir, preview.pos);
+            p.xf = preview.xf;
             e.selection = {{schematic_editor::handle::port, p.id}};
             e.ctx.modified();
             e.normalize();
@@ -203,8 +209,10 @@ private:
     void transform(int turns, bool mirror)
     {
         auto turn = [&](glm::ivec2 p) { return turn_about(p, {0, 0}, turns, mirror); };
-        for (auto& p : part.ports)
+        for (auto& p : part.ports) {
             p.pos = turn(p.pos);
+            p.xf = p.xf.then(turns, mirror);
+        }
         auto sch = part.get_schematic();
         for (auto& i : sch->instances) {
             i.pos = turn(i.pos);
@@ -734,6 +742,10 @@ void schematic_editor::transform_selection(int turns, bool mirror)
         auto i = sch.find_instance(selection[0].id);
         if (!i) return;
         pivot = i->pos;
+    } else if (selection.size() == 1 && selection[0].kind == handle::port) {
+        auto p = ctx.cell.find_port(selection[0].id);
+        if (!p) return;
+        pivot = p->pos;
     } else if (auto b = selection_bounds()) {
         pivot = pivot_of(*b);
     } else {
@@ -744,7 +756,10 @@ void schematic_editor::transform_selection(int turns, bool mirror)
     for (auto& h : selection) {
         switch (h.kind) {
         case handle::port:
-            if (auto p = ctx.cell.find_port(h.id)) p->pos = turn(p->pos);
+            if (auto p = ctx.cell.find_port(h.id)) {
+                p->pos = turn(p->pos);
+                p->xf = p->xf.then(turns, mirror);
+            }
             break;
         case handle::instance:
             if (auto i = sch.find_instance(h.id)) {
@@ -973,6 +988,42 @@ void schematic_editor::draw()
     r.end();
 }
 
+namespace {
+
+// rotation and mirror of several instances or ports, "mixed" where they differ
+template <class T>
+bool edit_transforms(const std::vector<T*>& elements)
+{
+    using namespace ImGui;
+
+    bool changed = false;
+    static const char* const angles[] = {"0", "90", "180", "270"};
+    bool same_rot = std::all_of(elements.begin(), elements.end(), [&](auto e) { return e->xf.rotation == elements[0]->xf.rotation; });
+    if (BeginCombo("Rotation", same_rot ? angles[elements[0]->xf.rotation & 3] : "mixed")) {
+        for (int r = 0; r < 4; r++) {
+            if (Selectable(angles[r], same_rot && elements[0]->xf.rotation == r)) {
+                for (auto e : elements)
+                    e->xf.rotation = r;
+                changed = true;
+            }
+        }
+        EndCombo();
+    }
+
+    bool same_mirror = std::all_of(elements.begin(), elements.end(), [&](auto e) { return e->xf.mirror == elements[0]->xf.mirror; });
+    bool m = same_mirror && elements[0]->xf.mirror;
+    PushItemFlag(ImGuiItemFlags_MixedValue, !same_mirror);
+    if (Checkbox("Mirror", &m)) {
+        for (auto e : elements)
+            e->xf.mirror = m;
+        changed = true;
+    }
+    PopItemFlag();
+    return changed;
+}
+
+}
+
 void schematic_editor::selection_properties(const std::vector<handle>& elements)
 {
     using namespace ImGui;
@@ -993,31 +1044,12 @@ void schematic_editor::selection_properties(const std::vector<handle>& elements)
 
     if (!insts.empty()) {
         SeparatorText("Instances");
-
-        static const char* const angles[] = {"0", "90", "180", "270"};
-        bool same_rot = std::all_of(insts.begin(), insts.end(), [&](auto i) { return i->xf.rotation == insts[0]->xf.rotation; });
-        if (BeginCombo("Rotation", same_rot ? angles[insts[0]->xf.rotation & 3] : "mixed")) {
-            for (int r = 0; r < 4; r++) {
-                if (Selectable(angles[r], same_rot && insts[0]->xf.rotation == r)) {
-                    for (auto i : insts)
-                        i->xf.rotation = r;
-                    ctx.modified();
-                    normalize();
-                }
-            }
-            EndCombo();
-        }
-
-        bool same_mirror = std::all_of(insts.begin(), insts.end(), [&](auto i) { return i->xf.mirror == insts[0]->xf.mirror; });
-        bool m = same_mirror && insts[0]->xf.mirror;
-        PushItemFlag(ImGuiItemFlags_MixedValue, !same_mirror);
-        if (Checkbox("Mirror", &m)) {
-            for (auto i : insts)
-                i->xf.mirror = m;
+        PushID("instances");
+        if (edit_transforms(insts)) {
             ctx.modified();
             normalize();
         }
-        PopItemFlag();
+        PopID();
 
         // the parameters every instance has, with the same definition
         auto defs = ctx.ws.params_of(*insts[0]);
@@ -1070,6 +1102,13 @@ void schematic_editor::selection_properties(const std::vector<handle>& elements)
             }
             EndCombo();
         }
+
+        PushID("ports");
+        if (edit_transforms(ports)) {
+            ctx.modified();
+            normalize();
+        }
+        PopID();
 
         bool same_width = std::all_of(ports.begin(), ports.end(), [&](auto p) { return p->width == ports[0]->width; });
         int w = ports[0]->width;
@@ -1147,6 +1186,20 @@ void schematic_editor::property_panel()
         int dir = (int)p->dir;
         if (Combo("Direction", &dir, "input\0output\0inout\0")) {
             p->dir = (model::direction)dir;
+            ctx.modified();
+            normalize();
+        }
+
+        int rot = p->xf.rotation;
+        if (Combo("Rotation", &rot, "0\0"
+                                    "90\0"
+                                    "180\0"
+                                    "270\0")) {
+            p->xf.rotation = rot;
+            ctx.modified();
+            normalize();
+        }
+        if (Checkbox("Mirror", &p->xf.mirror)) {
             ctx.modified();
             normalize();
         }

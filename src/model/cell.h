@@ -36,6 +36,9 @@ struct port {
     // position of the port's connector inside the schematic. unused for cells
     // that are not implemented by a schematic.
     glm::ivec2 pos{0, 0};
+    // orientation of the connector about pos. unrotated, an input's wire
+    // leaves to the right and an output's to the left.
+    transform xf;
     bool operator==(const port&) const = default;
 };
 

@@ -185,6 +185,53 @@ static void test_transform_then()
     }
 }
 
+// a port's connector turns and mirrors with it, wires meet it there and the
+// orientation is saved
+static void test_port_transform()
+{
+    using model::direction;
+    model::port p;
+    p.pos = {10, 20};
+    CHECK(model::connection_point(p) == glm::ivec2(30, 20));
+    p.xf = {1, false};
+    CHECK(model::connection_point(p) == glm::ivec2(10, 40));
+    p.xf = {2, false};
+    CHECK(model::connection_point(p) == glm::ivec2(-10, 20));
+    p.xf = {0, true};
+    CHECK(model::connection_point(p) == glm::ivec2(-10, 20));
+    p.dir = direction::output;
+    CHECK(model::connection_point(p) == glm::ivec2(30, 20));
+    p.xf = {3, true};
+    CHECK(model::connection_point(p) == p.pos + p.xf.apply(glm::ivec2{-2 * model::grid, 0}));
+
+    model::workspace ws;
+    auto& lib = ws.add_library("work");
+    auto& c = ws.create_cell(lib, "c");
+    c.add_port(direction::input, {0, 0}).xf = {1, false};
+    c.add_port(direction::output, {0, 60}).xf = {1, false};
+    c.get_schematic()->wires.push_back({c.new_id(), {0, 20}, {0, 40}});
+    auto nl = netlist::extract(ws, c);
+    CHECK(nl.port_nets.size() == 2 && nl.port_nets[0] >= 0 && nl.port_nets[0] == nl.port_nets[1]);
+
+    c.ports[1].xf = {3, true};
+    auto j = io::to_json(c);
+    CHECK(!j["ports"][0].contains("mirror") && j["ports"][0]["rotation"] == 1);
+    auto back = io::cell_from_json(j);
+    CHECK(back.ports[0].xf == c.ports[0].xf && back.ports[1].xf == c.ports[1].xf);
+    c.ports[0].xf = {};
+    CHECK(!io::to_json(c)["ports"][0].contains("rotation"));
+
+    // replacing the ports by name keeps where they are and how they face
+    c.ports[0].xf = {2, true};
+    auto list = c.ports;
+    for (auto& q : list) {
+        q.pos = {};
+        q.xf = {};
+    }
+    c.set_ports(list);
+    CHECK((c.ports[0].xf == model::transform{2, true}) && (c.ports[1].xf == model::transform{3, true}));
+}
+
 static void test_cycles()
 {
     model::workspace ws;
@@ -1073,6 +1120,7 @@ int main(int argc, char** argv)
     test_generate_symbol();
     test_auto_symbol();
     test_transform_then();
+    test_port_transform();
     test_cycles();
     test_history();
     test_params();

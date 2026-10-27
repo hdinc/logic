@@ -352,24 +352,27 @@ void draw_port(renderer& r, const model::port& p, glm::vec4 color, bool connecte
 {
     glm::vec2 pos = p.pos;
     glm::vec2 cp = model::connection_point(p);
+    // towards the connector, the label is on the other side
+    glm::vec2 d = glm::normalize(cp - pos);
 
-    if (p.dir == model::direction::input) {
+    if (p.dir == model::direction::input)
         r.rect_outline(pos - glm::vec2{5, 5}, pos + glm::vec2{5, 5}, color, stroke, 1.5f);
-        r.line(pos + glm::vec2{5, 0}, cp, color);
-    } else {
+    else
         r.ring(pos, 5.0f, color);
-        r.line(pos - glm::vec2{5, 0}, cp, color);
-    }
+    r.line(pos + d * 5.0f, cp, color);
 
     if (p.dir == model::direction::inout) r.rect_outline(pos - glm::vec2{5, 5}, pos + glm::vec2{5, 5}, color, stroke, 1.5f);
     if (!connected) draw_pin(r, cp, color);
 
+    // the text stays upright, on the side away from the connector
     std::string label = !type.empty() ? p.name + " : " + type : p.width > 1 ? p.name + "[" + std::to_string(p.width) + "]"
                                                                             : p.name;
-    if (p.dir == model::direction::input)
+    if (d.x > 0.5f)
         r.text_middle(label, pos + glm::vec2{-8, 0}, 10.0f, color, align::right);
-    else
+    else if (d.x < -0.5f)
         r.text_middle(label, pos + glm::vec2{8, 0}, 10.0f, color, align::left);
+    else
+        r.text_middle(label, pos - d * 13.0f, 10.0f, color, align::center);
 }
 
 float renderer::wire_line(bool bus, bool bundle) const
@@ -401,6 +404,9 @@ void draw_port_value(renderer& r, const model::port& p, const sim::value& v)
     glm::vec2 pos = p.pos;
     if (p.width == 1)
         r.text_middle(str, pos, 7.0f, color, align::center);
+    else if (model::connection_point(p).x == p.pos.x)
+        // the connector's line and the label take above and below
+        r.text_middle(str, pos + glm::vec2{8, 0}, 7.0f, color, align::left);
     else
         r.text(str, pos + glm::vec2{0, 8}, 7.0f, color, align::center);
 }

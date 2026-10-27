@@ -141,7 +141,7 @@ public:
     void finish_move() { normalize(); }
     int drag_step() const { return model::grid; }
     void delete_selection();
-    // see transform_shortcut. a single instance turns about its origin,
+    // see transform_shortcut. a single instance or port turns about its origin,
     // more elements about the middle of the selection.
     // the common properties of several selected instances and ports
     void selection_properties(const std::vector<handle>& elements);

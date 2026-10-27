@@ -3495,3 +3495,96 @@ The user changed their mind about the look of the 7-segment display:
 - Check the deployed site on a phone or a hi-dpi laptop after the next
   version tag.
 - Try the web build in Firefox and Safari.
+
+## 2026-10-27 11:36 +0300
+
+### Changes made
+
+- **Ports turn and mirror:** a cell's input, output and inout ports in its
+  schematic can be rotated and mirrored like instances. Before, rotating a
+  selection only moved the ports, which kept pointing left or right.
+- **Shared rotation and mirror controls:** the selection panel's Rotation
+  and Mirror fields are one helper for instances and ports.
+
+### Features implemented
+
+- **Placing a port** (Input or Output tool): R rotates the preview (Shift+R
+  the other way) and M mirrors it, as when placing a cell.
+- **Selected ports:** Ctrl+R, Ctrl+Shift+R and Ctrl+M turn them with the
+  rest of the selection. A single selected port turns about its own
+  position.
+- **Pasting:** R and M turn pasted ports with the other pasted elements.
+- **Port panel:** Rotation (0, 90, 180, 270) and Mirror. With several ports
+  selected, the Ports section has them too, showing "mixed" where they
+  differ.
+- **Drawing:** the stub runs towards the turned connector. The label stays
+  upright on the side away from it: right- or left-aligned for horizontal
+  ports, centered above or below for vertical ones. While simulating, the
+  value of a vertical bus port is shown to its right, since the stub and
+  the label take the space above and below.
+
+### How it works
+
+- `model::port` has a `transform xf`, the same type instances use. It turns
+  the connector about `pos`. Unturned, an input's wire leaves to the right
+  and an output's to the left, as before.
+- `model::connection_point` turns the ±2 grid offset with `p.xf.apply`.
+  Everything that finds where wires meet a port goes through it (the
+  netlist, `normalize`, hover and sim hit tests), so none of them needed
+  changes.
+- `render::draw_port` takes the stub's direction from `pos` to the
+  connection point. `draw_port_value` puts a vertical bus port's value
+  beside it.
+- JSON: `rotation` and `mirror` on a port, written only when set, the same
+  keys as on instances. Old files load unturned. A rotation from the file
+  is reduced to 0–3.
+- `schematic_editor`: `port_tool` uses `placing_transform_shortcut`.
+  `paste_tool::transform` and `transform_selection` apply
+  `xf.then(turns, mirror)` to ports. The new template `edit_transforms`
+  (in `schematic_editor.cpp`) gives the Rotation and Mirror controls for
+  several instances or ports.
+- `cell::set_ports` (ports replaced by name, e.g. for HDL cells) keeps a
+  port's `xf` along with its position.
+- Why a full transform and not a "side" (left, right, up, down): it is the
+  type instances already use, with `then` for turning selections, the same
+  JSON keys and the same inspector. A mirrored port is the same as one
+  turned 180°, which is fine.
+- Only the port in the cell's own schematic turns. Where its pin sits on
+  the cell's symbol is still set by the automatic symbol or the Symbol
+  editor.
+
+### Testing
+
+- `model_test`, new `test_port_transform`:
+  - The connection point for inputs and outputs at different rotations and
+    with mirroring.
+  - An input turned 90° and an output turned 90° below it, joined by a
+    vertical wire, are on one net (`netlist::extract`).
+  - JSON round trip, and no `rotation`/`mirror` keys when unturned.
+  - `set_ports` keeps each port's transform.
+- All 9 ctest suites pass.
+- **GUI** (private Xvnc, screenshots) with a test cell holding inputs and
+  outputs at every rotation, some mirrored, and 8-bit outputs:
+  - Each port's stub, connector dot and label face the right way, and the
+    labels stay readable.
+  - The vertical a→y pair joined by a wire shows as connected (no loose
+    pin dots).
+  - Ctrl+R on a selected output turned it about its own position.
+  - The Input tool's preview turned with R and mirrored with M.
+  - In the simulation, the vertical 8-bit outputs show `zzzzzzzz` to their
+    right, not over the stub.
+- Not looked at in the GUI: the port panel's new Rotation and Mirror
+  fields. They are the same widgets as the instance panel's.
+
+### Recommended features
+
+- Turn a port with the R and M keys while dragging it, as in some other
+  schematic tools.
+
+### Outstanding issues
+
+- None known.
+
+### Next steps
+
+- None planned for this feature.

@@ -204,6 +204,8 @@ json port_to_json(const port& p)
         {"width", p.width},
         {"pos", vec(p.pos)},
     };
+    if (p.xf.rotation) j["rotation"] = p.xf.rotation;
+    if (p.xf.mirror) j["mirror"] = true;
     if (!p.description.empty()) j["description"] = p.description;
     if (p.bundle != no_id) {
         j["bundle"] = id_to_string(p.bundle);
@@ -224,6 +226,8 @@ port port_from_json(const json& j)
     r.dir = direction_from_string(j.at("dir"));
     r.width = j.value("width", 1);
     r.pos = vec(j.at("pos"));
+    r.xf.rotation = ((j.value("rotation", 0) % 4) + 4) % 4;
+    r.xf.mirror = j.value("mirror", false);
     r.description = j.value("description", "");
     if (j.contains("bundle")) {
         r.bundle = id_from_string(j.at("bundle"));

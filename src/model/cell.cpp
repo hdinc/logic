@@ -8,9 +8,8 @@ namespace logic::model {
 
 glm::ivec2 connection_point(const port& p)
 {
-    if (p.dir == direction::input)
-        return p.pos + glm::ivec2{2 * grid, 0};
-    return p.pos - glm::ivec2{2 * grid, 0};
+    glm::ivec2 d{p.dir == direction::input ? 2 * grid : -2 * grid, 0};
+    return p.pos + p.xf.apply(d);
 }
 
 port* cell::find_port(model::id i)
@@ -183,6 +182,7 @@ bool cell::set_ports(const std::vector<port>& list)
         if (old != ports.end()) {
             r.id = old->id;
             r.pos = old->pos;
+            r.xf = old->xf;
             if (r.description.empty()) r.description = old->description;
             same = same && old->dir == p.dir;
         } else {
