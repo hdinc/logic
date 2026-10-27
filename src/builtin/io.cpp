@@ -1,7 +1,9 @@
 #include "builder.h"
 #include "builtin.h"
 
+#include <bit>
 #include <deque>
+#include <memory>
 
 // parts to look at and to click while simulating. what they show is drawn
 // by render/live.cpp from the values of their inputs, the geometry there
@@ -420,6 +422,156 @@ public:
     }
 };
 
+// rgba (red in the low byte) of a framebuffer's mono pixels
+uint32_t mono_rgba(const std::string& color)
+{
+    static const std::pair<const char*, uint32_t> table[] = {
+        {"red", 0xFF3030FF},
+        {"green", 0x30FF30FF},
+        {"yellow", 0xFFFF30FF},
+        {"orange", 0xFFA020FF},
+        {"blue", 0x4060FFFF},
+        {"cyan", 0x30FFFFFF},
+    };
+    uint32_t rgb = 0xFFFFFFFF;
+    for (auto& [name, c] : table)
+        if (color == name) rgb = c;
+    // 0xRRGGBBAA to bytes r, g, b, a in memory
+    return (rgb >> 24) | ((rgb >> 8) & 0xFF00) | ((rgb << 8) & 0xFF0000) | 0xFF000000u;
+}
+
+int framebuffer_data_width(const std::string& format)
+{
+    return format == "mono" ? 1 : format == "grey8" ? 8 : 24;
+}
+
+// bits to address 0 .. n - 1, at least 1
+int address_width(int n)
+{
+    return std::max(1, (int)std::bit_width(unsigned(n - 1)));
+}
+
+// clk, we, rst, x, y, data. on the rising edge of clk: rst 1 clears the
+// picture to black, otherwise we 1 (or not connected) writes data at (x, y).
+class framebuffer_component : public sim::component {
+public:
+    framebuffer_component(int width, int height, std::string format, uint32_t mono)
+        : buf(std::make_shared<sim::pixel_buffer>(width, height))
+        , format(std::move(format))
+        , mono(mono)
+    {
+    }
+
+    void eval(std::span<value> ports, sim::context&) override
+    {
+        auto clk = ports[0].get(0);
+        bool rising = prev_clk == sim::bit_state::zero && clk == sim::bit_state::one;
+        prev_clk = clk;
+        if (!rising) return;
+
+        auto we = ports[1].get(0), rst = ports[2].get(0);
+        if (rst == sim::bit_state::one) {
+            clear();
+            return;
+        }
+        // an unknown control or address writes nothing
+        if (rst == sim::bit_state::x || we == sim::bit_state::zero || we == sim::bit_state::x) return;
+        if (!ports[3].fully_known() || !ports[4].fully_known()) return;
+        auto x = ports[3].to_u64(), y = ports[4].to_u64();
+        if (x >= (uint64_t)buf->width || y >= (uint64_t)buf->height) return;
+
+        uint32_t c = color_of(ports[5]);
+        std::lock_guard lk(buf->m);
+        buf->rgba[y * buf->width + x] = c;
+        buf->version++;
+        written++;
+    }
+
+    void reset() override
+    {
+        clear();
+        prev_clk = sim::bit_state::z;
+        written = 0;
+    }
+
+    void inspect(std::vector<sim::inspect_item>& out) const override
+    {
+        out.push_back({"pixels written", sim::known(written, 64), {}});
+    }
+
+    std::shared_ptr<sim::pixel_buffer> pixels() const override { return buf; }
+
+    // shown for data with unknown bits
+    static constexpr uint32_t marker = 0xFFFF00FFu;
+
+private:
+    uint32_t color_of(const value& d) const
+    {
+        if (!d.fully_known()) return marker;
+        auto v = d.to_u64();
+        if (format == "mono") return v & 1 ? mono : 0xFF000000u;
+        if (format == "grey8") return uint32_t(v & 0xFF) * 0x010101u | 0xFF000000u;
+        // 0xRRGGBB to bytes r, g, b
+        return uint32_t((v >> 16) & 0xFF) | uint32_t(v & 0xFF00) | uint32_t((v & 0xFF) << 16) | 0xFF000000u;
+    }
+
+    void clear()
+    {
+        std::lock_guard lk(buf->m);
+        std::fill(buf->rgba.begin(), buf->rgba.end(), 0xFF000000u);
+        buf->version++;
+    }
+
+    std::shared_ptr<sim::pixel_buffer> buf;
+    std::string format;
+    uint32_t mono;
+    sim::bit_state prev_clk = sim::bit_state::z;
+    uint64_t written = 0;
+};
+
+class framebuffer : public primitive {
+public:
+    std::string kind() const override { return "framebuffer"; }
+    std::string name() const override { return "Framebuffer"; }
+    std::string category() const override { return "Input/Output"; }
+    std::string description() const override { return "a picture of width x height pixels, written one pixel per clock and shown in a window while simulating"; }
+
+    std::vector<model::param_def> params() const override
+    {
+        return {
+            model::int_param("width", "Width", 64, 1, 1024, "pixels across"),
+            model::int_param("height", "Height", 64, 1, 1024, "pixels down"),
+            model::choice_param("format", "Format", {"rgb888", "grey8", "mono"}, "rgb888",
+                "rgb888: 24 bits, red in bits 23-16, green 15-8, blue 7-0. grey8: 8 bits from black to white. mono: 1 bit, lit or black"),
+            model::choice_param("color", "Mono color", colors, "white", "the color of lit pixels in mono"),
+        };
+    }
+
+    model::cell_interface build(const model::param_values& v) const override
+    {
+        int w = (int)model::get_int(v, "width"), h = (int)model::get_int(v, "height");
+        int dw = framebuffer_data_width(model::get_string(v, "format"));
+        builder b;
+        b.box("FB",
+            {
+                {"clk", direction::input, 1, "writes or clears on the rising edge", ">"},
+                {"we", direction::input, 1, "1 or not connected: data is written at x, y on the clock edge"},
+                {"rst", direction::input, 1, "1 clears the picture to black on the clock edge"},
+                {"x", direction::input, address_width(w), "column, 0 at the left. outside the picture nothing is written"},
+                {"y", direction::input, address_width(h), "row, 0 at the top. outside the picture nothing is written"},
+                {"data", direction::input, dw, "the pixel's color, see the format"},
+            },
+            {});
+        return b.finish();
+    }
+
+    std::unique_ptr<sim::component> create(const model::param_values& v) const override
+    {
+        return std::make_unique<framebuffer_component>((int)model::get_int(v, "width"), (int)model::get_int(v, "height"),
+            model::get_string(v, "format"), mono_rgba(model::get_string(v, "color")));
+    }
+};
+
 }
 
 uint8_t seg7_hex(int digit)
@@ -488,6 +640,7 @@ void add_io(model::primitive_registry& r)
     r.add(std::make_unique<button>(false));
     r.add(std::make_unique<button>(true));
     r.add(std::make_unique<terminal>());
+    r.add(std::make_unique<framebuffer>());
 }
 
 }

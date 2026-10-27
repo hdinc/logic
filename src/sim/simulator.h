@@ -132,6 +132,17 @@ public:
     // empty if it has none
     std::vector<inspect_item> inspect(const scope& s, int instance) const;
 
+    // a component with a picture, see component::pixels
+    struct display {
+        // flat component index (scope::components)
+        int component;
+        // instance names from the top, separated by '/'
+        std::string path;
+        std::shared_ptr<pixel_buffer> pixels;
+    };
+    // fixed once built, can be read from any thread
+    const std::vector<display>& displays() const { return m_displays; }
+
     // component::sample_view of every component that has a view, by flat
     // component index (scope::components). starts their next windows.
     std::map<int, std::vector<float>> sample_views();
@@ -272,6 +283,7 @@ private:
     std::vector<instance> instances;
     // instances whose components have a view
     std::vector<int> viewers;
+    std::vector<display> m_displays;
     std::vector<net_info> nets;
     std::vector<alias> aliases;
     std::vector<net_pull> pulls;

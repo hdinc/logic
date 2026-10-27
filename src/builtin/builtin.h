@@ -50,7 +50,7 @@ uint8_t seg7_hex(int digit);
 // values (none, e.g. while editing: all dark).
 void seg7_levels(const model::param_values& params, const std::vector<model::port>& ports, std::span<const sim::value> values, int out[8]);
 
-// led, displays, button, switch, terminal
+// led, displays, button, switch, terminal, framebuffer
 void add_io(model::primitive_registry& r);
 // adder/subtractor, multiplier, divider, negator, comparator, shifter, bit
 // extender, counter

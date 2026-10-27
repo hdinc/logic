@@ -2223,6 +2223,147 @@ static void test_number_formats()
     CHECK(sim::format_number(sim::value(4, 0x1, 0x2, 0), fmt(F::signed_dec)) == sim::to_string(sim::value(4, 0x1, 0x2, 0)));
 }
 
+// a framebuffer: pixels written on the clock edge, its picture shared with
+// the ui
+static void test_framebuffer()
+{
+    fixture f;
+    auto def = builtin::registry().find("framebuffer");
+    CHECK(def != nullptr);
+    if (!def) return;
+    auto params_of = [&](int w, int h, const char* format, const char* color = "white") {
+        return model::resolve_params(def->params(), {{"width", int64_t(w)}, {"height", int64_t(h)}, {"format", std::string(format)}, {"color", std::string(color)}});
+    };
+
+    // clk, we, rst, x, y, data
+    auto iface = def->build(params_of(100, 37, "rgb888"));
+    CHECK(iface.ports.size() == 6);
+    if (iface.ports.size() != 6) return;
+    CHECK(iface.ports[0].name == "clk" && iface.ports[5].name == "data");
+    CHECK(iface.ports[3].width == 7 && iface.ports[4].width == 6 && iface.ports[5].width == 24);
+    CHECK(def->build(params_of(1, 64, "grey8")).ports[5].width == 8);
+    CHECK(def->build(params_of(1, 64, "grey8")).ports[3].width == 1);
+    CHECK(def->build(params_of(1, 64, "grey8")).ports[4].width == 6);
+    CHECK(def->build(params_of(64, 65, "mono")).ports[5].width == 1);
+    CHECK(def->build(params_of(64, 65, "mono")).ports[4].width == 7);
+
+    auto cell = f.ws.find_cell(model::builtin_cell_id("framebuffer"));
+    std::string error;
+    auto params = params_of(100, 37, "rgb888");
+    auto fb = builtin::factory().create({*cell, params, {}}, error);
+    CHECK(fb != nullptr);
+    if (!fb) return;
+    auto px = fb->pixels();
+    CHECK(px && px->width == 100 && px->height == 37 && px->rgba.size() == 3700);
+    if (!px) return;
+    auto at = [&](int x, int y) { return px->rgba[size_t(y) * 100 + x]; };
+    constexpr uint32_t black = 0xFF000000u;
+    CHECK(at(0, 0) == black);
+
+    std::vector<value> ports{bit(false), sim::floating(1), sim::floating(1), sim::known(3, 7), sim::known(2, 6), sim::known(0x112233, 24)};
+    sim::context ctx(0, false, sim::never);
+    auto clock = [&] {
+        ports[0] = bit(false);
+        fb->eval(ports, ctx);
+        ports[0] = bit(true);
+        fb->eval(ports, ctx);
+    };
+    // only on the rising edge, a floating we writes. bytes r, g, b, a
+    fb->eval(ports, ctx);
+    CHECK(at(3, 2) == black);
+    auto v0 = px->version;
+    clock();
+    CHECK(at(3, 2) == 0xFF332211u);
+    CHECK(px->version > v0);
+    // staying high doesn't write again
+    ports[5] = sim::known(0xFFFFFF, 24);
+    fb->eval(ports, ctx);
+    CHECK(at(3, 2) == 0xFF332211u);
+
+    // we 0 or unknown doesn't write
+    ports[1] = bit(false);
+    clock();
+    CHECK(at(3, 2) == 0xFF332211u);
+    ports[1] = sim::unknown(1);
+    clock();
+    CHECK(at(3, 2) == 0xFF332211u);
+    ports[1] = bit(true);
+
+    // outside the picture or an unknown address: nothing
+    v0 = px->version;
+    ports[3] = sim::known(100, 7);
+    clock();
+    ports[3] = sim::known(5, 7);
+    ports[4] = sim::known(37, 6);
+    clock();
+    ports[4] = sim::unknown(6);
+    clock();
+    CHECK(px->version == v0);
+
+    // unknown data bits are marked
+    ports[4] = sim::known(0, 6);
+    ports[5] = sim::unknown(24);
+    clock();
+    CHECK(at(5, 0) == 0xFFFF00FFu);
+    ports[5] = sim::known(0x0000FF, 24);
+    ports[3] = sim::known(99, 7);
+    ports[4] = sim::known(36, 6);
+    clock();
+    CHECK(at(99, 36) == 0xFFFF0000u);
+
+    // rst at the edge clears, and doesn't write
+    ports[2] = bit(true);
+    clock();
+    CHECK(at(3, 2) == black && at(5, 0) == black && at(99, 36) == black);
+    ports[2] = bit(false);
+    clock();
+    CHECK(at(99, 36) == 0xFFFF0000u);
+    auto items = [&] {
+        std::vector<sim::inspect_item> out;
+        fb->inspect(out);
+        return out;
+    }();
+    CHECK(items.size() == 1 && items[0].v.to_u64() == 4);
+    // the simulation's reset too
+    fb->reset();
+    CHECK(at(99, 36) == black);
+    CHECK(fb->pixels() == px);
+
+    // grey and mono
+    auto grey_params = params_of(4, 4, "grey8");
+    auto grey = builtin::factory().create({*cell, grey_params, {}}, error);
+    std::vector<value> gp{bit(false), bit(true), bit(false), sim::known(1, 2), sim::known(1, 2), sim::known(0x80, 8)};
+    grey->eval(gp, ctx);
+    gp[0] = bit(true);
+    grey->eval(gp, ctx);
+    CHECK(grey->pixels()->rgba[5] == 0xFF808080u);
+
+    auto mono_params = params_of(4, 4, "mono", "green");
+    auto mono = builtin::factory().create({*cell, mono_params, {}}, error);
+    std::vector<value> mp{bit(false), bit(true), bit(false), sim::known(2, 2), sim::known(0, 2), bit(true)};
+    mono->eval(mp, ctx);
+    mp[0] = bit(true);
+    mono->eval(mp, ctx);
+    CHECK(mono->pixels()->rgba[2] == 0xFF30FF30u);
+
+    // the simulator lists it with its path, inside a subcircuit
+    auto& screen = f.new_cell("screen");
+    f.place("framebuffer", {0, 0});
+    screen.generate_symbol();
+    auto& outer = f.new_cell("outer");
+    f.place("led", {0, -200});
+    f.place_cell(screen.id, {0, 0});
+    sim::simulator s(f.ws, outer, builtin::factory());
+    CHECK(s.problems().empty());
+    CHECK(s.displays().size() == 1);
+    if (s.displays().size() == 1) {
+        auto& d = s.displays()[0];
+        CHECK(d.path == "U2/U1" && d.pixels && d.pixels->width == 64);
+        auto inner = s.root().child(1);
+        CHECK(inner && inner->components[0] == d.component);
+    }
+}
+
 int main()
 {
     test_values();
@@ -2257,6 +2398,7 @@ int main()
     test_waveforms();
     test_firmware();
     test_io_parts();
+    test_framebuffer();
     test_seg7_view();
     test_rom_ram();
 

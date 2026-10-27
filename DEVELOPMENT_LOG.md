@@ -3588,3 +3588,140 @@ The user changed their mind about the look of the 7-segment display:
 ### Next steps
 
 - None planned for this feature.
+
+## 2026-10-27 13:15 +0300
+
+### Features implemented
+
+- **Framebuffer** (Input/Output, kind `framebuffer`): a picture of width ×
+  height pixels. A circuit writes one pixel per clock. While simulating,
+  the picture is shown in its own window.
+  - **Parameters:**
+    - Width and Height: 1–1024 pixels, default 64 × 64.
+    - Format:
+      - `rgb888`: 24-bit data, red in bits 23–16, green 15–8, blue 7–0.
+      - `grey8`: 8 bits, black to white.
+      - `mono`: 1 bit, lit or black.
+    - Mono color: the lit color for `mono`, one of the LED colors, white by
+      default.
+  - **Pins** (box "FB", all on the left): `clk`, `we`, `rst`, `x`, `y`,
+    `data`. `x` and `y` are just wide enough for the size (e.g. 7 and 6
+    bits for 100 × 37). `data` has the format's width.
+  - **On the rising edge of clk:**
+    - `rst` 1 clears the picture to black and writes nothing. This is a
+      synchronous reset, like the Counter's.
+    - Otherwise `we` 1 writes `data` at (x, y). `we` not connected also
+      writes, so simple circuits need fewer wires.
+    - Nothing is written for x or y outside the picture, or for an unknown
+      x, y, `we` or `rst`.
+    - Data with unknown bits is written as magenta, so bad data shows up
+      instead of looking black.
+  - **Simulation reset** clears the picture. The properties panel shows how
+    many pixels were written.
+- **Framebuffer window** "Framebuffer: <instance path>":
+  - One for each framebuffer in the hierarchy. It opens centered when the
+    simulation starts.
+  - **Zoom:** Fit (the largest whole scale that fits, smaller only if it
+    must) or 1×, 2×, 4× or 8×. Pixels stay sharp.
+  - **Hover:** shows the pixel's x, y and color (#RRGGBB).
+  - **Reopen:** after closing it, the instance's right-click menu has "Show
+    framebuffer".
+
+### Changes made
+
+- README: the framebuffer is listed with the builtin parts.
+- Component bar: the framebuffer has an icon, but isn't in the bar's
+  shortlist (`shown_kinds`), the same as the Terminal. It is in the library
+  and the place popup.
+
+### How it works
+
+- `sim::pixel_buffer` (`src/sim/component.h`): width, height, RGBA pixels
+  (red in the low byte, row 0 at the top), a mutex and a version counter.
+  - The component writes it on the simulation thread under the mutex and
+    bumps the version on every change.
+  - New virtual `component::pixels()` returns the component's buffer, null
+    by default. It is the same buffer for the component's whole life.
+- `simulator::displays()`: `add_instance` collects `{flat component index,
+  instance path, buffer}` for components with pixels. The list is fixed
+  once built, so the UI reads it directly, like scopes.
+- `framebuffer_component` and `framebuffer` (`src/builtin/io.cpp`):
+  - The edge detection is the same as `register_component`.
+  - `address_width(n)` is `bit_width(n - 1)`, at least 1.
+  - `mono_rgba` holds its own RGB table for the LED color names, since
+    builtins don't depend on the render theme.
+- `sim_session` (`src/editor/sim_session.*`):
+  - Keeps a `display_window` for each display: an `Hd::Texture` with
+    `GL_NEAREST` filtering, made on the first draw (the GL context exists
+    then), the uploaded version, a local copy of the pixels, `open` and
+    `zoom`.
+  - `displays_gui()` is called from `app.cpp` next to `waveforms_gui`. It
+    copies the pixels under the lock only when the version changed, then
+    uploads with `glTexSubImage2D`.
+  - `show_display` and `has_display` serve the instance menu in
+    `sim_view::instance_menu`.
+- **Why not `sample_view`:** it copies a `vector<float>` into every
+  published snapshot, about 60 times a second. For up to 1024 × 1024 pixels
+  that is far too much. With a shared buffer and a version number, the UI
+  copies only when something changed, once per frame at most.
+- **Why `we` defaults to writing when not connected:** RAM reads with an
+  unconnected `we`, but a framebuffer has nothing to read, and a part that
+  ignored every clock until `we` is wired would look broken.
+- **Rejected:**
+  - An asynchronous reset: it would differ from the Counter.
+  - Drawing the picture inside the symbol: the canvas renderer has no
+    textured quads yet.
+
+### Testing
+
+- `sim_test`, new `test_framebuffer`:
+  - Port widths for several sizes and formats.
+  - Writing only on the rising edge. A floating `we` writes; `we` 0 or x
+    doesn't.
+  - Nothing written outside the picture or at an unknown address (the
+    version doesn't change).
+  - Magenta for unknown data. RGB888 byte order, grey8 and mono in green.
+  - `rst` clears at the edge without writing, and `reset()` clears too.
+  - The "pixels written" count.
+  - `simulator::displays()` lists a framebuffer inside a subcircuit with
+    its path (`U2/U1`) and flat component index.
+- `model_test`: the icon passes the builtin icon checks.
+- All 9 ctest suites pass. The web build (Emscripten) compiles.
+- **GUI** (private Xvnc, screenshots), with a 1 kHz clock, x and y counters
+  (y counting on x's carry) and an 8-bit counter as data, into a 16 × 16
+  grey8 framebuffer:
+  - The window opened centered when the simulation started.
+  - Running, it filled with the expected black-to-white gradient.
+  - Hovering x 13, y 12 showed #CDCDCD (index 205).
+  - Reset cleared it.
+  - Closing it and choosing "Show framebuffer" from the instance's menu
+    reopened it.
+  - Fit (10×) and 1× zoom work.
+
+### Recommended features
+
+- **VGA monitor:** a variant driven by a pixel clock with hsync, vsync and
+  RGB, for designs that generate video timing.
+- **Address-bus mode:** a single `addr` = y · width + x input, so a CPU
+  can write it like memory. The 6502 example could then draw.
+- **Indexed color:** a palette (2, 4 or 8-bit index) loaded from a file.
+- **Double buffering:** a swap/vsync input, so frames don't tear while
+  they are drawn.
+- **Save picture:** save the window's picture as a PNG.
+- **On-canvas preview:** a live thumbnail inside the symbol.
+- **Plugins:** `pixels()` in the plugin SDK, so C models can have screens.
+- An example cell with a framebuffer in `workspace/examples`.
+
+### Outstanding issues
+
+- Not run in a browser, only compiled for the web.
+- Snapshots (`save_state`) don't include the picture. They are only used
+  by plugins so far.
+- A very large framebuffer written every clock copies its whole picture
+  once per UI frame (4 MB at 1024 × 1024). That is fine at 60 fps, but a
+  dirty-rectangle upload would be lighter.
+
+### Next steps
+
+- Decide which of the recommended variants to add first. The address-bus
+  mode is the smallest and makes the CPU examples able to draw.

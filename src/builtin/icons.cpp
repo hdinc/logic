@@ -193,6 +193,13 @@ const std::map<std::string, icon_fn>& icons()
              b.rect({-10, -8}, {10, 8});
              b.text({-7, -2}, ">_", 7.0f);
          }},
+        {"framebuffer",
+         [](builder& b) {
+             // a screen with a few lit pixels
+             b.rect({-10, -8}, {10, 8});
+             b.rect({-6, 0}, {-2, 4});
+             b.rect({2, -4}, {6, 0});
+         }},
     };
     return m;
 }

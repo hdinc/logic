@@ -212,6 +212,7 @@ void simulator::add_instance(scope& s, int index, std::unique_ptr<component> c, 
     }
     s.components[index] = (int)instances.size();
     if (x.c->has_view()) viewers.push_back((int)instances.size());
+    if (auto px = x.c->pixels()) m_displays.push_back({(int)instances.size(), x.path, std::move(px)});
     instances.push_back(std::move(x));
 }
 

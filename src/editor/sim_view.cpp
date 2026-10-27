@@ -521,6 +521,10 @@ void sim_view::instance_menu()
         }
         EndMenu();
     }
+    if (menu_instance >= 0 && menu_instance < (int)sc.components.size()) {
+        int k = sc.components[menu_instance];
+        if (k >= 0 && s->has_display(k) && Selectable("Show framebuffer")) s->show_display(k);
+    }
     if (child) {
         TextDisabled("%s", scope_label(*child).c_str());
         if (Selectable("Open")) path.push_back(menu_instance);

@@ -412,7 +412,10 @@ void app::draw_gui()
     editor_panel();
     symbol_panel();
     for (auto& e : editors)
-        if (auto& s = e->simulation()) s->waveforms_gui(e->cell().name);
+        if (auto& s = e->simulation()) {
+            s->waveforms_gui(e->cell().name);
+            s->displays_gui();
+        }
     open_instance_tabs();
     properties_panel();
     hierarchy_panel();

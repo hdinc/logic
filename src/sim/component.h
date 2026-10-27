@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -88,6 +89,26 @@ struct inspect_item {
     std::string text;
 };
 
+// the picture of a display part, e.g. a framebuffer. the component writes it
+// on the simulation thread, the ui copies it out while drawing: both hold m
+// while touching rgba or version. version goes up with every change, so
+// the ui only copies after one.
+struct pixel_buffer {
+    pixel_buffer(int width, int height)
+        : width(width)
+        , height(height)
+        , rgba(size_t(width) * height, 0xFF000000u)
+    {
+    }
+
+    const int width;
+    const int height;
+    std::mutex m;
+    // row by row from the top left, red in the low byte, alpha 255
+    std::vector<uint32_t> rgba;
+    uint64_t version = 0;
+};
+
 struct memory_space {
     std::string name;
     // in bytes
@@ -167,6 +188,10 @@ public:
     // simulation thread when values are published.
     virtual bool has_view() const { return false; }
     virtual void sample_view(time now, std::vector<float>& out) { (void)now, (void)out; }
+
+    // the picture of a display part, null for other components. the same
+    // buffer for the component's whole life.
+    virtual std::shared_ptr<pixel_buffer> pixels() const { return nullptr; }
 
     // copies the internal state into bytes and back, for snapshots of the
     // whole simulation. false if the component doesn't support it.

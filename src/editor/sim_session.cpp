@@ -4,6 +4,7 @@
 
 #include <imgui.h>
 
+#include <cmath>
 #include <fstream>
 
 namespace logic::editor {
@@ -12,6 +13,105 @@ sim_session::sim_session(const model::workspace& ws, const model::cell& c, const
     : run(std::make_unique<sim::simulator>(ws, c, factory))
     , top(c.id)
 {
+    for (auto& d : run.sim().displays()) {
+        display_window w;
+        w.d = &d;
+        displays.push_back(std::move(w));
+    }
+}
+
+bool sim_session::has_display(int component) const
+{
+    return std::any_of(displays.begin(), displays.end(), [&](auto& w) { return w.d->component == component; });
+}
+
+bool sim_session::show_display(int component)
+{
+    for (auto& w : displays) {
+        if (w.d->component != component) continue;
+        w.open = true;
+        ImGui::SetWindowFocus(("###display" + std::to_string(top) + "_" + std::to_string(component)).c_str());
+        return true;
+    }
+    return false;
+}
+
+void sim_session::displays_gui()
+{
+    for (auto& w : displays)
+        if (w.open) display_gui(w);
+}
+
+void sim_session::display_gui(display_window& w)
+{
+    using namespace ImGui;
+
+    auto& buf = *w.d->pixels;
+    auto label = "Framebuffer: " + w.d->path + "###display" + std::to_string(top) + "_" + std::to_string(w.d->component);
+    SetNextWindowSize({std::clamp(buf.width * 4.0f, 240.0f, 800.0f) + 20, std::clamp(buf.height * 4.0f, 180.0f, 600.0f) + 60}, ImGuiCond_FirstUseEver);
+    SetNextWindowPos(GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, {0.5f, 0.5f});
+    if (!Begin(label.c_str(), &w.open)) {
+        End();
+        return;
+    }
+
+    if (!w.tex) {
+        w.tex.emplace(Hd::Texture::emptyTexture(buf.width, buf.height));
+        // pixels stay square and sharp when scaled
+        glBindTexture(GL_TEXTURE_2D, w.tex->Id());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+    bool changed = false;
+    {
+        std::lock_guard lk(buf.m);
+        if (w.version != buf.version) {
+            w.pixels = buf.rgba;
+            w.version = buf.version;
+            changed = true;
+        }
+    }
+    if (changed) {
+        glBindTexture(GL_TEXTURE_2D, w.tex->Id());
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, buf.width, buf.height, GL_RGBA, GL_UNSIGNED_BYTE, w.pixels.data());
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    static const char* const zooms[] = {"Fit", "1x", "2x", "4x", "8x"};
+    static const int factors[] = {0, 1, 2, 4, 8};
+    int pick = 0;
+    for (int k = 0; k < 5; k++)
+        if (factors[k] == w.zoom) pick = k;
+    SetNextItemWidth(GetFontSize() * 5);
+    if (Combo("Zoom", &pick, zooms, 5)) w.zoom = factors[pick];
+    SameLine();
+    TextDisabled("%d x %d", buf.width, buf.height);
+
+    BeginChild("picture", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+    auto avail = GetContentRegionAvail();
+    float scale = (float)w.zoom;
+    if (w.zoom == 0) {
+        // the largest whole scale that fits, smaller only if it must
+        float fit = std::min(avail.x / buf.width, avail.y / buf.height);
+        scale = fit >= 1.0f ? std::floor(fit) : std::max(fit, 0.01f);
+    }
+    ImVec2 size{buf.width * scale, buf.height * scale};
+    // centered while it fits
+    auto at = GetCursorPos();
+    SetCursorPos({at.x + std::max(0.0f, (avail.x - size.x) / 2), at.y + std::max(0.0f, (avail.y - size.y) / 2)});
+    auto origin = GetCursorScreenPos();
+    Image((ImTextureID)w.tex->Id(), size);
+    if (IsItemHovered() && !w.pixels.empty()) {
+        auto m = GetMousePos();
+        int x = std::clamp(int((m.x - origin.x) / scale), 0, buf.width - 1);
+        int y = std::clamp(int((m.y - origin.y) / scale), 0, buf.height - 1);
+        uint32_t c = w.pixels[size_t(y) * buf.width + x];
+        SetTooltip("x %d, y %d: #%02X%02X%02X", x, y, c & 0xFF, (c >> 8) & 0xFF, (c >> 16) & 0xFF);
+    }
+    EndChild();
+    End();
 }
 
 void sim_session::watch(const sim::scope* s, int instance)

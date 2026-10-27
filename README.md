@@ -28,7 +28,9 @@ standalone VCD viewer, `logic-wave`.
   `m0_data`, ...) into bundle ports.
 - **Builtin parts**: constants, clocks, logic gates, tristate buffers,
   registers, counters, RAM, ROM, pull resistors, buttons, switches, LEDs,
-  hex displays and a serial terminal. Arithmetic of any width: adder/
+  hex displays, a serial terminal and a framebuffer (pixels written at x,
+  y on a clock, shown in a window while simulating). Arithmetic of any
+  width: adder/
   subtractor, multiplier, divider, negator, comparator, barrel shifter and
   bit extender. Plexers: multiplexer, demultiplexer, decoder, priority
   encoder, bit counter and bit selector.

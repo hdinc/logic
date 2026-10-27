@@ -3,6 +3,8 @@
 #include "../sim/runner.h"
 #include "../wave/ui/view.h"
 
+#include <Hd/Texture.h>
+
 #include <algorithm>
 #include <chrono>
 #include <mutex>
@@ -71,6 +73,14 @@ public:
     // the waveform window of the recorded signals, see waveform_recorder
     void waveforms_gui(const std::string& title);
 
+    // a window for each open display (e.g. a framebuffer), see
+    // simulator::displays. they are open when the simulation starts.
+    void displays_gui();
+    // opens the window of the display with the flat component index, false
+    // if the component has none
+    bool show_display(int component);
+    bool has_display(int component) const;
+
     sim::runner run;
     model::id top;
     bool waveforms_visible = false;
@@ -84,6 +94,21 @@ private:
     sim::waveform_recorder::sync_state wave_sync;
     wave::view waves;
     std::string wave_message;
+
+    struct display_window {
+        const sim::simulator::display* d = nullptr;
+        // made on first draw, the gl context is there then
+        std::optional<Hd::Texture> tex;
+        // of the pixels in tex, none yet
+        std::optional<uint64_t> version;
+        // copied out of the buffer for uploading
+        std::vector<uint32_t> pixels;
+        bool open = true;
+        // whole pixels per pixel, 0 fits the window
+        int zoom = 0;
+    };
+    void display_gui(display_window& w);
+    std::vector<display_window> displays;
 
     const sim::scope* watch_scope = nullptr;
     int watch_instance = -1;
