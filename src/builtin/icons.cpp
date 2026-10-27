@@ -94,6 +94,9 @@ const std::map<std::string, icon_fn>& icons()
              b.polyline({{-6, -3}, {-3, -3}, {-3, 3}, {0, 3}, {0, -3}, {3, -3}, {3, 3}, {6, 3}});
          }},
 
+        {"random", [](builder& b) { chip(b, "?"); }},
+        {"lfsr", [](builder& b) { chip(b, "LF"); }},
+
         // memory
         {"register", [](builder& b) { chip(b, "D"); }},
         {"counter", [](builder& b) { chip(b, "CT"); }},

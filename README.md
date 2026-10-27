@@ -28,7 +28,8 @@ standalone VCD viewer, `logic-wave`.
   bundle; a breakout part shows the chosen fields and a tap picks one field
   off a bundle wire. HDL and C model cells group their ports (`m0_valid`,
   `m0_data`, ...) into bundle ports.
-- **Builtin parts**: constants, clocks, logic gates, tristate buffers,
+- **Builtin parts**: constants, clocks, random number generators (random,
+  LFSR), logic gates, tristate buffers,
   registers, counters, RAM, ROM, pull resistors, buttons, switches, LEDs,
   hex displays, a serial terminal and a framebuffer (pixels written at x,
   y on a clock, shown in a window while simulating). Arithmetic of any

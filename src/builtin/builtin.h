@@ -52,6 +52,8 @@ void seg7_levels(const model::param_values& params, const std::vector<model::por
 
 // led, displays, button, switch, terminal, framebuffer
 void add_io(model::primitive_registry& r);
+// random, lfsr
+void add_random(model::primitive_registry& r);
 // adder/subtractor, multiplier, divider, negator, comparator, shifter, bit
 // extender, counter
 void add_arith(model::primitive_registry& r);

@@ -3878,3 +3878,162 @@ The user changed their mind about the look of the 7-segment display:
 
 - Lay ports out in columns when wrapping a whole instance (see recommended
   features).
+
+## 2026-10-27 13:47 +0300
+
+### Features implemented
+
+- **Random** (Logic sources, kind `random`): a new pseudo-random number on
+  each rising clock edge, from xoshiro256**.
+  - Parameters: Bit width (1 to `max_width`, default 8) and Seed (default
+    1).
+  - Wider than 64 bits, each 64-bit word gets its own number.
+- **LFSR** (Logic sources, kind `lfsr`): a linear feedback shift register.
+  - Each rising clock edge shifts it left by one. Bit 0 gets the XOR of the
+    tap bits.
+  - It goes through all 2^n − 1 values except 0 before repeating.
+  - Parameters: Bit width (2–64, default 8) and Seed, its first value. Bits
+    above the width are ignored, and 0 is taken as 1 (a register of zeros
+    would stay at zero).
+- **Both:**
+  - **Pins:** `clk`, `en`, `rst` on the left, `q` on the right.
+  - **On the rising edge of clk:** `rst` 1 starts over from the seed.
+    Otherwise `en` 1, or `en` not connected, steps to the next number. An
+    unknown `en` or `rst` at the edge makes `q` unknown until the next
+    step.
+  - **Repeatable:** `q` holds the first number right after a reset. The
+    same seed gives the same numbers on every run and after Reset.
+  - The properties panel shows `q`. Each has a component bar icon (a chip
+    with "?" or "LF"), though neither is in the bar's shortlist.
+
+### How it works
+
+- New `src/builtin/random.cpp` with `add_random`, registered in
+  `builtin.cpp`.
+  - `generator_component` holds the clock edge and control logic shared by
+    the two parts (the same rules as the Counter). Subclasses give
+    `restart`, `step` and `current`.
+  - `random_component` seeds xoshiro256**'s four words with splitmix64 from
+    the seed, as its authors recommend.
+  - `lfsr_component` is a Fibonacci register:
+    `state = (state << 1 | parity(state & taps)) & mask`.
+- **LFSR taps:** the maximal-length table for 2 to 64 bits from Xilinx
+  XAPP052.
+  - **Checked offline:** a script tested every polynomial for primitivity.
+    It checked that x^(2^n − 1) = 1 mod p and that x^((2^n − 1)/q) ≠ 1 for
+    every prime factor q of 2^n − 1, with Miller–Rabin and Pollard rho for
+    the factoring. All 63 pass.
+  - A polynomial and its reciprocal are both primitive, so the shift
+    direction doesn't affect the period.
+- **Why xoshiro256\*\*:** it is fast, passes the usual statistical tests and
+  needs no library. `std::mt19937` would also work, but its state is large
+  and its seeding from one number is weak.
+- **Rejected:**
+  - Seeding from system entropy: runs wouldn't be repeatable.
+  - A seed pin: the user chose the seed parameter only.
+
+### Testing
+
+- `sim_test`, new `test_random`:
+  - Random: two instances with the same seed give the same 20 numbers, and
+    a different seed gives different ones. The first number is there after
+    reset.
+  - A clock that stays high doesn't step; `en` 0 holds; an unknown `en`
+    gives an unknown `q`.
+  - `rst` and `reset()` start over.
+  - All 256 byte values appear within 4096 draws, and the bits are
+    balanced within 5%.
+  - A 130-bit width gives different words.
+  - LFSR:
+    - The full period 2^n − 1, never 0, for every width from 2 to 20 bits.
+    - Seed masking, and 0 taken as 1.
+    - The exact 4-bit sequence 1, 2, 4, 9, 3.
+    - A 64-bit register with an all-ones seed.
+- `model_test`: the new icons pass the builtin icon checks.
+- All 9 ctest suites pass. The web build compiles.
+- **GUI** (private Xvnc, screenshot): a 24-bit Random feeding the data of a
+  16 × 16 rgb888 framebuffer, with counters for x and y, fills it with
+  random colors.
+
+### Recommended features
+
+- **Seed pin:** a load input that takes a new seed from a pin on the clock
+  edge.
+- **LFSR serial output:** a 1-bit output with the bit shifted out, for
+  noise or PRBS test patterns.
+- **Range:** a parameter for numbers from 0 to max − 1 (rejection
+  sampling), e.g. for dice.
+
+### Outstanding issues
+
+- None known.
+
+### Next steps
+
+- None planned for these parts.
+
+## 2026-10-27 13:53 +0300
+
+### Features implemented
+
+- **LFSR Taps parameter:** you can set the feedback taps yourself. Two
+  forms:
+  - **Bit numbers** from 1, separated by spaces or commas, e.g. `8 6 5 4`.
+    This is the numbering of the built-in table and of Xilinx XAPP052.
+  - **A hex mask**, e.g. `0xB8` (bit 0 = tap 1).
+  - **Empty** (the default) keeps the maximal-length taps for the width.
+  - **A mistake** shows a problem on the instance and the maximal-length
+    taps are used. Mistakes are:
+    - a bit number of 0 or above the width;
+    - something that isn't a number;
+    - a mask with bits above the width, or no bits.
+  - The properties panel shows the taps in use (`taps`) as well as `q`.
+- **Full cycle:** taps that aren't a primitive polynomial give a shorter
+  cycle, e.g. `4 2` repeats after 6 values. The part's description now says
+  the full 2^n − 1 cycle is for the default taps.
+
+### How it works
+
+- `parse_taps(text, width, error)` in `src/builtin/random.cpp` turns the
+  text into a mask: an optional for a mistake, the default mask for empty
+  text. `default_taps(width)` builds the mask from the table.
+- `lfsr_primitive::check` reports the error with ", the maximal-length taps
+  are used". `create` falls back to the default mask, the same way other
+  parts' `check` describe what `build` works around. The instance panel
+  shows the message (`workspace::check_instance`).
+- `lfsr_component` takes the mask in its constructor and adds a `taps`
+  inspect item.
+- **Why both forms:** bit numbers match the tables in data sheets and
+  application notes. Masks are what code and other tools often use.
+- **Not checked:** whether custom taps give a maximal cycle. That needs
+  factoring 2^n − 1, which is too slow to do while editing for wide
+  registers. The description says so instead.
+
+### Testing
+
+- `sim_test`, in `test_random`:
+  - `4 3`, `4,3`, ` 3, 4 `, `0xC`, `0xc` and empty all give mask 0xC and a
+    period of 15.
+  - `4 2` gives mask 0xA and a period of 6.
+  - `0xB8` and `8 6 5 4` give the same mask.
+  - Each mistake gives a problem and falls back to 0xB8: `9`, `0`, `8 x`,
+    `0x1FF`, `0x`, `0x0`, `0xG1`, `-3`, `1234`.
+- All 9 ctest suites pass.
+- GUI: not looked at in the properties panel; the private display's
+  default layout doesn't show it. The message goes through the existing
+  `check_instance` path, the same as e.g. the decoder's.
+
+### Recommended features
+
+- A "maximal?" note for custom taps of up to about 24 bits, found by
+  running the register through its cycle.
+- **Galois form:** a Form choice of Fibonacci or Galois, since some
+  designs need the Galois sequence.
+
+### Outstanding issues
+
+- None known.
+
+### Next steps
+
+- None planned.

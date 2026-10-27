@@ -28,6 +28,7 @@ const model::primitive_registry& registry()
         add_plexers(r);
         add_wiring(r);
         add_io(r);
+        add_random(r);
         return r;
     }();
     return r;

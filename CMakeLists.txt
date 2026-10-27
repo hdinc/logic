@@ -88,6 +88,7 @@ add_library(logic_core STATIC
     src/builtin/arith.cpp
     src/builtin/plexers.cpp
     src/builtin/icons.cpp
+    src/builtin/random.cpp
     src/netlist/netlist.cpp
     src/netlist/port_setup.cpp
     src/sim/simulator.cpp

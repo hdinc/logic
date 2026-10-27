@@ -9,11 +9,13 @@
 #include "../src/sim/runner.h"
 #include "../src/sim/simulator.h"
 
+#include <bit>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <set>
 #include <thread>
 
 using namespace logic;
@@ -2364,6 +2366,152 @@ static void test_framebuffer()
     }
 }
 
+// random and lfsr: repeatable from the seed, stepped by the clock
+static void test_random()
+{
+    fixture f;
+    std::string error;
+    auto make = [&](const char* kind, int width, int64_t seed) {
+        auto def = builtin::registry().find(kind);
+        auto params = model::resolve_params(def->params(), {{"width", int64_t(width)}, {"seed", seed}});
+        return builtin::factory().create({*f.ws.find_cell(model::builtin_cell_id(kind)), params, {}}, error);
+    };
+    sim::context ctx(0, false, sim::never);
+    // clk, en, rst, q
+    auto clock = [&](sim::component& c, std::vector<value>& ports) {
+        ports[0] = bit(false);
+        c.eval(ports, ctx);
+        ports[0] = bit(true);
+        c.eval(ports, ctx);
+        return ports[3];
+    };
+    auto pins = [](int width) { return std::vector<value>{bit(false), sim::floating(1), sim::floating(1), sim::floating(width)}; };
+
+    // the same seed, the same numbers. the first is there after reset.
+    auto a = make("random", 8, 1), b = make("random", 8, 1), c = make("random", 8, 2);
+    CHECK(a && b && c);
+    if (!a || !b || !c) return;
+    auto pa = pins(8), pb = pins(8), pc = pins(8);
+    a->eval(pa, ctx);
+    c->eval(pc, ctx);
+    CHECK(pa[3].fully_known() && pa[3].width() == 8);
+    auto first = pa[3];
+    std::vector<value> seq;
+    bool differs = false;
+    for (int k = 0; k < 20; k++) {
+        seq.push_back(clock(*a, pa));
+        CHECK(clock(*b, pb) == seq.back());
+        differs |= clock(*c, pc) != seq.back();
+    }
+    CHECK(differs);
+    CHECK(std::any_of(seq.begin(), seq.end(), [&](auto& v) { return v != seq[0]; }));
+    // the clock staying high doesn't step
+    a->eval(pa, ctx);
+    CHECK(pa[3] == seq.back());
+
+    // en 0 holds, an unknown en makes q unknown, rst starts over
+    pa[1] = bit(false);
+    CHECK(clock(*a, pa) == seq.back());
+    pa[1] = sim::unknown(1);
+    CHECK(!clock(*a, pa).fully_known());
+    pa[1] = bit(true);
+    pa[2] = bit(true);
+    CHECK(clock(*a, pa) == first);
+    pa[2] = bit(false);
+    CHECK(clock(*a, pa) == seq[0]);
+    a->reset();
+    a->eval(pa, ctx);
+    CHECK(pa[3] == first);
+
+    // every byte value turns up, the bits are balanced
+    std::set<uint64_t> seen;
+    int ones = 0;
+    for (int k = 0; k < 4096; k++) {
+        auto v = clock(*a, pa).to_u64();
+        seen.insert(v);
+        ones += std::popcount(v);
+    }
+    CHECK(seen.size() == 256);
+    CHECK(ones > 4096 * 4 * 95 / 100 && ones < 4096 * 4 * 105 / 100);
+
+    // wider than a word: each word its own number
+    auto wide = make("random", 130, 7);
+    auto pw = pins(130);
+    wide->eval(pw, ctx);
+    CHECK(pw[3].fully_known() && pw[3].width() == 130 && pw[3].bits(0) != pw[3].bits(1));
+
+    // lfsr: all 2^n - 1 values but 0 before it repeats
+    for (int w = 2; w <= 20; w++) {
+        auto l = make("lfsr", w, 1);
+        auto pl = pins(w);
+        l->eval(pl, ctx);
+        CHECK(pl[3] == sim::known(1, w));
+        uint64_t period = 0;
+        bool zero = false;
+        do {
+            auto v = clock(*l, pl);
+            zero |= v.to_u64() == 0;
+            period++;
+        } while (pl[3] != sim::known(1, w) && period <= (uint64_t(1) << w));
+        CHECK(!zero);
+        if (period != (uint64_t(1) << w) - 1) std::printf("  lfsr width %d: period %llu\n", w, (unsigned long long)period);
+        CHECK(period == (uint64_t(1) << w) - 1);
+    }
+    // seed: bits above the width ignored, 0 taken as 1
+    auto l = make("lfsr", 4, 0x35);
+    auto pl = pins(4);
+    l->eval(pl, ctx);
+    CHECK(pl[3] == sim::known(5, 4));
+    l = make("lfsr", 4, 0x10);
+    l->eval(pl, ctx);
+    CHECK(pl[3] == sim::known(1, 4));
+    // shifts left, bit 0 is bits 3 xor 2 (taps 4, 3)
+    CHECK(clock(*l, pl) == sim::known(2, 4));
+    CHECK(clock(*l, pl) == sim::known(4, 4));
+    CHECK(clock(*l, pl) == sim::known(9, 4));
+    CHECK(clock(*l, pl) == sim::known(3, 4));
+    // own taps: bit numbers or a hex mask
+    auto with_taps = [&](int width, const char* taps) {
+        auto def = builtin::registry().find("lfsr");
+        auto params = model::resolve_params(def->params(), {{"width", int64_t(width)}, {"taps", std::string(taps)}});
+        return std::make_pair(def->check(params), builtin::factory().create({*f.ws.find_cell(model::builtin_cell_id("lfsr")), params, {}}, error));
+    };
+    auto period_of = [&](sim::component& c, int w) {
+        auto p = pins(w);
+        c.eval(p, ctx);
+        uint64_t n = 0;
+        do
+            n++;
+        while (clock(c, p) != sim::known(1, w) && n <= (uint64_t(1) << w));
+        return n;
+    };
+    auto taps_of = [](sim::component& c) {
+        std::vector<sim::inspect_item> items;
+        c.inspect(items);
+        return items.size() == 2 && items[1].name == "taps" ? items[1].v.to_u64() : 0;
+    };
+    for (auto t : {"4 3", "4,3", " 3, 4 ", "0xC", "0xc", ""}) {
+        auto [problem, c] = with_taps(4, t);
+        CHECK(problem.empty() && c && taps_of(*c) == 0xC && period_of(*c, 4) == 15);
+    }
+    // not maximal: 4 2 (x^4 + x^2 + 1) repeats after 6
+    auto [none, short_cycle] = with_taps(4, "4 2");
+    CHECK(none.empty() && taps_of(*short_cycle) == 0xA && period_of(*short_cycle, 4) == 6);
+    CHECK(with_taps(8, "8 6 5 4").second && taps_of(*with_taps(8, "0xB8").second) == 0xB8);
+    // mistakes: a problem, and the default taps are used
+    for (auto t : {"9", "0", "8 x", "0x1FF", "0x", "0x0", "0xG1", "-3", "1234"}) {
+        auto [problem, c] = with_taps(8, t);
+        if (problem.empty()) std::printf("  taps \"%s\" accepted\n", t);
+        CHECK(!problem.empty() && c && taps_of(*c) == 0xB8);
+    }
+
+    auto wide_l = make("lfsr", 64, -1);
+    auto p64 = pins(64);
+    wide_l->eval(p64, ctx);
+    CHECK(p64[3] == sim::known(~uint64_t(0), 64));
+    CHECK(clock(*wide_l, p64).fully_known());
+}
+
 int main()
 {
     test_values();
@@ -2399,6 +2547,7 @@ int main()
     test_firmware();
     test_io_parts();
     test_framebuffer();
+    test_random();
     test_seg7_view();
     test_rom_ram();
 
