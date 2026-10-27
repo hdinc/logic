@@ -97,10 +97,11 @@ void cell_editor::toolbar()
     // anyway, and what they do checks busy() itself
     BeginDisabled(!schematic);
     if (!building.empty()) {
-        if (tool_button("Cancel", "Don't wait for the builds, they go on in the background (F5)", true)) building.clear();
+        if (icon_tool_button(ui::icon::cancel, "Cancel: don't wait for the builds, they go on in the background (F5)", true)) building.clear();
         TextColored(ui::color(ui::color_id::info), "building %zu HDL model(s)...", building.size());
         SameLine();
-    } else if (tool_button(session ? "Stop" : "Simulate", session ? "Back to editing (F5)" : "Simulate the schematic (F5)", session != nullptr)) {
+    } else if (icon_tool_button(session ? ui::icon::stop_simulation : ui::icon::simulate,
+                   session ? "Stop: back to editing (F5)" : "Simulate the schematic (F5)", session != nullptr)) {
         if (session)
             stop_simulation();
         else
@@ -110,6 +111,7 @@ void cell_editor::toolbar()
     if (!start_error.empty() && !session) {
         TextColored(ui::color(ui::color_id::error), "%s", start_error.c_str());
         SameLine();
+        ui::toolbar_center();
         if (SmallButton("x")) start_error.clear();
         SameLine();
     }
@@ -131,26 +133,20 @@ void cell_editor::edit_toolbar()
     } else {
         using k = schematic_editor::tool_kind;
         auto t = schematic->current_tool();
-        if (tool_button("Select", "Select and move (Esc)", t == k::select)) schematic->set_tool(k::select);
-        if (tool_button("Wire", "Draw wires, Esc ends the wire and the tool (W)", t == k::wire)) schematic->set_tool(k::wire);
-        if (tool_button("Input", "Place an input port (I)", t == k::input_port)) schematic->set_tool(k::input_port);
-        if (tool_button("Output", "Place an output port (O)", t == k::output_port)) schematic->set_tool(k::output_port);
-        if (tool_button("Cell...", "Place an instance of a cell (Space)", t == k::place_instance)) open_place_popup();
+        if (icon_tool_button(ui::icon::select, "Select and move (Esc)", t == k::select)) schematic->set_tool(k::select);
+        if (icon_tool_button(ui::icon::wire, "Wire: draw wires, Esc ends the wire and the tool (W)", t == k::wire)) schematic->set_tool(k::wire);
+        if (icon_tool_button(ui::icon::input, "Input: place an input port (I)", t == k::input_port)) schematic->set_tool(k::input_port);
+        if (icon_tool_button(ui::icon::output, "Output: place an output port (O)", t == k::output_port)) schematic->set_tool(k::output_port);
+        if (icon_tool_button(ui::icon::cell, "Cell: place an instance of a cell (Space)", t == k::place_instance)) open_place_popup();
     }
     EndDisabled();
 
     SeparatorEx(ImGuiSeparatorFlags_Vertical);
     SameLine();
 
-    BeginDisabled(!can_undo());
-    if (Button("Undo")) undo();
-    EndDisabled();
-    SetItemTooltip("Ctrl+Z");
-    SameLine();
-    BeginDisabled(!can_redo());
-    if (Button("Redo")) redo();
-    EndDisabled();
-    SetItemTooltip("Ctrl+Y");
+    if (ui::icon_button(ui::icon::undo, "Undo (Ctrl+Z)", false, can_undo())) undo();
+    SameLine(0, ui::toolbar_gap());
+    if (ui::icon_button(ui::icon::redo, "Redo (Ctrl+Y)", false, can_redo())) redo();
 
     SameLine();
     if (locked())

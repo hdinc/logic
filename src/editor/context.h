@@ -4,6 +4,7 @@
 #include "../model/workspace.h"
 #include "../plugin/registry.h"
 #include "../render/renderer.h"
+#include "../ui/icons.h"
 #include "../ui/search.h"
 
 #include <imgui.h>
@@ -44,6 +45,14 @@ inline bool tool_button(const char* label, const char* tip, bool active)
     if (active) PopStyleColor();
     SetItemTooltip("%s", tip);
     SameLine();
+    return clicked;
+}
+
+// the same with an icon, see ui::icon_button
+inline bool icon_tool_button(const char* icon, const char* tip, bool active)
+{
+    bool clicked = ui::icon_button(icon, tip, active);
+    ImGui::SameLine(0, ui::toolbar_gap());
     return clicked;
 }
 

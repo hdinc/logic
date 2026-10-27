@@ -226,3 +226,13 @@ The HDL tests are skipped when Verilator isn't installed.
 | `plugins` | the 6502 and AVR plugins |
 | `Hd` | window, OpenGL and ImGui setup (a submodule) |
 | `web`, `src/web` | the web build's page, service worker and glue |
+
+## Third-party assets
+
+- `res/fonts/Roboto.ttf`: [Roboto](https://fonts.google.com/specimen/Roboto), the
+  interface and canvas font.
+- `res/fonts/fa-solid-900.ttf`: [Font Awesome Free](https://fontawesome.com)
+  6, solid style. The font is under the SIL OFL 1.1 and the icons under CC BY
+  4.0 (`res/fonts/FontAwesome-LICENSE.txt`). Its icons are merged into the
+  interface font for the toolbar buttons; the ones in use are named in
+  `src/ui/icons.h`.

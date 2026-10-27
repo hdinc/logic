@@ -520,7 +520,8 @@ bool font_picker::gui(const char* label, font_ref& f, const std::vector<font_fac
     return changed;
 }
 
-void load_fonts(const font_ref& ui, const font_ref& mono, std::string_view builtin_ttf, std::vector<std::string>& errors)
+void load_fonts(const font_ref& ui, const font_ref& mono, std::string_view builtin_ttf, std::vector<std::string>& errors,
+    std::string_view icons_ttf)
 {
     auto& io = ImGui::GetIO();
     io.FontDefault = nullptr;
@@ -550,6 +551,14 @@ void load_fonts(const font_ref& ui, const font_ref& mono, std::string_view built
         ImFontConfig config;
         config.FontDataOwnedByAtlas = false;
         io.Fonts->AddFontFromMemoryTTF((void*)builtin_ttf.data(), (int)builtin_ttf.size(), 0.0f, &config);
+    }
+    // the icons are glyphs of the ui font, whichever it is. icon_button
+    // centers them by their drawn shape.
+    if (!icons_ttf.empty()) {
+        ImFontConfig config;
+        config.MergeMode = true;
+        config.FontDataOwnedByAtlas = false;
+        io.Fonts->AddFontFromMemoryTTF((void*)icons_ttf.data(), (int)icons_ttf.size(), 0.0f, &config);
     }
 
     if (!mono.builtin()) g_mono = add(mono, "monospace");

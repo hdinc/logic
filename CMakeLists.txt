@@ -128,6 +128,7 @@ target_compile_definitions(ImGuiFileDialog PUBLIC USE_STD_FILESYSTEM)
 add_library(logic_ui STATIC
     src/ui/file_dialog.cpp
     src/ui/fonts.cpp
+    src/ui/icons.cpp
     src/ui/search.cpp
     src/ui/theme.cpp
     src/wave/ui/timeline.cpp

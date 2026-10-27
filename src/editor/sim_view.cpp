@@ -186,39 +186,36 @@ void sim_view::toolbar()
     auto& run = s->run;
     auto& sim = s->sim();
 
-    if (Button("Waveforms")) s->waveforms_visible = true;
-    SameLine();
-    if (Button("Signals...")) OpenPopup("signals");
+    if (ui::icon_button(ui::icon::waveforms, "Waveforms: show the recorded signals")) s->waveforms_visible = true;
+    SameLine(0, ui::toolbar_gap());
+    if (ui::icon_button(ui::icon::signals, "Signals: add signals to the waveforms")) OpenPopup("signals");
     signals_menu();
     SameLine();
 
-    if (Button("Reset")) {
+    if (ui::icon_button(ui::icon::reset, "Reset: back to time 0 and the initial state, inputs keep their values")) {
         run.run(false);
         run.reset();
     }
-    SetItemTooltip("Back to time 0 and the initial state, inputs keep their values");
-    SameLine();
+    SameLine(0, ui::toolbar_gap());
 
-    if (Button("Step")) run.step();
-    SetItemTooltip("To the next event, e.g. a clock edge (Space)");
-    SameLine();
+    if (ui::icon_button(ui::icon::step, "Step to the next event, e.g. a clock edge (Space)")) run.step();
+    SameLine(0, ui::toolbar_gap());
 
     bool running = run.running();
-    if (running) PushStyleColor(ImGuiCol_Button, GetStyleColorVec4(ImGuiCol_ButtonActive));
-    if (Button(running ? "Pause" : "Run")) run.run(!running);
-    if (running) PopStyleColor();
-    SetItemTooltip("Let the simulated time pass");
+    if (ui::icon_button(running ? ui::icon::pause : ui::icon::play, running ? "Pause" : "Run: let the simulated time pass", running)) run.run(!running);
     SameLine();
 
     // simulated seconds per real second, 0 is as fast as possible
     double speed = run.speed();
     bool max = speed <= 0.0;
+    ui::toolbar_center();
     if (Checkbox("Max", &max)) run.set_speed(max ? 0.0 : 1.0);
     SetItemTooltip("As fast as possible instead of a fixed speed");
     if (!max) {
         SameLine();
         float f = (float)speed;
         SetNextItemWidth(140);
+        ui::toolbar_center();
         if (DragFloat("##speed", &f, 0.01f, 1e-9f, 1000.0f, "%.3g x", ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp))
             run.set_speed(f);
         SetItemTooltip("Simulated time per real time, 1 is real time");

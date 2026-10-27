@@ -70,8 +70,10 @@ private:
 // copied, must stay alive), the built-in mono font is the system's default
 // monospace font or imgui's own. fonts that can't be loaded are replaced by
 // the built-in ones, errors says why. glyphs are made when they are first
-// drawn, at any size.
-void load_fonts(const font_ref& ui, const font_ref& mono, std::string_view builtin_ttf, std::vector<std::string>& errors);
+// drawn, at any size. icons_ttf (not copied either) is merged into the ui
+// font, see icons.h. none if empty.
+void load_fonts(const font_ref& ui, const font_ref& mono, std::string_view builtin_ttf, std::vector<std::string>& errors,
+    std::string_view icons_ttf = {});
 
 // height of the text in pixels from the next frame on, for all fonts
 void set_font_size(float size);

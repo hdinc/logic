@@ -115,8 +115,9 @@ void app::update_font()
 {
     // between frames, nothing is drawing with the old fonts
     auto f = Hd::Resource::getExeRes("res/fonts/Roboto.ttf");
+    auto icons = Hd::Resource::getExeRes("res/fonts/fa-solid-900.ttf");
     std::vector<std::string> errors;
-    ui::load_fonts(ui_font, mono_font, {(const char*)f.first, (size_t)f.second}, errors);
+    ui::load_fonts(ui_font, mono_font, {(const char*)f.first, (size_t)f.second}, errors, {(const char*)icons.first, (size_t)icons.second});
     for (auto& e : errors)
         message(e);
     font_update_pending = false;
@@ -202,6 +203,10 @@ void app::add_settings_handler()
             size = component_bar::icon_size::small;
             if (std::strcmp(str, "medium") == 0) size = component_bar::icon_size::medium;
             if (std::strcmp(str, "large") == 0) size = component_bar::icon_size::large;
+        } else if (std::sscanf(line, "ToolbarIcons=%31s", str) == 1) {
+            ui::set_toolbar_size(std::strcmp(str, "large") == 0 ? ui::toolbar_size::large
+                    : std::strcmp(str, "medium") == 0          ? ui::toolbar_size::medium
+                                                               : ui::toolbar_size::small);
         } else if (std::sscanf(line, "FillSymbols=%d", &i) == 1)
             a->renderer.fill_symbols = i != 0;
         else if (std::sscanf(line, "Origin=%d", &i) == 1)
@@ -244,6 +249,7 @@ void app::add_settings_handler()
         const char* names[] = {"all", "custom", "none"};
         const char* sizes[] = {"small", "medium", "large"};
         buf->appendf("ComponentIcons=%s\n", sizes[(int)a->components.size]);
+        buf->appendf("ToolbarIcons=%s\n", sizes[(int)ui::get_toolbar_size()]);
         buf->appendf("InstanceNames=%s\nThickBuses=%d\nFillSymbols=%d\nOrigin=%d\n", names[(int)a->renderer.names], a->renderer.thick_buses ? 1 : 0, a->renderer.fill_symbols ? 1 : 0, a->renderer.show_origin ? 1 : 0);
         buf->appendf("RecentCells=%s\n", a->recent_cells.to_string().c_str());
         buf->appendf("UiFont=%s\nMonoFont=%s\nCanvasFont=%s\n\n", ui::to_string(a->ui_font).c_str(), ui::to_string(a->mono_font).c_str(), ui::to_string(a->canvas_font).c_str());
@@ -254,7 +260,7 @@ void app::add_settings_handler()
 
 app::settings app::current_settings() const
 {
-    return {theme_name, renderer.show_grid, renderer.show_origin, renderer.grid, renderer.names, renderer.thick_buses, renderer.fill_symbols, components.side, components.size, font_size, ui_font, mono_font, canvas_font, recent_cells.to_string()};
+    return {theme_name, renderer.show_grid, renderer.show_origin, renderer.grid, renderer.names, renderer.thick_buses, renderer.fill_symbols, components.side, components.size, ui::get_toolbar_size(), font_size, ui_font, mono_font, canvas_font, recent_cells.to_string()};
 }
 
 void app::apply_theme()
@@ -574,6 +580,10 @@ void app::menu_bar()
             if (BeginMenu("Component bar")) {
                 for (int k = 0; k < 5; k++)
                     if (MenuItem(bar_edge_labels[k], nullptr, components.side == (component_bar::edge)k)) components.side = (component_bar::edge)k;
+                EndMenu();
+            }
+            if (BeginMenu("Toolbar icons")) {
+                ui::toolbar_size_menu();
                 EndMenu();
             }
             if (BeginMenu("Theme")) {

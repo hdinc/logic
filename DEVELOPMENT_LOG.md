@@ -4037,3 +4037,295 @@ The user changed their mind about the look of the 7-segment display:
 ### Next steps
 
 - None planned.
+
+## 2026-10-27 14:22 +0300
+
+### Features implemented
+
+- **Toolbar icons:** the editor and simulation toolbar buttons show icons
+  from Google's Material Icons font instead of words. Every button is a
+  square icon button with a tooltip that names it and gives its shortcut.
+  - **Editor toolbar:**
+    - Simulate (`play_circle`) and Stop (`stop_circle`), and Cancel
+      (`cancel`) while HDL models build.
+    - Select (`highlight_alt`), Wire (`polyline`), Input (`input`), Output
+      (`output`) and Cell (`memory`, a chip).
+    - Undo (`undo`) and Redo (`redo`).
+  - **Simulation toolbar:**
+    - Waveforms (`ssid_chart`) and Signals (`playlist_add`).
+    - Reset (`skip_previous`) and Step (`skip_next`).
+    - Run (`play_arrow`) and Pause (`pause`), highlighted while running.
+- The Symbol editor's tool buttons and the menus keep their words.
+
+### Changes made
+
+- New `res/fonts/MaterialIcons-Regular.ttf` (349 KB, about 2,100 icons)
+  with its licence, `res/fonts/MaterialIcons-LICENSE.txt` (Apache 2.0).
+  - Both are packed into the program and the web build with the other
+    resources. The web build's resource archive is now 539 KB.
+- README: a "Third-party assets" section names Roboto and Material Icons.
+- Tooltips start with the button's name, e.g. "Wire: draw wires, ..." and
+  "Undo (Ctrl+Z)", since the word is no longer on the button.
+
+### How it works
+
+- `ui::load_fonts` (`src/ui/fonts.cpp`) has a new optional `icons_ttf`. The
+  icon font is merged (`MergeMode`) into the interface font after it is
+  loaded, whichever font that is: the built-in Roboto or one chosen in
+  Settings. A font change reloads both. The waveform viewer passes no
+  icons and is unchanged.
+- **Vertical position:** Material Icons sit on the baseline and are a
+  whole em high. Roboto leaves 0.24 em below the baseline, so the icons
+  sat about 0.14 em too high.
+  - `GlyphOffset.y = 0.14 × 20` lowers them. ImGui scales that offset by
+    the font size over the base font's `SizePixels`.
+  - So the interface fonts are now added with a reference size of 20
+    (`reference_size`). With imgui 1.92's dynamic fonts that size only
+    serves as this reference; the shown size is still
+    `style.FontSizeBase`.
+- New `src/ui/icons.h`:
+  - `ui::icon::*`: the UTF-8 of each icon's codepoint, with the icon's
+    Material name in a comment. The header says where to look up more.
+  - `ui::icon_button(icon, tip, active, enabled)`: a square button
+    (`GetFrameHeight()` on each side), highlighted while active.
+    - Only the button is disabled when `enabled` is false. The tooltip is
+      set after `EndDisabled`, so it isn't drawn faded on a disabled Undo
+      or Redo.
+- `editor::icon_tool_button` (`context.h`) is `icon_button` followed by
+  `SameLine`, the icon version of `tool_button`, which the Symbol editor
+  still uses.
+- **Decisions, made with the user:**
+  - Material Icons, the static font: the newer Material Symbols ships only
+    as a 10 MB variable font, which ImGui can't vary.
+  - The whole font, not a subset: adding an icon later only needs its
+    codepoint.
+  - Icons only, with tooltips.
+- **Rejected:** drawing the icons with ImDrawList, and Font Awesome or
+  Lucide. Both were compared on a mock-up page first. An icon font makes
+  more icons cheap later.
+
+### Testing
+
+- All 9 ctest suites pass. The web build compiles and packs the font.
+- **GUI** (private Xvnc, screenshots enlarged 2×):
+  - The editor toolbar shows all nine icons centered in their buttons,
+    after the vertical offset was added. Before it, the icons sat about 3
+    pixels too high.
+  - The simulation toolbar shows Stop, Waveforms, Signals, Reset, Step and
+    Run.
+  - While running, Run turns into a highlighted Pause, and its tooltip
+    says "Pause".
+- Not checked in the GUI:
+  - A system font picked as the interface font. The icons are merged the
+    same way after it.
+  - The light theme. Icons are glyphs, so they take the text color.
+
+### Recommended features
+
+- Icons for the Symbol editor's tools (pin, line, curve, arc, circle,
+  text, rectangle) and in the menus (e.g. File > Save).
+- A setting to show words next to the icons, for new users.
+- Subset the font with `pyftsubset` once the set of icons settles, to
+  save about 340 KB.
+
+### Outstanding issues
+
+- The 0.14 em offset was measured with Roboto. A system font with very
+  different ascent and descent may put the icons a pixel or two off
+  center.
+
+### Next steps
+
+- Use the icons in the Symbol editor and the menus (see recommended
+  features).
+
+## 2026-10-27 14:31 +0300
+
+### Changes made
+
+- **Icons centered exactly in their buttons:** reported from the
+  Simulate button. Measured pixel by pixel in the app, the icons were about
+  one pixel right and one pixel up. Now the gaps on opposite sides are
+  equal: 4 or 5 px on each side of every icon.
+
+### How it works
+
+- **Why they were off:**
+  - ImGui centers a button label by its advance width and the font's line
+    height, both rounded to pixels, not by the visible shape.
+  - The 0.14 em `GlyphOffset` from the previous entry only roughly
+    compensated vertically.
+  - Centering the glyph's quad isn't exact either: FreeType sizes the
+    bitmap from the outline's control points, which stick out past curves.
+    The undo arrow's arc made its quad taller than its ink, so a centered
+    quad left it one pixel low.
+- **Fix:** `ui::icon_button` moved from `icons.h` into a new
+  `src/ui/icons.cpp`.
+  - The button is drawn with an empty label (`##icon`, under `PushID` of
+    the icon).
+  - The icon is drawn with `AddText` so that the middle of its visible
+    pixels lands on the middle of the button, rounded to whole pixels.
+  - `ink_box(glyph)` scans the glyph's few hundred pixels in the font
+    atlas (`io.Fonts->TexData`, which imgui 1.92 keeps in memory). It
+    counts pixels over a quarter covered and maps the box back to the
+    quad's coordinates.
+  - It falls back to the quad if the atlas has no pixels. It is done every
+    frame, about 15 icons of about 20 × 20 pixels, so nothing is cached
+    that the atlas could invalidate.
+- `load_fonts` no longer sets `GlyphOffset` or a reference size, since
+  `icon_button` centers the icons itself. Icons used inside running text
+  would sit high again, but none are.
+- **Rejected:**
+  - Tuning `GlyphOffset` further: it is the same for every icon, and the
+    error depends on the icon and the font.
+  - Using the font's own glyph bounding boxes: they are the control boxes
+    again.
+
+### Testing
+
+- **GUI** (private Xvnc, gaps of the light pixels inside each button,
+  measured from the raw screen pixels):
+  - Simulate (play in a circle): L4 R4 T4 B4. Before: left 5, right 3,
+    top 3, bottom 5.
+  - Select, Wire, Input, Output and Cell: equal left and right, equal top
+    and bottom (4 or 5 px).
+  - Undo, enabled after an edit: L4 R4 T9 B9.
+  - Redo, greyed out: within a pixel. Its faint edges fall around the
+    brightness threshold.
+- All 9 ctest suites pass. The web build compiles.
+
+### Outstanding issues
+
+- None known.
+
+## 2026-10-27 14:54 +0300
+
+### Features implemented
+
+- **Toolbar icon size:** the toolbar buttons are bigger and have three
+  sizes, like the component bar: Small (30 px), Medium (38 px) and Large
+  (48 px). Before, a button was as tall as a text button, 26 px at the
+  default font size.
+  - **Choosing it:** right-click any toolbar icon, or use View > Toolbar
+    icons.
+  - **Saved:** as `ToolbarIcons=small|medium|large` with the other
+    settings.
+  - A button is never smaller than a text button, so a large interface
+    font still fits.
+- **Closer buttons:** 3 px between the buttons of a group, instead of the
+  usual 8. The wider gap or the separator line stays between groups
+  (Simulate | tools | Undo/Redo, and Waveforms/Signals | Reset/Step/Run).
+- **Centered line:** other items on a toolbar line stay their normal size,
+  centered on the taller buttons. These are the time, warnings, "Shift:
+  keep placing", the Max checkbox and the speed field.
+
+### How it works
+
+- `src/ui/icons.*`:
+  - `toolbar_size` with `get_toolbar_size`/`set_toolbar_size` (a global, as
+    the font size is), `toolbar_button_size()`, `toolbar_gap()` and
+    `toolbar_size_menu()`.
+  - `icon_button`:
+    - The icon's em is three quarters of the button. The glyph is baked at
+      that size (`GetFont()->GetFontBaked(size)`), so it is rasterized
+      sharp, not scaled.
+    - It is still centered by its visible pixels (`ink_box`).
+    - A right click opens the size menu (`BeginPopupContextItem`).
+  - **Text alignment:** while drawing the button, `icon_button` pushes a
+    `FramePadding.y` of (button − font size) / 2. ImGui then sets the
+    line's text baseline from it, so `Text` items later on the same line
+    land in the middle without any extra code.
+  - **Framed controls:** a checkbox or an input isn't moved that way.
+    `toolbar_center()` moves the next one down by half the difference in
+    height.
+- `editor::icon_tool_button` and the toolbars use
+  `SameLine(0, toolbar_gap())` between buttons of a group.
+- `app`: the `ToolbarIcons` setting is read and written, added to the
+  settings tuple (so a change marks the settings as unsaved), and a View >
+  Toolbar icons submenu.
+- **A drawn-icons trial:** the same buttons were also tried with icons
+  drawn by the draw list (16 × 16 grid, the port symbols for Input and
+  Output, a square wave for Waveforms), with the same size setting. That
+  version is kept in a git stash ("drawn toolbar icons with size
+  setting") for comparison; this entry is the icon font version.
+
+### Testing
+
+- **GUI** (private Xvnc, screenshots):
+  - Small: 3 px gaps, with "Shift: keep placing" centered on the buttons.
+  - The right-click menu shows Small, Medium and Large icons with a check
+    mark.
+  - Large in the editor and simulation toolbars: the Max checkbox, speed
+    field and time are centered.
+  - Measured at Large, the icons have equal gaps on opposite sides (9–10
+    px), within a pixel for anti-aliased edges.
+  - In the drawn trial, which uses the same settings code, the choice was
+    written as `ToolbarIcons=large` and restored after a restart.
+- All 9 ctest suites pass. The web build compiles.
+
+### Recommended features
+
+- The same size setting for the Symbol editor's toolbar once it has
+  icons.
+
+### Outstanding issues
+
+- None known.
+
+## 2026-10-27 15:02 +0300
+
+### Changes made
+
+- **Font Awesome instead of Material Icons:** the toolbar icons come from
+  Font Awesome Free 6, solid style, with icons that fit the app better:
+
+  | Button | Material Icons | Font Awesome |
+  | --- | --- | --- |
+  | Select | `highlight_alt` | `arrow-pointer` (a mouse cursor) |
+  | Wire | `polyline` | `pencil` |
+  | Input / Output | `input` / `output` | `right-to-bracket` / `right-from-bracket` |
+  | Cell | `memory` | `microchip` |
+  | Waveforms | `ssid_chart` | `wave-square` (a digital square wave) |
+  | Signals | `playlist_add` | `square-plus` |
+  | Undo / Redo | `undo` / `redo` | `arrow-rotate-left` / `arrow-rotate-right` |
+  | Simulate / Stop / Cancel | `play_circle` / `stop_circle` / `cancel` | `circle-play` / `circle-stop` / `circle-xmark` |
+  | Reset / Step / Run / Pause | `skip_previous` / `skip_next` / `play_arrow` / `pause` | `backward-step` / `forward-step` / `play` / `pause` |
+
+- **Files:**
+  - `res/fonts/fa-solid-900.ttf` (416 KB) and
+    `res/fonts/FontAwesome-LICENSE.txt` replace the Material Icons font and
+    its licence.
+  - The web build's resource archive is now 605 KB.
+- **Icon size:** an icon's em is 60% of the button, down from 75%. Font
+  Awesome's icons fill most of their em; at 75% the square wave nearly
+  touched the button's edges.
+- **README:** the third-party section names Font Awesome Free. The font is
+  under the SIL OFL 1.1, the icons under CC BY 4.0.
+
+### How it works
+
+- Only the data changed: the codepoints in `ui::icon` (`src/ui/icons.h`),
+  the font's path in `app::update_font`, and the size factor in
+  `ui::icon_button`.
+- Centering by the visible pixels (`ink_box`) and the size setting work for
+  any icon font unchanged.
+- **Checked before use:** every codepoint is in the free solid font. The
+  font's cmap was read with a small script, because IconFontCppHeaders'
+  `IconsFontAwesome6.h`, used to look up the codepoints, also lists Pro
+  icons.
+- **Kept in git stashes for comparison:** the Material Icons version
+  ("material icons toolbar with size setting") and the drawn version
+  ("drawn toolbar icons with size setting").
+
+### Testing
+
+- **GUI** (private Xvnc, screenshots enlarged 2×):
+  - The editor toolbar at Small and Large.
+  - The simulation toolbar at Large: Stop, the square wave, the plus,
+    Reset, Step and Run.
+  - The right-click size menu. Icons are centered and sharp at both sizes.
+- All 9 ctest suites pass. The web build compiles and packs the font.
+
+### Outstanding issues
+
+- None known.
