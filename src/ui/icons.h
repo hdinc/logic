@@ -26,6 +26,12 @@ inline constexpr const char* cell = "\xef\x8b\x9b"; // microchip
 inline constexpr const char* waveforms = "\xef\xa0\xbe"; // wave-square
 inline constexpr const char* signals = "\xef\x83\xbe"; // square-plus
 inline constexpr const char* upload = "\xef\x82\x93"; // upload
+inline constexpr const char* download = "\xef\x80\x99"; // download
+inline constexpr const char* folder = "\xef\x81\xbb"; // folder
+inline constexpr const char* new_folder = "\xef\x99\x9e"; // folder-plus
+inline constexpr const char* file = "\xef\x85\x9b"; // file
+inline constexpr const char* rename = "\xef\x81\x84"; // pen-to-square
+inline constexpr const char* trash = "\xef\x8b\xad"; // trash-can
 
 }
 

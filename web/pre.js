@@ -25,25 +25,38 @@ if (!ENVIRONMENT_IS_PTHREAD) {
         return path;
     };
 
-    // uploads by the program (src/web/web.cpp): the path by caller id
-    Module.logicUploads = {};
-    Module.logicUpload = (id, dir) => {
+    // files written by uploads and drops, taken by the program
+    // (src/web/web.cpp)
+    Module.logicUploaded = [];
+    const logicWriteAll = async (files, dir) => {
+        for (const f of files) {
+            try {
+                Module.logicUploaded.push(await logicWrite(f, dir));
+            } catch (e) {
+                console.error('uploading ' + f.name + ' failed', e);
+            }
+        }
+    };
+
+    Module.logicUpload = dir => {
         const input = document.createElement('input');
         input.type = 'file';
-        input.addEventListener('change', async () => {
-            if (!input.files.length) return;
-            try {
-                Module.logicUploads[id] = await logicWrite(input.files[0], dir);
-            } catch (e) {
-                console.error('uploading ' + input.files[0].name + ' failed', e);
-            }
-        });
+        input.multiple = true;
+        input.addEventListener('change', () => logicWriteAll([...input.files], dir));
         input.click();
+    };
+
+    Module.logicDownload = path => {
+        const url = URL.createObjectURL(new Blob([FS.readFile(path)]));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = path.split('/').pop();
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
     };
 
     // files dropped on the page go into the folder the program sets
     Module.logicDropDir = '/home/web_user/workspace';
-    Module.logicDropped = [];
     window.addEventListener('dragover', e => {
         if (e.dataTransfer.types.includes('Files')) {
             e.preventDefault();
@@ -55,12 +68,6 @@ if (!ENVIRONMENT_IS_PTHREAD) {
         const files = [...e.dataTransfer.files];
         if (!files.length) return;
         e.preventDefault();
-        for (const f of files) {
-            try {
-                Module.logicDropped.push(await logicWrite(f, Module.logicDropDir));
-            } catch (err) {
-                console.error('uploading ' + f.name + ' failed', err);
-            }
-        }
+        await logicWriteAll(files, Module.logicDropDir);
     });
 }

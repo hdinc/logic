@@ -4781,3 +4781,130 @@ The user changed their mind about the look of the 7-segment display:
 
 - Try uploads in Firefox and Safari.
 - Workspace import/export as a .zip.
+
+## 2026-10-27 23:43 +0300
+
+### Features implemented
+
+- **A Files panel in the browser** (View > Files), for the workspace's files
+  in IndexedDB. It replaces the upload button next to every file parameter.
+  - It shows one folder at a time with a path bar (`workspace / examples`)
+    and a `..` row. A double click opens a folder.
+  - Columns: name, size and modified date. The date column is shown only
+    when the panel is wide enough.
+  - A click on a header sorts. Folders come first, and names sort in
+    natural order (`file2` before `file10`).
+  - Toolbar:
+    - Upload: several files at once, into the folder shown.
+    - New folder.
+    - Download: the selected file, through a browser download. A double
+      click on a file downloads it too.
+    - Rename and Delete. Delete asks first, and deletes a folder with
+      everything in it.
+- **Drops follow the panel:** dropped files go into the folder the panel
+  shows. With the panel closed, they go to the library of the cell being
+  edited, as before, and the panel opens there with the last file selected.
+  Uploads also select their last file.
+- **Library files are protected:** a library's folder (one with a
+  `library.json`), its `library.json`, `cells` and `bundles`, and what's in
+  them can't be renamed or deleted here. The buttons are greyed out with a
+  tooltip pointing to the Libraries panel.
+- The panel's open state is kept in imgui.ini (`Files=1` in the
+  `[Logic][Settings]` section). It docks as a tab next to Libraries.
+
+### Changes made
+
+- `src/ui/file_list.{h,cpp}` (new, in `logic_ui`): the folder table, the path
+  bar, sorting, `go()`, `refresh()` and `format_size()`. It doesn't depend
+  on the web build, so the file chooser can use it in the next step.
+- `src/app/file_manager.{h,cpp}` (new, web build only): the panel, its
+  toolbar, and the New folder, Rename and Delete popups.
+- `src/web`: `upload(dir)` takes several files and no caller id.
+  `take_uploaded()` returns uploaded and dropped files from one queue. New:
+  `download(file)`. `web/pre.js` changed to match (`logicUpload` with
+  `multiple`, `logicWriteAll`, `logicDownload`).
+- `src/editor/param_editor.cpp`: the upload button is removed. The file is
+  back to how it was before the previous entry.
+- `src/app/app.cpp/.h`: the `files` member, View > Files, the `Files=`
+  setting, the drop folder, and Files docked with Libraries in the default
+  layout.
+- `src/ui/icons.h`: download, folder, folder-plus, file, pen-to-square and
+  trash-can icons. Each codepoint was checked against
+  `res/fonts/fa-solid-900.ttf` with `fc-query`.
+- README: the "Web build" section describes the Files panel.
+
+### How it works
+
+- **Written from scratch, not on ImGuiFileDialog (decided with the user):**
+  - ImGuiFileDialog's embedded mode always has a file name field and
+    OK/Cancel, and it doesn't re-read a folder after changes without being
+    reopened, which loses the selection.
+  - It has no file operations, and it can't block renaming library files.
+  - Replacing ImGuiFileDialog in the file chooser with the same `file_list`
+    is planned as step 2. Every use goes through `src/ui/file_dialog.h`.
+- **Always current:** `file_list` reads its folder when `dir` changes, after
+  `refresh()`, and once a second. So uploads, drops and deletes show up
+  without notifying it. Reading a folder each second is cheap on MEMFS and
+  on a local disk.
+- **Upload and drop share one path:** both push to `Module.logicUploaded`.
+  `app::frame` takes the queue each frame, reports each file in Messages and
+  shows the panel at the last one. The panel's Upload button only calls
+  `web::upload(folder())`.
+- **Focus between frames:** `file_manager::show` is called from
+  `app::frame` after the ImGui frame has ended. So it only sets a flag, and
+  `gui()` calls `SetNextWindowFocus` before `Begin`.
+- **Docking:** in the default layout Files docks with Libraries. For an
+  existing imgui.ini without a place for Files, `gui()` calls
+  `SetNextWindowDockID(<Libraries' dock>, FirstUseEver)`.
+- **Bug found while testing:** Enter in the name popups did nothing.
+  `editor::input_string` returns true only when the text changed, which
+  hides `EnterReturnsTrue`. The popups now check `IsItemDeactivated()` with
+  Enter, like the library rename.
+- **Alignment:** the folder and file icons have different widths. Each row
+  draws a label-less Selectable and then places the icon and the name at
+  screen positions. `SameLine(x)` with `GetCursorPosX()` measures from
+  different origins inside a table cell, which was tried first.
+- Hidden entries (names starting with `.`) aren't listed.
+
+### Testing
+
+- **Native:** builds without warnings, and all 9 ctest suites pass.
+- **Web build:** compiles without warnings.
+- **Browser** (headless Chromium 156 over the DevTools protocol, a fresh
+  profile):
+  - View > Files opened the panel as a tab next to Libraries. It was still
+    open after a reload (`Files=1`).
+  - In `examples`, selecting `cells` greyed out Rename and Delete with
+    "Part of a library, it's managed in the Libraries panel".
+  - Upload with two files (`file10.txt`, `file2.txt`) wrote both, listed
+    `file2.txt` before `file10.txt`, and selected the last one.
+  - Renamed `file2.txt` to `renamed.txt` (typed, then Enter).
+  - Made a folder `fw`, then deleted it after the confirmation.
+  - Download saved `file10.txt` with its contents into a folder set with
+    `Page.setDownloadBehavior`.
+  - A drop with the panel showing `examples` went into `examples`. With the
+    panel closed, a drop went into `work`, and the panel opened there with
+    the file selected.
+  - After a reload, IndexedDB had `renamed.txt` and `dropped.hex`, and no
+    `file2.txt` or `fw`.
+
+### Recommended features
+
+- Step 2: the file chooser on `file_list`, without ImGuiFileDialog. In the
+  browser it could have an upload button too.
+- Downloading a folder or the whole workspace as a .zip, and importing one.
+- Keyboard navigation in the list (arrows, Enter, Delete, F2).
+
+### Outstanding issues
+
+- A library folder that hasn't been saved yet (e.g. `work` before the first
+  save) has no `library.json`, so it can be renamed or deleted in the panel
+  until then.
+- Renaming or deleting a file that a cell uses (e.g. its firmware) isn't
+  checked. The cell reports the missing file when it's simulated.
+- Only tested in headless Chromium. The file picker and downloads aren't
+  tested in Firefox and Safari yet.
+
+### Next steps
+
+- Step 2: the file chooser on `file_list`, and ImGuiFileDialog removed.

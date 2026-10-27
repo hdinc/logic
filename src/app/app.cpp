@@ -105,12 +105,20 @@ void app::frame()
     window.SwapBuffers();
 #ifdef __EMSCRIPTEN__
     web::set_unsaved(has_unsaved());
-    // files dropped on the page go to the library of the cell being edited
+    // dropped files go to the folder the files panel shows, while it's
+    // closed to the library of the cell being edited
     auto lib = ws.library_of(active_cell);
     if (!lib || lib->read_only) lib = ws.find_library("work");
-    web::set_drop_dir(lib && !lib->dir.empty() ? lib->dir : root);
-    for (auto& f : web::take_dropped())
+    web::set_drop_dir(files.open ? files.folder() : lib && !lib->dir.empty() ? lib->dir : root);
+    // the panel shows where they went
+    auto uploaded = web::take_uploaded();
+    for (auto& f : uploaded)
         message("uploaded " + f.string());
+    if (!uploaded.empty()) files.show(uploaded.back().parent_path(), uploaded.back());
+    if (files.open != files_were_open) {
+        files_were_open = files.open;
+        ImGui::MarkIniSettingsDirty();
+    }
 #endif
 }
 
@@ -226,6 +234,10 @@ void app::add_settings_handler()
             int size = std::clamp(i, 12, 40);
             a->font_size = size;
             ui::set_font_size((float)size);
+#ifdef __EMSCRIPTEN__
+        } else if (std::sscanf(line, "Files=%d", &i) == 1) {
+            a->files.open = a->files_were_open = i != 0;
+#endif
         } else if (std::strncmp(line, "RecentCells=", 12) == 0) {
             a->recent_cells.from_string(line + 12);
         } else if (std::strncmp(line, "UiFont=", 7) == 0) {
@@ -255,6 +267,9 @@ void app::add_settings_handler()
         buf->appendf("ToolbarIcons=%s\n", sizes[(int)ui::get_toolbar_size()]);
         buf->appendf("InstanceNames=%s\nThickBuses=%d\nFillSymbols=%d\nOrigin=%d\n", names[(int)a->renderer.names], a->renderer.thick_buses ? 1 : 0, a->renderer.fill_symbols ? 1 : 0, a->renderer.show_origin ? 1 : 0);
         buf->appendf("RecentCells=%s\n", a->recent_cells.to_string().c_str());
+#ifdef __EMSCRIPTEN__
+        buf->appendf("Files=%d\n", a->files.open ? 1 : 0);
+#endif
         buf->appendf("UiFont=%s\nMonoFont=%s\nCanvasFont=%s\n\n", ui::to_string(a->ui_font).c_str(), ui::to_string(a->mono_font).c_str(), ui::to_string(a->canvas_font).c_str());
     };
     ImGui::AddSettingsHandler(&h);
@@ -429,6 +444,9 @@ void app::draw_gui()
     properties_panel();
     hierarchy_panel();
     messages_panel();
+#ifdef __EMSCRIPTEN__
+    files.gui([&](std::string m) { message(std::move(m)); });
+#endif
     settings_window();
     themes.gui(theme_name, [&] { use_theme(); }, [&] { apply_theme(); });
     exit_dialog();
@@ -475,6 +493,7 @@ void app::default_layout(unsigned int dockspace)
     ImGuiID left_bottom = DockBuilderSplitNode(left, ImGuiDir_Down, 0.4f, nullptr, &left);
 
     DockBuilderDockWindow("Libraries", left);
+    DockBuilderDockWindow("Files", left);
     DockBuilderDockWindow("Hierarchy", left_bottom);
     ImGuiID right_top = DockBuilderSplitNode(right, ImGuiDir_Up, 0.5f, nullptr, &right);
     DockBuilderDockWindow("Symbol editor", right_top);
@@ -549,6 +568,10 @@ void app::menu_bar()
 
         if (BeginMenu("View")) {
             if (MenuItem("Settings...")) show_settings = true;
+#ifdef __EMSCRIPTEN__
+            MenuItem("Files", nullptr, &files.open);
+            SetItemTooltip("The workspace's files in the browser: upload, download, rename, delete");
+#endif
             if (BeginMenu("Waveforms")) {
                 bool any = false;
                 for (auto& e : editors) {

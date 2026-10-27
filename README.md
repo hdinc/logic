@@ -128,16 +128,18 @@ first visit. The workspace is kept in the browser's IndexedDB. It starts
 with an empty `work` library and a copy of the `examples` library (the 6502
 counter and the ATmega328P blink), which comes back if it's deleted.
 
-Files from your computer, such as firmware, get into the browser in two ways:
+View > Files opens the workspace's files in a panel (in the browser only):
 
-- The upload button next to a file parameter's "..." button copies the
-  chosen file into the library's folder and sets the parameter to it.
-- Files dropped on the page are copied into the folder of the library of the
-  cell being edited (`work` for a read-only one). The Messages panel says
-  where they went, and "..." then finds them.
-
-A file with the same name is replaced, so uploading a rebuilt firmware again
-updates it.
+- Upload copies files from your computer into the folder shown, and so does
+  dropping them on the page. With the panel closed, dropped files go to the
+  library of the cell being edited (`work` for a read-only one) and the
+  panel opens there. A file with the same name is replaced, so a rebuilt
+  firmware can be uploaded again. A file parameter's "..." then finds it.
+- Download saves the selected file to your computer (a double click does
+  too).
+- New folder, Rename and Delete. A library's folder, its `library.json`,
+  `cells` and `bundles` can't be renamed or deleted there, the Libraries
+  panel manages them.
 
 Every pushed version tag (`v0.0.1`) deploys the web build to <https://hdinc.github.io/logic/>
 (`.github/workflows/pages.yml`, Emscripten 6.0.13). It can also be run by

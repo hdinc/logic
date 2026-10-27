@@ -2,6 +2,9 @@
 
 #include "component_bar.h"
 #include "theme_editor.h"
+#ifdef __EMSCRIPTEN__
+#include "file_manager.h"
+#endif
 #include "../editor/bundle_editor.h"
 #include "../editor/cell_editor.h"
 #include "../editor/symbol_page.h"
@@ -183,6 +186,11 @@ private:
     // ui::find_theme
     std::string theme_name = "dark";
     theme_editor themes;
+#ifdef __EMSCRIPTEN__
+    // the files panel, its open state is kept in imgui.ini
+    file_manager files{root};
+    bool files_were_open = false;
+#endif
     int font_size = 20;
     // interface, monospace (debugger, terminal, messages) and canvas fonts,
     // the built-in ones if they have no file

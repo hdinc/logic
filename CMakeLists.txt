@@ -141,6 +141,7 @@ target_compile_definitions(ImGuiFileDialog PUBLIC USE_STD_FILESYSTEM)
 # style
 add_library(logic_ui STATIC
     src/ui/file_dialog.cpp
+    src/ui/file_list.cpp
     src/ui/fonts.cpp
     src/ui/icons.cpp
     src/ui/search.cpp
@@ -192,7 +193,7 @@ target_compile_options(logic PRIVATE ${LOGIC_WARNINGS})
 if(EMSCRIPTEN)
     # index.html, .js and .wasm with coi-serviceworker.js: a folder that any
     # static host can serve, github pages too
-    target_sources(logic PRIVATE src/web/web.cpp)
+    target_sources(logic PRIVATE src/web/web.cpp src/app/file_manager.cpp)
     # kept in the browser's IndexedDB, see web/pre.js
     target_compile_definitions(logic PRIVATE LOGIC_DEFAULT_WORKSPACE="/home/web_user/workspace")
     set_target_properties(logic PROPERTIES OUTPUT_NAME index SUFFIX .html)
