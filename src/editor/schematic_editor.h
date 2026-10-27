@@ -4,6 +4,7 @@
 #include "context.h"
 #include "tool.h"
 #include "../netlist/netlist.h"
+#include "../netlist/port_setup.h"
 #include "../sim/simulator.h"
 
 #include <chrono>
@@ -81,6 +82,9 @@ public:
     void duplicate_hovered();
     // adds the copied elements moved by offset with new ids and selects them
     void insert(const model::cell& part, glm::ivec2 offset);
+    // a wired port for each unconnected pin of the instance, see
+    // netlist::add_ports_for_pins. the new ports are selected.
+    void add_ports_for_pins(model::id instance);
 
     // the current tool is in the middle of an operation, e.g. a drag
     bool busy() const { return active->busy(); }
@@ -188,6 +192,11 @@ private:
     // connectivity for drawing buses and width errors while editing,
     // extracted again every frame
     netlist::netlist nets;
+    // the pins each port was connected to in the last frame, so normalize
+    // can tell which ports were just connected (see adopt_pin_settings)
+    std::map<model::id, std::set<std::pair<model::id, int>>> linked;
+    // the instance under the right click menu
+    model::id menu_instance = model::no_id;
 
     tool_kind kind = tool_kind::select;
     std::unique_ptr<tool<schematic_editor>> active;

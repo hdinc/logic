@@ -386,6 +386,25 @@ void schematic_editor::process_inputs(bool hovered)
 
     if (hovered) view.handle_view_input();
 
+    // right click on an instance: its menu
+    if (hovered && !busy() && kind == tool_kind::select && right_clicked()) {
+        auto hits = hit_test(view.mouse_world());
+        if (!hits.empty() && hits[0].kind == handle::instance) {
+            menu_instance = hits[0].id;
+            OpenPopup("instance_menu");
+        }
+    }
+    if (BeginPopup("instance_menu")) {
+        auto i = sch.find_instance(menu_instance);
+        if (!i) CloseCurrentPopup();
+        else {
+            TextDisabled("%s", i->name.c_str());
+            if (Selectable("Add ports for pins")) add_ports_for_pins(menu_instance);
+            SetItemTooltip("an input or output port, wired, for each pin that isn't connected");
+        }
+        EndPopup();
+    }
+
     // shortcuts with ctrl belong to the app (undo, save)
     if (hovered && !busy() && !GetIO().KeyCtrl) {
         if (IsKeyPressed(ImGuiKey_G)) ctx.r.show_grid = !ctx.r.show_grid;
@@ -817,7 +836,31 @@ void schematic_editor::normalize()
         if (selected_points.count(w.b)) selection.push_back({handle::wire_b, w.id});
     }
 
+    // ports that were just connected to a pin take its settings where they
+    // still have their defaults
+    auto now = netlist::linked_pins(ctx.cell, netlist::extract(ctx.ws, ctx.cell));
+    std::vector<model::id> connected;
+    for (auto& [port, pins] : now) {
+        auto& before = linked[port];
+        if (std::any_of(pins.begin(), pins.end(), [&](auto& pin) { return !before.count(pin); })) connected.push_back(port);
+    }
+    if (!connected.empty() && netlist::adopt_pin_settings(ctx.ws, ctx.cell, connected)) ctx.modified();
+    linked = std::move(now);
+
     validate_selection();
+}
+
+void schematic_editor::add_ports_for_pins(model::id instance)
+{
+    auto it = std::find_if(sch.instances.begin(), sch.instances.end(), [&](auto& i) { return i.id == instance; });
+    if (it == sch.instances.end()) return;
+    auto added = netlist::add_ports_for_pins(ctx.ws, ctx.cell, int(it - sch.instances.begin()));
+    if (added.empty()) return;
+    selection.clear();
+    for (auto id : added)
+        selection.push_back({handle::port, id});
+    ctx.modified();
+    normalize();
 }
 
 void schematic_editor::validate_selection()
@@ -890,7 +933,10 @@ void schematic_editor::draw()
 
     r.draw_origin();
 
-    if (!sim) nets = netlist::extract(ctx.ws, ctx.cell);
+    if (!sim) {
+        nets = netlist::extract(ctx.ws, ctx.cell);
+        linked = netlist::linked_pins(ctx.cell, nets);
+    }
     if (!sim) ghosts.clear();
 
     std::map<glm::ivec2, int, ivec2_less> endpoint_count;
@@ -1162,6 +1208,11 @@ void schematic_editor::property_panel()
             ctx.modified();
             normalize();
         }
+        if (Button("Add ports for pins")) {
+            add_ports_for_pins(i->id);
+            return;
+        }
+        SetItemTooltip("an input or output port, wired, for each pin that isn't connected");
 
         if (auto defs = ctx.ws.params_of(*i); !defs.empty()) {
             SeparatorText("Parameters");

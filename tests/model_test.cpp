@@ -7,6 +7,7 @@
 #include "../src/model/history.h"
 #include "../src/model/workspace.h"
 #include "../src/netlist/netlist.h"
+#include "../src/netlist/port_setup.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -230,6 +231,100 @@ static void test_port_transform()
     }
     c.set_ports(list);
     CHECK((c.ports[0].xf == model::transform{2, true}) && (c.ports[1].xf == model::transform{3, true}));
+}
+
+// ports configured from the pins they connect to
+static void test_port_setup()
+{
+    using model::direction;
+    CHECK(netlist::default_port_name("in1") && netlist::default_port_name("out12") && netlist::default_port_name("io3"));
+    CHECK(!netlist::default_port_name("in") && !netlist::default_port_name("data") && !netlist::default_port_name("in1a"));
+
+    model::workspace ws;
+    ws.add_builtin_library(builtin::registry());
+    auto& lib = ws.add_library("work");
+    auto reg = [](model::cell& c, glm::ivec2 pos, int width) {
+        model::instance i;
+        i.id = c.new_id();
+        i.cell = model::builtin_cell_id("register");
+        i.name = "R" + std::to_string(i.id);
+        i.pos = pos;
+        i.params = {{"width", int64_t(width)}};
+        c.get_schematic()->instances.push_back(i);
+    };
+
+    // a register: d (-30, 10), clk (-30, -10), q (30, 10)
+    auto& c = ws.create_cell(lib, "c");
+    reg(c, {0, 0}, 8);
+    auto added = netlist::add_ports_for_pins(ws, c, 0);
+    CHECK(added.size() == 3 && c.ports.size() == 3);
+    if (c.ports.size() == 3) {
+        auto& d = c.ports[0];
+        CHECK(d.name == "d" && d.dir == direction::input && d.width == 8 && !d.description.empty());
+        CHECK(model::connection_point(d) == glm::ivec2(-50, 10) && d.pos == glm::ivec2(-70, 10));
+        CHECK(c.ports[1].name == "clk" && c.ports[1].width == 1);
+        auto& q = c.ports[2];
+        CHECK(q.name == "q" && q.dir == direction::output && q.width == 8);
+        CHECK(model::connection_point(q) == glm::ivec2(50, 10) && q.pos == glm::ivec2(70, 10));
+    }
+    auto nl = netlist::extract(ws, c);
+    CHECK(nl.problems.empty());
+    for (size_t k = 0; k < c.ports.size(); k++)
+        CHECK(nl.port_nets[k] >= 0 && nl.port_nets[k] == nl.instance_nets[0][k]);
+    // all connected now
+    CHECK(netlist::add_ports_for_pins(ws, c, 0).empty());
+    // names stay unique
+    reg(c, {0, 200}, 4);
+    netlist::add_ports_for_pins(ws, c, 1);
+    CHECK(c.ports.size() == 6 && c.ports[3].name == "d2" && c.ports[3].width == 4);
+
+    // a port at a pin: width, name and description come over
+    auto& e = ws.create_cell(lib, "e");
+    reg(e, {0, 0}, 8);
+    auto& in = e.add_port(direction::input, {-50, 10});
+    CHECK(netlist::linked_pins(e, netlist::extract(ws, e))[in.id].size() == 1);
+    CHECK(netlist::adopt_pin_settings(ws, e, {in.id}));
+    CHECK(e.ports[0].width == 8 && e.ports[0].name == "d" && !e.ports[0].description.empty());
+    // nothing left to change
+    CHECK(!netlist::adopt_pin_settings(ws, e, {in.id}));
+
+    // what the user set stays
+    auto& f = ws.create_cell(lib, "f");
+    reg(f, {0, 0}, 8);
+    auto& named = f.add_port(direction::input, {-50, 10});
+    named.name = "data";
+    named.width = 4;
+    named.description = "mine";
+    CHECK(!netlist::adopt_pin_settings(ws, f, {named.id}));
+    CHECK(f.ports[0].name == "data" && f.ports[0].width == 4 && f.ports[0].description == "mine");
+    // only the listed ports
+    auto& clk = f.add_port(direction::input, {-50, -10});
+    CHECK(!netlist::adopt_pin_settings(ws, f, {f.ports[0].id}));
+    CHECK(f.ports[1].name == "in1");
+    netlist::adopt_pin_settings(ws, f, {clk.id});
+    CHECK(f.ports[1].name == "clk" && f.ports[1].width == 1);
+
+    // one port to two pins: the width if they agree, never the name
+    auto fan = [&](const char* name, int w1, int w2) -> model::port {
+        auto& g = ws.create_cell(lib, name);
+        reg(g, {0, 0}, w1);
+        reg(g, {0, 100}, w2);
+        auto& p = g.add_port(direction::input, {-90, 10});
+        auto& wires = g.get_schematic()->wires;
+        wires.push_back({g.new_id(), {-70, 10}, {-30, 10}});
+        wires.push_back({g.new_id(), {-50, 10}, {-50, 110}});
+        wires.push_back({g.new_id(), {-50, 110}, {-30, 110}});
+        // the junction at (-50, 10) is a wire end
+        wires[0].b = {-50, 10};
+        wires.push_back({g.new_id(), {-50, 10}, {-30, 10}});
+        CHECK(netlist::linked_pins(g, netlist::extract(ws, g))[p.id].size() == 2);
+        netlist::adopt_pin_settings(ws, g, {p.id});
+        return g.ports[0];
+    };
+    auto same = fan("g1", 8, 8);
+    CHECK(same.width == 8 && same.name == "in1" && same.description.empty());
+    auto differ = fan("g2", 8, 4);
+    CHECK(differ.width == 1 && differ.name == "in1");
 }
 
 static void test_cycles()
@@ -1121,6 +1216,7 @@ int main(int argc, char** argv)
     test_auto_symbol();
     test_transform_then();
     test_port_transform();
+    test_port_setup();
     test_cycles();
     test_history();
     test_params();

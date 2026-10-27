@@ -3768,3 +3768,113 @@ The user changed their mind about the look of the 7-segment display:
 - The editor and sim canvases (`canvas_widget.h`, `sim_view.cpp`) are also
   sampled through the backend's linear sampler. They are drawn 1:1, so
   there is no visible effect.
+
+## 2026-10-27 13:40 +0300
+
+### Features implemented
+
+- **Ports take the settings of the pin they're connected to:** when one of
+  the cell's ports gets connected to an instance pin, it copies the pin's
+  settings into the fields that still have their defaults. This happens
+  whether the port is placed on the pin, a wire is drawn, or something is
+  moved or pasted.
+  - **Width, bundle type and view:** copied if the port is still plain 1
+    bit and all connected pins agree.
+  - **Name:** copied if the port still has a default name (`in1`, `out2`,
+    `io3`) and exactly one pin is connected. It is made unique, e.g. `d2`.
+  - **Description:** copied if the port has none and exactly one pin is
+    connected.
+  - **Only on a new connection:** it happens once, when the port gains a
+    connection. Changing an instance's width afterwards, or setting the
+    port back to 1 bit yourself, doesn't change it again.
+  - Pins that take the width of their net (e.g. a tunnel's) don't count.
+- **Add ports for pins:** right-click an instance (Select tool) or use the
+  button in its properties. For each pin that isn't connected, it adds a
+  port with the pin's direction, name, width, bundle type and view,
+  description and number format.
+  - The port sits four grids out from the side of the symbol the pin is
+    on, turned to face the pin, with a two-grid wire to it.
+  - The new ports are selected and are one undo step.
+
+### How it works
+
+- New `src/netlist/port_setup.h/.cpp` (in `logic_core`, so it is unit
+  tested):
+  - `default_port_name(name)`: `in`, `out` or `io` followed by digits, the
+    names `cell::add_port` gives.
+  - `linked_pins(cell, netlist)`: the (instance id, pin index) pairs each
+    port's net reaches, by port id.
+  - `adopt_pin_settings(ws, cell, port ids)`: the copying above, for the
+    listed ports only.
+  - `add_ports_for_pins(ws, cell, instance)`:
+    - The side is the edge of the symbol's bounds nearest to the pin,
+      turned with the instance's transform.
+    - The port's rotation is the one that puts its connection point on the
+      wire's end.
+- `schematic_editor`:
+  - `draw` keeps `linked` (the pins each port was connected to in the last
+    frame) next to `nets`.
+  - At the end of `normalize()`, after every edit, it extracts the netlist
+    again and collects the ports that gained a pin. It runs
+    `adopt_pin_settings` on them and marks the cell modified, so placing a
+    port and copying the settings are one undo step.
+  - The right-click menu (`instance_menu`) opens on an instance when the
+    Select tool is active. Before this, the editor had no right-click
+    menu; a right drag still pans.
+- **Why "newly connected" and not "has default values":** with defaults
+  alone, a port you set to 1 bit on purpose would jump back to the pin's
+  width at the next edit anywhere in the schematic. Comparing with the
+  previous frame's connections needs no new field in the file format.
+  Undo is handled too, since `linked` is refreshed every frame.
+- **Why copy and not inherit:** a cell port can't take its width from the
+  net (as a tunnel's pin does), because the cell's interface has to be
+  fixed for its symbol and for the parent schematics.
+- Bundle views are copied as they are: a port wrapping an instance's
+  master pin is a master pin of the outer cell too.
+
+### Testing
+
+- `model_test`, new `test_port_setup`:
+  - `default_port_name` cases.
+  - Add ports for pins on an 8-bit register: names, directions, widths and
+    descriptions. Positions and connection points on the left and right.
+    Every port is on its pin's net. A second run adds nothing, and a
+    second register gets `d2`.
+  - A port placed on a pin takes the width, name and description, and a
+    second run changes nothing.
+  - A port's own name, width and description are kept. Only listed ports
+    change.
+  - One port fanning out to two pins: an 8 and 8 bit pair gives the width
+    but no name. An 8 and 4 bit pair gives nothing.
+- All 9 ctest suites pass.
+- **GUI** (private Xvnc, screenshots, on the framebuffer demo):
+  - Right-clicking the framebuffer shows the menu.
+  - Add ports for pins added wired `we` and `rst` ports for its two free
+    pins.
+  - An Input port placed with its connection on a counter's free 8-bit
+    `d` pin became `d[8]`.
+  - One Undo removed the port completely, not just the copied settings.
+
+### Recommended features
+
+- **Inputs on the left, outputs on the right:** an option for Add ports for
+  pins to put every input on the left and every output on the right in a
+  column, for a tidier wrapper cell.
+- **Selection:** "Add ports for pins" for every instance in a selection.
+- **Port panel:** a "Match connected pin" button to copy the settings
+  again on request, e.g. after an instance's width parameter changed.
+
+### Outstanding issues
+
+- Add ports for pins doesn't avoid what's already there. In a crowded
+  schematic, a new port can sit on another wire (seen in the GUI test,
+  without a connection).
+- Ports added for closely spaced top or bottom pins (one grid apart) have
+  overlapping labels.
+- Width changes of a port aren't propagated to the other side of the
+  connection (e.g. a tunnel); only the port takes settings.
+
+### Next steps
+
+- Lay ports out in columns when wrapping a whole instance (see recommended
+  features).

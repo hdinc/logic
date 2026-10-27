@@ -12,7 +12,9 @@ standalone VCD viewer, `logic-wave`.
 - **Schematic editor**: wires, buses, splitters and tunnels (same-named
   tunnels are connected without a wire), copy/paste, undo/redo,
   rotate and mirror. Pan and zoom with the right or middle mouse button and
-  the wheel.
+  the wheel. A new port connected to a pin takes the pin's width, type,
+  name and description; right-click an instance > **Add ports for pins**
+  wires a port to each of its free pins.
 - **Symbols**: a subcircuit without a symbol of its own is shown as a box
   with its ports' pins that follows the ports. Right-click it in the
   library panel and choose **Add symbol** to draw one in the **Symbol
