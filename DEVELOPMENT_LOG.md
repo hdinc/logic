@@ -3725,3 +3725,46 @@ The user changed their mind about the look of the 7-segment display:
 
 - Decide which of the recommended variants to add first. The address-bus
   mode is the smallest and makes the CPU examples able to draw.
+
+## 2026-10-27 13:23 +0300
+
+### Changes made
+
+- **Framebuffer window, sharp pixels:** the picture is drawn without
+  texture filtering. Before, it was blurred by linear filtering, which
+  made e.g. a 16-step grey ramp look like a smooth gradient.
+- **Fit follows the window:** Fit scales the picture to fill the window
+  (keeping its aspect ratio) as the window is resized. Before, it used the
+  largest whole-number scale, so the picture only changed size at 2×, 3×
+  and so on, and seemed not to follow the window.
+
+### How it works
+
+- **Why the old setting didn't work:** the texture's `GL_NEAREST`
+  parameters were overridden by the ImGui OpenGL backend. Since its
+  2026-04 update, it binds its own sampler objects (`glBindSampler`, linear
+  by default) when GL 3.3 or ES 3 is available. A bound sampler takes
+  precedence over the texture's own parameters.
+- `sim_session::display_gui` adds `platform_io.DrawCallback_SetSamplerNearest`
+  to the window's draw list before the `Image`, and
+  `DrawCallback_SetSamplerLinear` after it, so the rest of the UI keeps
+  linear sampling. Both are checked for null, for backends without them.
+  The texture keeps `GL_NEAREST` for contexts without samplers.
+- Fit: `scale = min(avail.x / width, avail.y / height)`. The fixed zooms
+  (1×, 2×, 4×, 8×) keep whole-number scales. At a non-whole Fit scale,
+  pixel columns can differ by one screen pixel in width. That is the cost
+  of filling the window exactly.
+
+### Testing
+
+- **GUI** (private Xvnc, screenshot while dragging the window's corner):
+  - The 16 × 16 picture grew with the window to about 19× (not a whole
+    number).
+  - Each pixel row is a sharp band.
+- All 9 ctest suites pass.
+
+### Outstanding issues
+
+- The editor and sim canvases (`canvas_widget.h`, `sim_view.cpp`) are also
+  sampled through the backend's linear sampler. They are drawn 1:1, so
+  there is no visible effect.

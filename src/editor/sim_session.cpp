@@ -4,7 +4,6 @@
 
 #include <imgui.h>
 
-#include <cmath>
 #include <fstream>
 
 namespace logic::editor {
@@ -57,7 +56,7 @@ void sim_session::display_gui(display_window& w)
 
     if (!w.tex) {
         w.tex.emplace(Hd::Texture::emptyTexture(buf.width, buf.height));
-        // pixels stay square and sharp when scaled
+        // for backends without samplers, see the callbacks around Image
         glBindTexture(GL_TEXTURE_2D, w.tex->Id());
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -92,17 +91,18 @@ void sim_session::display_gui(display_window& w)
     BeginChild("picture", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
     auto avail = GetContentRegionAvail();
     float scale = (float)w.zoom;
-    if (w.zoom == 0) {
-        // the largest whole scale that fits, smaller only if it must
-        float fit = std::min(avail.x / buf.width, avail.y / buf.height);
-        scale = fit >= 1.0f ? std::floor(fit) : std::max(fit, 0.01f);
-    }
+    // as large as fits, keeping the aspect ratio
+    if (w.zoom == 0) scale = std::max(std::min(avail.x / buf.width, avail.y / buf.height), 0.01f);
     ImVec2 size{buf.width * scale, buf.height * scale};
     // centered while it fits
     auto at = GetCursorPos();
     SetCursorPos({at.x + std::max(0.0f, (avail.x - size.x) / 2), at.y + std::max(0.0f, (avail.y - size.y) / 2)});
     auto origin = GetCursorScreenPos();
+    // imgui samples linearly, which would blur the pixels
+    auto& pio = GetPlatformIO();
+    if (pio.DrawCallback_SetSamplerNearest) GetWindowDrawList()->AddCallback(pio.DrawCallback_SetSamplerNearest, nullptr);
     Image((ImTextureID)w.tex->Id(), size);
+    if (pio.DrawCallback_SetSamplerLinear) GetWindowDrawList()->AddCallback(pio.DrawCallback_SetSamplerLinear, nullptr);
     if (IsItemHovered() && !w.pixels.empty()) {
         auto m = GetMousePos();
         int x = std::clamp(int((m.x - origin.x) / scale), 0, buf.width - 1);
