@@ -48,8 +48,10 @@ viewer_app::viewer_app(Hd::Window& w)
     io.IniFilename = "logic-wave.ini";
 
     auto f = Hd::Resource::getExeRes("res/fonts/Roboto.ttf");
+    // the icons of the file dialogs
+    auto icons = Hd::Resource::getExeRes("res/fonts/fa-solid-900.ttf");
     std::vector<std::string> errors;
-    ui::load_fonts({}, {}, {(const char*)f.first, (size_t)f.second}, errors);
+    ui::load_fonts({}, {}, {(const char*)f.first, (size_t)f.second}, errors, {(const char*)icons.first, (size_t)icons.second});
     ui::set_font_size(20.0f);
 
     add_settings_handler();

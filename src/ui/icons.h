@@ -32,6 +32,7 @@ inline constexpr const char* new_folder = "\xef\x99\x9e"; // folder-plus
 inline constexpr const char* file = "\xef\x85\x9b"; // file
 inline constexpr const char* rename = "\xef\x81\x84"; // pen-to-square
 inline constexpr const char* trash = "\xef\x8b\xad"; // trash-can
+inline constexpr const char* home = "\xef\x80\x95"; // house
 
 }
 

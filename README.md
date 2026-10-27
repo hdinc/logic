@@ -141,6 +141,11 @@ View > Files opens the workspace's files in a panel (in the browser only):
   `cells` and `bundles` can't be renamed or deleted there, the Libraries
   panel manages them.
 
+The file dialogs ("..." of a file parameter, Export VCD) stay in the
+workspace and have an upload button too: the uploaded file is selected, so
+a firmware is uploaded and chosen in one go. Files dropped while a dialog is
+open go into its folder.
+
 Every pushed version tag (`v0.0.1`) deploys the web build to <https://hdinc.github.io/logic/>
 (`.github/workflows/pages.yml`, Emscripten 6.0.13). It can also be run by
 hand from the Actions tab. The repository's Pages source has to be "GitHub
@@ -268,7 +273,7 @@ LSAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=print_stacktrace=1:suppressions=$PWD/t
 | `plugins` | the 6502 and AVR plugins |
 | `Hd` | window, OpenGL and ImGui setup (a submodule) |
 | `web`, `src/web` | the web build's page, service worker and glue |
-| `deps` | ImGuiFileDialog and simavr (submodules), and simavr's core list for the web build (`deps/simavr_config`) |
+| `deps` | simavr (a submodule) and its core list for the web build (`deps/simavr_config`) |
 
 ## Third-party assets
 

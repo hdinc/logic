@@ -4908,3 +4908,132 @@ The user changed their mind about the look of the 7-segment display:
 ### Next steps
 
 - Step 2: the file chooser on `file_list`, and ImGuiFileDialog removed.
+
+## 2026-10-28 00:17 +0300
+
+### Changes made
+
+- **Our own file chooser replaces ImGuiFileDialog** (step 2 of the plan
+  agreed with the user). `src/ui/file_dialog.cpp` is rewritten on top of
+  `ui::file_list`. Its interface stays the same (`browse_button`,
+  `open_dialog`, `dialog_result`), so none of the 14 callers changed:
+  - file parameters (firmware)
+  - HDL sources and the plugin file in the model editor
+  - Export VCD in the simulation
+  - Open, Open session and Save session in `logic-wave`
+- The `deps/ImGuiFileDialog` submodule is removed, along with its CMake
+  lines and its entry in `.gitmodules`.
+- `logic-wave` loads the Font Awesome icons too (`res/fonts/fa-solid-900.ttf`
+  was already packed into it). Without them its dialogs showed "?" for the
+  icons.
+- `ui::file_list::path_bar` hides the folders nearest the root behind a
+  "..." button when the path doesn't fit. The button goes to the last
+  hidden folder, and its tooltip names it.
+- README: the "Web build" section describes the dialogs' upload button, and
+  the `deps` row no longer lists ImGuiFileDialog.
+
+### Features implemented
+
+- **The dialog:**
+  - A modal over `file_list`: Home, the path bar, the folder table, then a
+    name field, a filter combo and Open/Save and Cancel.
+  - Filters keep ImGuiFileDialog's syntax
+    (`Description{.a,.b},.*`), so the filter strings didn't change. The
+    combo shows each filter's extensions.
+  - Clicking a file puts its name in the field. Double-clicking a file
+    chooses it.
+- **The name field takes a name or a path,** relative to the folder shown.
+  Enter or Open:
+  - a folder: goes there
+  - in an open dialog: an existing file is chosen; otherwise an error says
+    it isn't there
+  - in a save dialog: adds the filter's first extension to a name without
+    one, and asks "Replace?" before overwriting
+- **Esc or Cancel** closes the dialog.
+- **Windows:** a drive combo.
+- **Browser** (set up by the app with `ui::set_dialog_root` and
+  `ui::set_dialog_upload`):
+  - The dialogs stay in the workspace; Home goes there.
+  - An upload button uploads into the folder shown and selects the uploaded
+    file, so a firmware is uploaded and chosen in one dialog. This brings
+    back the one-step upload without a button on every parameter.
+  - Files dropped while a dialog is open go into its folder and are
+    selected.
+  - If the filter would hide an uploaded file, the dialog switches to "All
+    files".
+
+### How it works
+
+- **Dialog state:** one `dialog` per key in a map: the browse button's ImGui
+  id, or the id given to `open_dialog`. It holds the title, save flag,
+  filters, a `file_list`, the name, an error and the file it's asking to
+  replace.
+- **Opening the popup:** `start()` only marks it pending. `display()`, which
+  the callers run every frame where they draw, calls `OpenPopup`. So the
+  popup is opened and drawn in the same ID stack, even when `open_dialog` is
+  called from inside a menu. The entry is erased when the dialog closes.
+- **Name field bug, found while testing:** clicking or dropping a file
+  didn't change the name field. ImGui keeps its own buffer while a text
+  field is active, and this field gets keyboard focus when the dialog opens.
+  The dialog now sets `name_set` when it changes the name, and the field's
+  buffer is reloaded with `ReloadUserBufAndSelectAll()`
+  (`GetInputTextState`, from imgui_internal).
+- **The app's frame** gives an open dialog priority:
+  - drops go to `ui::dialog_folder()` first, then to the Files panel's
+    folder, then to the edited cell's library
+  - the last upload goes to `ui::dialog_show_file()`, and to the Files panel
+    only if no dialog is open
+- **Starting folder:** a dialog's first folder must be inside the dialog
+  root, or it starts at Home. In the browser, Export VCD starts in the
+  current folder, `/home/web_user`, which is outside the workspace, so it
+  starts in the workspace.
+
+### Testing
+
+- **Native:** clean reconfigure and build without warnings. All 9 ctest
+  suites pass.
+- **Web build:** compiles without warnings. `index.wasm` is 4.60 MB, about
+  129 KB less than with ImGuiFileDialog.
+- **Browser** (headless Chromium over the DevTools protocol, a fresh
+  profile):
+  - Firmware "...":
+    - It opened in `workspace / examples` with `blink_328p.elf` selected,
+      listing only firmware files.
+    - The dialog's upload button uploaded `my_blink.elf` and selected it;
+      Open set the parameter to `my_blink.elf`.
+  - The name field followed a clicked file (`counter_6502.bin`).
+  - A `.txt` file dropped on the open dialog switched it to "All files" and
+    selected it.
+  - Typing `cells` and Enter went into that folder. A missing name showed
+    "'...' isn't there".
+  - Export VCD:
+    - It opened in the workspace with `blink_328p.vcd`. Typing `wave` and
+      Enter saved `wave.vcd`.
+    - Saving `wave` again asked "Replace?", and Replace wrote it.
+- **Desktop** (a private Xvnc, a copy of the workspace):
+  - The firmware dialog has no upload button. A deep path showed `...` and
+    the last folders.
+  - A double click on `counter_6502.bin` set the parameter.
+- **`logic-wave`:**
+  - Ctrl+O opened the dialog in the VCD's folder, with the icons after the
+    font fix.
+  - Escape closed it.
+  - Ctrl+S opened "Save the session" with `a.json`, and Enter wrote
+    `a.json`.
+
+### Recommended features
+
+- Keyboard navigation in the list (arrows, Enter, Backspace for up).
+- Recent folders or bookmarks in the dialog.
+- Showing hidden files on request. Today they aren't listed, but a typed
+  path reaches them.
+
+### Outstanding issues
+
+- Not tested on Windows (the drive combo) or in Firefox and Safari.
+- Esc while typing in the name field also closes the dialog.
+
+### Next steps
+
+- Keyboard navigation in `file_list`, shared by the dialog and the Files
+  panel.

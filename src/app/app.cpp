@@ -3,6 +3,7 @@
 #include "../editor/param_editor.h"
 #include "../io/storage.h"
 #include "../plugin/libraries.h"
+#include "../ui/file_dialog.h"
 #include "../ui/theme.h"
 
 #include <Hd/Resource.h>
@@ -39,6 +40,11 @@ app::app(Hd::Window& w, std::filesystem::path r)
 
     ws.add_builtin_library(builtin::registry());
     plugins.add_default_dirs(root);
+#ifdef __EMSCRIPTEN__
+    // file dialogs stay in the workspace and can upload into it
+    ui::set_dialog_root(root);
+    ui::set_dialog_upload([](const std::filesystem::path& dir) { web::upload(dir); });
+#endif
     ws.add_provider(plugins);
     ws.add_provider(hdl);
     reload_plugins();
@@ -105,16 +111,18 @@ void app::frame()
     window.SwapBuffers();
 #ifdef __EMSCRIPTEN__
     web::set_unsaved(has_unsaved());
-    // dropped files go to the folder the files panel shows, while it's
-    // closed to the library of the cell being edited
+    // dropped files go to the folder of an open file dialog, else the one
+    // the files panel shows, while it's closed to the library of the cell
+    // being edited
     auto lib = ws.library_of(active_cell);
     if (!lib || lib->read_only) lib = ws.find_library("work");
-    web::set_drop_dir(files.open ? files.folder() : lib && !lib->dir.empty() ? lib->dir : root);
-    // the panel shows where they went
+    auto dialog = ui::dialog_folder();
+    web::set_drop_dir(!dialog.empty() ? dialog : files.open ? files.folder() : lib && !lib->dir.empty() ? lib->dir : root);
+    // the dialog or the panel shows where they went
     auto uploaded = web::take_uploaded();
     for (auto& f : uploaded)
         message("uploaded " + f.string());
-    if (!uploaded.empty()) files.show(uploaded.back().parent_path(), uploaded.back());
+    if (!uploaded.empty() && !ui::dialog_show_file(uploaded.back())) files.show(uploaded.back().parent_path(), uploaded.back());
     if (files.open != files_were_open) {
         files_were_open = files.open;
         ImGui::MarkIniSettingsDirty();

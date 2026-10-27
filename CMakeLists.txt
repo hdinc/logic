@@ -132,11 +132,6 @@ if(WIN32)
 endif()
 target_compile_options(logic_core PRIVATE ${LOGIC_WARNINGS})
 
-# file dialogs
-add_subdirectory(deps/ImGuiFileDialog)
-target_link_libraries(ImGuiFileDialog PUBLIC imgui)
-target_compile_definitions(ImGuiFileDialog PUBLIC USE_STD_FILESYSTEM)
-
 # gui parts shared by the apps: the waveform view, file dialogs, fonts and
 # style
 add_library(logic_ui STATIC
@@ -149,7 +144,7 @@ add_library(logic_ui STATIC
     src/wave/ui/timeline.cpp
     src/wave/ui/view.cpp
 )
-target_link_libraries(logic_ui PUBLIC logic_wave imgui ImGuiFileDialog stb)
+target_link_libraries(logic_ui PUBLIC logic_wave imgui stb)
 target_compile_options(logic_ui PRIVATE ${LOGIC_WARNINGS})
 
 # installed fonts from fontconfig, without it the font folders are scanned

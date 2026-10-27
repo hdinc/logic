@@ -145,16 +145,38 @@ void file_list::path_bar()
     }
     std::reverse(parts.begin(), parts.end());
 
-    for (size_t k = 0; k < parts.size(); k++) {
+    auto label = [](const fs::path& p) {
+        auto name = p.filename().string();
+        return name.empty() ? p.string() : name;
+    };
+    // the folders nearest to dir that fit, the ones before them behind "..."
+    auto& style = GetStyle();
+    float separator = CalcTextSize("/").x + 4.0f;
+    auto button = [&](const std::string& s) { return CalcTextSize(s.c_str()).x + style.FramePadding.x * 2.0f; };
+    float avail = GetContentRegionAvail().x;
+    float width = 0.0f;
+    size_t first = parts.size();
+    while (first > 0) {
+        float w = button(label(parts[first - 1])) + (first < parts.size() ? separator : 0.0f);
+        // room for "..." unless it's the last one
+        float more = first > 1 ? button("...") + separator : 0.0f;
+        if (width + w + more > avail && first < parts.size()) break;
+        width += w;
+        first--;
+    }
+
+    if (first > 0) {
+        if (SmallButton("...")) go(parts[first - 1], parts[first]);
+        SetItemTooltip("%s", parts[first - 1].string().c_str());
+    }
+    for (size_t k = first; k < parts.size(); k++) {
         if (k > 0) {
             SameLine(0, 2);
             TextUnformatted("/");
             SameLine(0, 2);
         }
-        auto name = parts[k].filename().string();
-        if (name.empty()) name = parts[k].string();
         PushID((int)k);
-        if (SmallButton(name.c_str()) && parts[k] != dir) go(parts[k], k + 1 < parts.size() ? parts[k + 1] : fs::path{});
+        if (SmallButton(label(parts[k]).c_str()) && parts[k] != dir) go(parts[k], k + 1 < parts.size() ? parts[k + 1] : fs::path{});
         PopID();
     }
 }
