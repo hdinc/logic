@@ -4393,3 +4393,59 @@ The user changed their mind about the look of the 7-segment display:
 ### Outstanding issues
 
 - Select, Input and Output can be one pixel low at some sizes (see above).
+
+## 2026-10-27 15:22 +0300
+
+### Changes made
+
+- **Fixed a crash when closing an editor tab while its simulation runs.**
+  The same could happen when closing the visible instance tab ("Open in
+  new tab") of a simulation.
+
+### How it works
+
+- **Cause, a use after free:**
+  - `app::editor_panel` remembers the visible tab's simulation view in
+    `active_view` (and an instance tab's in `active_instance_tab`) while it
+    draws the tabs.
+  - When a tab's × is clicked, the tab is closed after the loop.
+    `close_editor` destroys the `cell_editor`, and its `sim_view` with it,
+    but `active_view` still pointed at the view.
+  - Later in the same frame, `app::hierarchy_panel` called
+    `active_view->hierarchy_panel()` on freed memory, and
+    `properties_panel` could do the same with `active_instance_tab`.
+  - gdb backtrace: `scope_label` ← `sim_view::hierarchy_panel` ←
+    `app::hierarchy_panel` ← `app::draw_gui`.
+- **Fix** in `app::editor_panel`:
+  - When the closed editor is the visible one, `active_cell` and
+    `active_view` are cleared before `close_editor`.
+  - When the closed instance tab is the visible one, `active_view` and
+    `active_instance_tab` are cleared before it is erased.
+  - The panels then show nothing for that frame and pick up the next tab in
+    the following one.
+- The Symbol editor's tabs keep the active page as an id and look it up
+  (`find_symbol`), so they don't have this problem.
+- Instance tabs of a simulation whose editor is closed are already removed
+  at the start of the next frame (`update_simulations`). Until then they
+  share the session, which stays alive through its `shared_ptr`.
+
+### Testing
+
+- **GUI under gdb** (private Xvnc):
+  - **Before:** opening the framebuffer demo, simulating, running and
+    closing its tab gave a SIGSEGV with the backtrace above.
+  - **After:** the same steps, no signal; the app keeps running and shows
+    the empty editor.
+  - With a top cell holding a subcircuit (a clock inside), U1 opened in a
+    new tab while running: closing the instance tab, then the top tab
+    (still running), gave no crash.
+- All 9 ctest suites pass. The web build compiles.
+
+### Recommended features
+
+- Keep the active views as ids or as a `weak_ptr` to the session,
+  instead of raw pointers that can outlive their tab.
+
+### Outstanding issues
+
+- None known.

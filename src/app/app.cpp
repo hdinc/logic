@@ -1010,9 +1010,23 @@ void app::editor_panel()
         EndTabBar();
     }
 
-    if (close != model::no_id) close_editor(close);
+    // the panels drawn after this one use the active view, it mustn't point
+    // into a closed tab
+    if (close != model::no_id) {
+        if (active_cell == close) {
+            active_cell = model::no_id;
+            active_view = nullptr;
+        }
+        close_editor(close);
+    }
     if (close_bundle != model::no_id) std::erase_if(bundle_editors, [&](auto& e) { return e->bundle().id == close_bundle; });
-    if (close_instance) std::erase_if(instance_tabs, [&](auto& t) { return t.id == close_instance; });
+    if (close_instance) {
+        for (auto& t : instance_tabs) {
+            if (t.id != close_instance || t.view.get() != active_instance_tab) continue;
+            active_view = active_instance_tab = nullptr;
+        }
+        std::erase_if(instance_tabs, [&](auto& t) { return t.id == close_instance; });
+    }
 
     End();
 }
