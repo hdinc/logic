@@ -4329,3 +4329,67 @@ The user changed their mind about the look of the 7-segment display:
 ### Outstanding issues
 
 - None known.
+
+## 2026-10-27 15:12 +0300
+
+### Changes made
+
+- **Toolbar icons centered to the pixel:** reported as slightly to the
+  right (Step, Play and others).
+  - Measured in the app, many icons had one more pixel on the left than on
+    the right, and one more above than below.
+  - Now the left and right gaps are equal for every icon, at all three
+    sizes, in both toolbars.
+  - The top and bottom gaps are equal too, except for Select (Large) and
+    Input/Output (Medium, Large). Their width and height are odd and even
+    at every size, so a square button leaves them one pixel to spare
+    vertically.
+
+### How it works
+
+- **Why they were off:**
+  1. **Parity:** when the button's size minus the icon's drawn size is
+     odd, one pixel is left over. The rounding in `icon_button` always gave
+     it to the left/top, which moved the icon right and down.
+  2. **Sub-pixel drawing:** the icon font was oversampled. stb_truetype
+     then places glyphs at fractions of a pixel (`sub_x`), and its
+     prefilter smears the bitmap, so the measured ink box and the drawn
+     pixels differed by a fraction.
+  3. **Threshold:** `ink_box` counted pixels from a quarter covered. On
+     anti-aliased edges that is wider than where the eye sees the edge.
+- **Fixes:**
+  - `load_fonts`: the icon font is merged with `PixelSnapH` and
+    `OversampleH = OversampleV = 1`. Its glyphs are drawn on whole pixels,
+    so the ink box is exact. Text fonts keep their oversampling.
+  - `ink_box`: pixels at half coverage or more count as drawn.
+  - New `icon_size(codepoint, box, want)` in `src/ui/icons.cpp`:
+    - It tries the wanted size (60% of the button) and up to 2 pixels
+      smaller or larger.
+    - It takes the first size whose drawn width (and, if possible, height)
+      has the same parity as the button, so the spare space splits evenly.
+      Horizontal parity counts double.
+    - The result is cached per codepoint, button size and wanted size. A
+      pixel's difference in icon size isn't visible; an uneven gap is.
+- **Rejected:**
+  - Drawing at fractional positions (`ImDrawListFlags_TextNoPixelSnap`):
+    centered on average, but every edge would be blurred.
+  - Rounding the other way: it only moves the error to the other side.
+
+### Testing
+
+- **GUI** (private Xvnc, gaps of the pixels at least half as bright as the
+  icon's peak, measured from the raw screen pixels for each button):
+  - **Small, Medium and Large, editor and simulation toolbars:** left gap
+    equals right gap for every icon.
+  - **Top and bottom:** equal except the three noted above, which are one
+    pixel lower.
+  - **Before the fix (Small):** left was one more than right on Signals,
+    Reset, Step and Run, and on Reset and Step at Medium.
+  - A temporary debug print showed the sizes tried for the three
+    exceptions: e.g. `arrow-pointer` at 26–30 px is 15×21, 16×23, 17×24,
+    17×25 and 18×25, never even in both directions.
+- All 9 ctest suites pass. The web build compiles.
+
+### Outstanding issues
+
+- Select, Input and Output can be one pixel low at some sizes (see above).

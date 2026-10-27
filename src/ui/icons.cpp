@@ -4,6 +4,9 @@
 #include <imgui_internal.h>
 
 #include <algorithm>
+#include <cmath>
+#include <map>
+#include <tuple>
 
 namespace logic::ui {
 
@@ -23,13 +26,13 @@ ImRect ink_box(const ImFontGlyph& g)
     int y0 = (int)ImFloor(g.V0 * tex->Height + 0.5f), y1 = (int)ImFloor(g.V1 * tex->Height + 0.5f);
     if (x1 <= x0 || y1 <= y0 || x1 > tex->Width || y1 > tex->Height) return quad;
 
-    // more than a quarter covered counts as drawn
+    // half covered or more counts as drawn, the eye sees the edge there
     int minx = x1, maxx = x0 - 1, miny = y1, maxy = y0 - 1;
     for (int y = y0; y < y1; y++) {
         for (int x = x0; x < x1; x++) {
             auto p = tex->Pixels + (size_t(y) * tex->Width + x) * tex->BytesPerPixel;
             int alpha = tex->Format == ImTextureFormat_Alpha8 ? p[0] : p[3];
-            if (alpha < 64) continue;
+            if (alpha < 128) continue;
             minx = ImMin(minx, x), maxx = ImMax(maxx, x);
             miny = ImMin(miny, y), maxy = ImMax(maxy, y);
         }
@@ -45,6 +48,38 @@ ImRect ink_box(const ImFontGlyph& g)
 namespace {
 
 toolbar_size g_size = toolbar_size::small;
+
+// the icon's size near `want` (its font's em) at which it fits a w x h box
+// with the same space on both sides: its drawn width and height have the
+// parity of the box's, otherwise a pixel is left over (the icon is half a
+// pixel lower or further right). a pixel smaller or larger isn't visible, an
+// uneven side is.
+float icon_size(unsigned int c, float w, float h, float want)
+{
+    static std::map<std::tuple<unsigned int, int, int, int>, float> chosen;
+    int bw = (int)std::lround(w), bh = (int)std::lround(h), base = (int)ImFloor(want);
+    auto key = std::make_tuple(c, bw, bh, base);
+    if (auto it = chosen.find(key); it != chosen.end()) return it->second;
+
+    float best = (float)base;
+    int best_misses = 4;
+    for (int d : {0, -1, 1, -2, 2}) {
+        auto g = ImGui::GetFont()->GetFontBaked((float)(base + d))->FindGlyphNoFallback((ImWchar)c);
+        if (!g) continue;
+        auto ink = ink_box(*g);
+        int iw = (int)std::lround(ink.GetWidth()), ih = (int)std::lround(ink.GetHeight());
+        // left and right matter more, some icons are odd one way and even
+        // the other at every size
+        int misses = 2 * ((bw - iw) & 1) + ((bh - ih) & 1);
+        if (misses < best_misses) {
+            best_misses = misses;
+            best = (float)(base + d);
+        }
+        if (misses == 0) break;
+    }
+    chosen[key] = best;
+    return best;
+}
 
 }
 
@@ -89,12 +124,11 @@ bool icon_button(const char* icon, const char* tip, bool active, bool enabled)
     bool clicked = Button("##icon", {h, h});
     PopStyleVar();
     // drawn by hand: a label would be centered by its advance and line
-    // height, which leaves icons a pixel or two off. the icon font's em is
-    // 60% of the button, font awesome's icons fill most of it.
+    // height, which leaves icons a pixel or two off
     auto min = GetItemRectMin(), max = GetItemRectMax();
-    float size = ImFloor(0.6f * h);
     unsigned int c = 0;
     ImTextCharFromUtf8(&c, icon, nullptr);
+    float size = icon_size(c, max.x - min.x, max.y - min.y, 0.6f * h);
     if (auto g = GetFont()->GetFontBaked(size)->FindGlyphNoFallback((ImWchar)c)) {
         auto ink = ink_box(*g);
         ImVec2 at{ImFloor((min.x + max.x - ink.Min.x - ink.Max.x) / 2 + 0.5f), ImFloor((min.y + max.y - ink.Min.y - ink.Max.y) / 2 + 0.5f)};

@@ -553,11 +553,14 @@ void load_fonts(const font_ref& ui, const font_ref& mono, std::string_view built
         io.Fonts->AddFontFromMemoryTTF((void*)builtin_ttf.data(), (int)builtin_ttf.size(), 0.0f, &config);
     }
     // the icons are glyphs of the ui font, whichever it is. icon_button
-    // centers them by their drawn shape.
+    // centers them by their drawn shape, which needs them on whole pixels:
+    // without oversampling a glyph isn't drawn at a fraction of a pixel.
     if (!icons_ttf.empty()) {
         ImFontConfig config;
         config.MergeMode = true;
         config.FontDataOwnedByAtlas = false;
+        config.PixelSnapH = true;
+        config.OversampleH = config.OversampleV = 1;
         io.Fonts->AddFontFromMemoryTTF((void*)icons_ttf.data(), (int)icons_ttf.size(), 0.0f, &config);
     }
 
