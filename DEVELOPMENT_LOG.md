@@ -4590,3 +4590,59 @@ The user changed their mind about the look of the 7-segment display:
 ### Outstanding issues
 
 - The imgui shift by −1 is suppressed, not fixed (third-party code).
+
+## 2026-10-27 16:44 +0300
+
+### Changes made
+
+- **The resource packer is renamed from `myar` to `hdres`** (in the Hd
+  submodule). The name was chosen by the user from a list of suggestions:
+  "Hd resources", matching `Hd::Resource`, which reads the archives.
+
+  | What | Before | After |
+  | --- | --- | --- |
+  | Folder | `Hd/deps/myar` | `Hd/deps/hdres` |
+  | Library / tool targets | `myar` / `myar-bin` | `hdres` / `hdres-bin` (files `libhdres-0.1.0.a`, `hdres-0.1.0`) |
+  | Sources | `myar.h`, `myar.cpp` | `hdres.h`, `hdres.cpp` |
+  | Namespace, types | `myar::`, `myar_file`, `myar_header` | `hdres::`, `hdres_file`, `hdres_header` |
+  | Archive files | `exeres.myar`, `libres.myar` | `exeres.hdres`, `libres.hdres` |
+  | Signature | `MYAR` | `HDRS` |
+  | Linked symbols | `_binary_exeres_myar_start`, `exeres_myar` (web), ... | `_binary_exeres_hdres_start`, `exeres_hdres`, ... |
+
+### How it works
+
+- `git mv` keeps the files' history; the contents were changed with a
+  plain `myar` → `hdres` replacement.
+- **Changed together:**
+  - Hd's `CMakeLists.txt` (`add_subdirectory`, linking, install).
+  - `cmake/resource.cmake`: the archive's file name, and the array name
+    given to `bin2c.cmake` for the web build.
+  - `src/Hd/Resource.cpp` and `ResourceDefault.cpp`.
+- **Why the symbols changed:** natively, `ld -r -b binary` names the
+  symbols after the archive's file name. On the web, `bin2c` gets the
+  array name. Renaming the file without the symbols wouldn't link.
+- **The signature** (`HDRS`) and the error text ("this is not an hdres
+  archive") changed too. Archives are generated on every build, so no old
+  `.myar` file is ever read.
+- **This repository:** only the submodule bump. Its own CMake no longer
+  mentions the packer. Older log entries keep the old names, as they were
+  written then.
+
+### Testing
+
+- **Normal build**, reconfigured and rebuilt:
+  - `hdres-bin` generated `exeres.hdres` and `libres.hdres`.
+  - `nm` shows `_binary_exeres_hdres_*` and `_binary_libres_hdres_*` in
+    the app.
+  - All 9 ctest suites pass.
+- **The app** (private Xvnc) loads everything from the new archives:
+  Roboto text, the Font Awesome toolbar icons, and the canvas with the
+  grid and the component bar (shaders).
+- **Web build:** `exeres.hdres` is embedded as `exeres_hdres` and links.
+- **Sanitizer build**, rebuilt with `-j3`: the sanitized `hdres-bin`
+  generated the archives without a report, and all 9 suites pass.
+
+### Outstanding issues
+
+- Old `exeres.myar` and `libres.myar` files stay in existing build folders
+  until they are cleaned. Nothing reads them.
