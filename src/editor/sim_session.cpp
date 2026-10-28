@@ -1,5 +1,7 @@
 #include "sim_session.h"
 #include "../ui/file_dialog.h"
+#include "../ui/icons.h"
+#include "../wave/search.h"
 #include "../wave/vcd.h"
 
 #include <imgui.h>
@@ -210,14 +212,14 @@ public:
     void toolbar() override
     {
         using namespace ImGui;
-        if (Button(run.running() ? "Pause" : "Run")) run.run(!run.running());
-        SameLine(0, 2);
-        if (Button("Step")) run.step();
-        SameLine(0, 2);
-        if (Button("Clear")) run.query([](sim::simulator& s) { s.waveforms.clear(s); });
-        SetItemTooltip("Start the history over from now");
-        SameLine(0, 2);
-        if (Button("Export VCD...")) ui::open_dialog(dialog.c_str(), "Export waveforms", ui::waveform_files, std::filesystem::current_path() / (name + ".vcd"), true);
+        if (ui::icon_button(run.running() ? ui::icon::pause : ui::icon::play, run.running() ? "Pause" : "Run")) run.run(!run.running());
+        SameLine(0, ui::toolbar_gap());
+        if (ui::icon_button(ui::icon::step, "Step")) run.step();
+        SameLine(0, ui::toolbar_gap());
+        if (ui::icon_button(ui::icon::eraser, "Clear: start the history over from now")) run.query([](sim::simulator& s) { s.waveforms.clear(s); });
+        SameLine(0, ui::toolbar_gap());
+        if (ui::icon_button(ui::icon::download, "Export VCD..."))
+            ui::open_dialog(dialog.c_str(), "Export waveforms", ui::waveform_files, std::filesystem::current_path() / (name + ".vcd"), true);
         SameLine(0, 16);
     }
     void removed(int64_t key) override
@@ -261,7 +263,8 @@ void sim_session::waveforms_gui(const std::string& title)
     std::filesystem::path file;
     if (ui::dialog_result(dialog.c_str(), file)) {
         std::ofstream out(file);
-        wave::write_vcd(out, wave_data);
+        // a bundle's fields as signals of their own, in a scope
+        wave::write_vcd(out, wave::expand_fields(wave_data));
         bool truncated = false;
         for (auto& t : wave_data.traces)
             truncated |= !t.empty() && t.at(0) > wave_data.begin;

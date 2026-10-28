@@ -400,29 +400,100 @@ int sim_view::pin_net(int instance, int port) const
     return local >= 0 ? sc.flat_net[local] : -1;
 }
 
-void sim_view::record_signal(int net, const std::string& name)
+std::optional<model::bundle_layout> sim_view::bundle_of(int net) const
+{
+    auto& sc = current();
+    for (size_t local = 0; local < sc.flat_net.size(); local++) {
+        auto& n = sc.nets->nets[local];
+        if (sc.flat_net[local] != net || n.bundle == model::no_id || n.type_error || n.width_error) continue;
+        auto layout = ws.layout_of(n.bundle, false, n.bundle_args);
+        if (layout && layout.width == s->sim().net_width(net)) return layout;
+        break;
+    }
+    return std::nullopt;
+}
+
+namespace {
+
+// the fields of a bundle's nodes [first, end) for the waveform view, bits
+// relative to lo and depths to depth
+std::vector<wave::field> wave_fields(const model::bundle_layout& l, size_t first, size_t end, int lo, int depth, const std::string& prefix)
+{
+    std::vector<wave::field> r;
+    for (size_t k = first; k < end; k++) {
+        auto& n = l.nodes[k];
+        r.push_back({n.path.substr(prefix.size()), n.offset - lo, n.width, n.depth - depth, n.bundle != model::no_id});
+    }
+    return r;
+}
+
+}
+
+void sim_view::record_signal(int net, const std::string& name, int node)
 {
     if (net < 0 || s->sim().net_width(net) == 0) return;
     auto& sc = current();
     auto label = s->sim().root().cell->name + "/" + (sc.path.empty() ? "" : sc.path + "/") + name;
 
-    // a bundle is recorded field by field
-    std::vector<model::bundle_leaf> fields;
-    for (size_t local = 0; local < sc.flat_net.size(); local++) {
-        auto& n = sc.nets->nets[local];
-        if (sc.flat_net[local] != net || n.bundle == model::no_id || n.type_error || n.width_error) continue;
-        auto layout = ws.layout_of(n.bundle, false, n.bundle_args);
-        if (layout && layout.width == s->sim().net_width(net)) fields = layout.leaves;
-        break;
+    // a bundle is one signal, its fields are shown under it. a field alone
+    // is the field's bits, a nested bundle with its own fields.
+    int lo = 0, width = 0;
+    std::vector<wave::field> fields;
+    if (auto layout = bundle_of(net)) {
+        if (node < 0) {
+            fields = wave_fields(*layout, 0, layout->nodes.size(), 0, 0, "");
+        } else if (node < (int)layout->nodes.size()) {
+            auto& n = layout->nodes[node];
+            lo = n.offset;
+            width = n.width;
+            label += "." + n.path;
+            if (n.bundle != model::no_id) {
+                // the nodes after it that are deeper
+                size_t end = node + 1;
+                while (end < layout->nodes.size() && layout->nodes[end].depth > n.depth)
+                    end++;
+                fields = wave_fields(*layout, node + 1, end, n.offset, n.depth + 1, n.path + ".");
+            }
+        }
     }
 
     // only the recorder changes, real time running goes on undisturbed
-    s->run.query([net, label, fields](sim::simulator& sim) {
-        if (fields.empty()) sim.waveforms.add(sim, net, label);
-        for (auto& f : fields)
-            sim.waveforms.add(sim, net, label + "." + f.path, f.offset, f.width);
-    });
+    s->run.query([net, label, lo, width, fields](sim::simulator& sim) { sim.waveforms.add(sim, net, label, lo, width, fields); });
     s->waveforms_visible = true;
+}
+
+void sim_view::signal_item(int net, const std::string& name, const char* label)
+{
+    using namespace ImGui;
+    auto& recorder = s->run.sim().waveforms;
+    bool room = recorder.size() < sim::waveform_recorder::max_signals;
+    bool valid = net >= 0 && s->sim().net_width(net) > 0;
+    auto layout = valid ? bundle_of(net) : std::nullopt;
+    PushID(net);
+    if (!layout) {
+        bool exists = valid && recorder.contains(net);
+        if (MenuItem(label, nullptr, exists, valid && !exists && room)) record_signal(net, name);
+        PopID();
+        return;
+    }
+    // the whole bundle or a field of it
+    if (BeginMenu(label, valid)) {
+        bool exists = recorder.has(sim::waveform_recorder::key_of(net));
+        if (MenuItem("Whole bundle", nullptr, exists, !exists && room)) record_signal(net, name);
+        Separator();
+        for (int k = 0; k < (int)layout->nodes.size(); k++) {
+            auto& n = layout->nodes[k];
+            bool has = recorder.has(sim::waveform_recorder::key_of(net, n.offset, n.width));
+            PushID(k);
+            if (n.depth > 0) Indent(n.depth * GetStyle().IndentSpacing * 0.6f);
+            auto text = n.name + (n.bundle != model::no_id ? " (bundle)" : n.width > 1 ? " [" + std::to_string(n.width) + "]" : "");
+            if (MenuItem(text.c_str(), nullptr, has, !has && room)) record_signal(net, name, k);
+            if (n.depth > 0) Unindent(n.depth * GetStyle().IndentSpacing * 0.6f);
+            PopID();
+        }
+        EndMenu();
+    }
+    PopID();
 }
 
 void sim_view::signals_menu()
@@ -434,13 +505,7 @@ void sim_view::signals_menu()
     size_t recorded = recorder.size();
     TextDisabled("Add signals in %s", scope_label(sc).c_str());
     TextDisabled("%zu / %zu signals (connected aliases share a trace)", recorded, sim::waveform_recorder::max_signals);
-    auto item = [&](int net, const std::string& name) {
-        bool exists = recorder.contains(net);
-        bool enabled = net >= 0 && s->sim().net_width(net) > 0 && !exists && recorded < sim::waveform_recorder::max_signals;
-        PushID(net);
-        if (MenuItem(name.c_str(), nullptr, exists, enabled)) record_signal(net, name);
-        PopID();
-    };
+    auto item = [&](int net, const std::string& name) { signal_item(net, name, name.c_str()); };
     if (BeginMenu("Cell ports")) {
         for (int k = 0; k < (int)sc.cell->ports.size(); k++) item(s->sim().net_of_port(sc, k), sc.cell->ports[k].name);
         EndMenu();
@@ -495,11 +560,7 @@ void sim_view::instance_menu()
     auto child = menu_instance >= 0 ? sc.child(menu_instance) : nullptr;
     auto& recorder = s->run.sim().waveforms;
     size_t recorded = recorder.size();
-    auto add_item = [&](int net, const std::string& name, const char* label) {
-        bool exists = recorder.contains(net);
-        bool enabled = net >= 0 && s->sim().net_width(net) > 0 && !exists && recorded < sim::waveform_recorder::max_signals;
-        if (MenuItem(label, nullptr, exists, enabled)) record_signal(net, name);
-    };
+    auto add_item = [&](int net, const std::string& name, const char* label) { signal_item(net, name, label); };
     if (recorded >= sim::waveform_recorder::max_signals)
         TextDisabled("Signal limit reached; remove a waveform to add another.");
     if (menu_net >= 0) {
@@ -728,7 +789,7 @@ void sim_view::instance_panel()
         }
         SetItemTooltip("Enter sends the text and a carriage return");
         SameLine();
-        if (Button("Clear")) s->interact(&sc, selected, "clear", 0);
+        if (Button((std::string(ui::icon::eraser) + " Clear").c_str())) s->interact(&sc, selected, "clear", 0);
     }
 
     if (!w.debug) return;
@@ -752,7 +813,8 @@ void sim_view::instance_panel()
         }
         for (auto bp : w.breakpoints) {
             PushID((int)bp);
-            if (SmallButton("x")) s->debug([bp](sim::debug_interface& d) { d.set_breakpoint(bp, false); });
+            if (SmallButton(ui::icon::xmark)) s->debug([bp](sim::debug_interface& d) { d.set_breakpoint(bp, false); });
+            SetItemTooltip("remove the breakpoint");
             SameLine();
             Text("breakpoint at %llX", (unsigned long long)bp);
             PopID();

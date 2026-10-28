@@ -5543,3 +5543,141 @@ AXI bundles, an AXI crossbar, an AXI RAM and an AXI test master.
 ### Next steps
 
 - See the recommended features.
+
+## 2026-10-28 18:44 +0300
+
+Bundles as groups in the waveform view, single fields on their own, and
+icons on buttons.
+
+### Features implemented
+
+- **A bundle is one row in the waveforms.**
+  - The row is named after the net, and its time line shows a summary of
+    its fields (`awid=0 awaddr=00000040 …`, as much as fits in each
+    segment).
+  - Its arrow (or "Show fields" in the row menu) expands it into an
+    indented line per field, each with its own trace. The name and the
+    value at cursor A sit on one line.
+  - Nested bundles are sub-groups with their own arrow and summary.
+  - The whole bundle is recorded as one signal, so it counts once toward
+    the 64-signal limit, not once per field.
+- **A single field can be added on its own.** On a bundle net, "Add to
+  waveforms" (wire menu, the instance's pins menu and the Signals menu) is
+  now a submenu: "Whole bundle", then every field with its width, nested
+  fields indented. A nested bundle added alone keeps its own fields.
+  Entries already recorded are checked and greyed out.
+- **The VCD export writes a bundle's fields as signals of their own** in a
+  scope named after the bundle, e.g. `top.bus.data[7:0]`.
+- **Icons:**
+  - The waveform window: Run/Pause, Step, Clear (eraser) and Export VCD
+    (download); Fit, zoom out and in, Add marker (flag), Markers (list) and
+    Find previous/next (chevrons), all with tooltips. Removing a row is ×,
+    and a marker's Go/Delete are → and the trash can.
+  - In the app, every small "x" remove button is now an × icon with a
+    tooltip (bundle fields, parameters, ports, port groups, list entries,
+    breakpoints, the start error). The "Add field", "Add parameter",
+    "Add port" and "Add source/include folder/define" buttons get a + icon.
+    The messages and terminal "Clear" buttons get an eraser.
+  - Dialog buttons stay as text.
+
+### Changes made
+
+- `wave::field` and `signal::fields` are new; signals without fields are
+  unchanged.
+- `waveform_recorder::add` takes the fields, and `has(key)` is new.
+- `sim_view`:
+  - `record_signal(net, name, node)`;
+  - a new `signal_item` replaces the three menu-item lambdas;
+  - `bundle_of(net)` holds the bundle lookup.
+- The view: `row::closed` (closed sub-groups); `line::depth`; `bits` is
+  renamed `parts` and also caches field slices and summaries; text traces
+  that don't fit their segment are drawn clipped, where before they were
+  left out.
+- `ui/icons.h` gets xmark, plus, zoom in/out, fit, eraser, flag, list,
+  prev/next and go. All were checked to be in res/fonts/fa-solid-900.ttf.
+
+### How it works
+
+- `search.{h,cpp}`:
+  - `slice_trace(t, lo, width)` gives a field's changes;
+  - `group_end(fields, k)` gives the end of a group;
+  - `summary_trace(t, fields, first, end)` gives a text trace of
+    `name=value` for the leaf fields (one bit as 0/1/x/z, wider ones in
+    hex, names relative to the group), with only the changes where the
+    text changes;
+  - `expand_fields(set)` replaces signals that have fields by one signal
+    per leaf, named `name.path`, for the VCD writer, which turns the dots
+    into scopes.
+- `view::line_trace`:
+  - for a signal with fields, `line_id.second` is a field index;
+  - a leaf gives its slice, a group the summary of its fields, and the
+    row's own line (-1) the summary of all fields;
+  - all are cached by trace version.
+- Lines: an expanded row with fields adds a line per field, and skips
+  the fields of a closed group (`group_end`). Plain wide rows still expand
+  into bits.
+- Recording:
+  - `sim_view::record_signal` turns the bundle layout's nodes into
+    `wave::field`s (nested bundle nodes become groups);
+  - a single field is recorded as bits of the net
+    (`waveform_recorder::key_of(net, lo, width)`), so it's a separate
+    signal next to the whole bundle;
+  - a nested bundle added alone gets its sub-fields with offsets and
+    depths relative to it.
+- Decisions, made with the user:
+  - a collapsible group, recorded once;
+  - the header shows a field summary;
+  - single fields come from the schematic menus;
+  - icons on the waveform toolbar and on the common small app buttons,
+    not on dialogs.
+- Rejected: keeping a signal per field and grouping the rows by name. It
+  uses up the signal limit, and a bundle's fields couldn't be told apart
+  from a field added on its own.
+
+### Testing
+
+- vcd_test `test_fields`:
+  - slices change only where their bits do;
+  - the summary text for all fields, with x/z, and for a sub-group with
+    relative names and fewer changes;
+  - `group_end`;
+  - `expand_fields` gives names, widths and values;
+  - writing a VCD and reading it back gives `top.bus.data[7:0]` and
+    `top.bus.s.x` with the right values.
+- waveform_test `test_bundle_rows`:
+  - the recorder keeps a bundle with its fields and a field recorded on
+    its own, and `has(key)` works;
+  - the view has two rows, and expanding the bundle adds at least four
+    field lines of height.
+- All 9 ctest suites pass, and the web build compiles.
+- GUI on VNC with `examples/axi_demo`:
+  - the wire menu shows "Add to waveforms ▸" with "Whole bundle" and all
+    the AXI fields;
+  - adding the whole bundle and then `awaddr` gives two rows, `wire 7`
+    with its summary and `wire 7.awaddr`;
+  - after a test-master write, the summary changes at the handshake;
+  - expanding shows indented field lines (awid, awaddr, awlen, …) with
+    their values; the toolbar icons show with their tooltips.
+  - First try, a field's value overlapped the next line, so name and value
+    now share one line, which was then checked.
+
+### Recommended features
+
+- Pulling a field out of an expanded group into a row of its own from the
+  waveform (drag or menu), in addition to the schematic menus.
+- A summary that lists the fields that changed first, or only the
+  handshake signals, for wide bundles like AXI.
+- Keeping groups' open/closed state in saved sessions (only recordings
+  have fields today; VCD files don't).
+
+### Outstanding issues
+
+- Field lines can't be expanded into bits.
+- A bundle's summary is long for wide bundles, so each segment shows only
+  its first fields.
+- The standalone viewer reads the exported fields back as separate
+  signals (VCD has no bundles), not as a group.
+
+### Next steps
+
+- See the recommended features.

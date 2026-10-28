@@ -5,6 +5,7 @@
 
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -68,12 +69,18 @@ private:
         uint32_t color = 0;
         // analog values scaled to the visible part instead of everything
         bool fit_visible = false;
+        // the groups among the signal's fields that are closed, by index
+        std::set<int> closed;
     };
-    // a drawn line: a row, or one bit of an expanded row
+    // a drawn line: a row, or one bit of an expanded row, or a field of a
+    // row whose signal has fields
     struct line {
         int row;
+        // the bit or the field, -1 for the row itself
         int bit;
         float top, height;
+        // of a field
+        int depth = 0;
     };
     using line_id = std::pair<int64_t, int>;
 
@@ -101,8 +108,9 @@ private:
     std::vector<line_id> selection;
     // removed rows whose signal is still in the data, see sync_rows
     std::vector<int64_t> removed;
-    // bit traces of expanded rows, remade when their trace changes
-    std::map<line_id, std::pair<uint64_t, trace>> bits;
+    // bit and field traces of expanded rows and the summaries of bundles,
+    // remade when their trace changes
+    std::map<line_id, std::pair<uint64_t, trace>> parts;
 
     bool fit = true;
     bool started = false;

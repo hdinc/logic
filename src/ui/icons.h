@@ -33,6 +33,17 @@ inline constexpr const char* file = "\xef\x85\x9b"; // file
 inline constexpr const char* rename = "\xef\x81\x84"; // pen-to-square
 inline constexpr const char* trash = "\xef\x8b\xad"; // trash-can
 inline constexpr const char* home = "\xef\x80\x95"; // house
+inline constexpr const char* xmark = "\xef\x80\x8d"; // xmark
+inline constexpr const char* plus = "\xef\x81\xa7"; // plus
+inline constexpr const char* zoom_in = "\xef\x80\x8e"; // magnifying-glass-plus
+inline constexpr const char* zoom_out = "\xef\x80\x90"; // magnifying-glass-minus
+inline constexpr const char* fit = "\xef\x81\xbe"; // arrows-left-right
+inline constexpr const char* eraser = "\xef\x84\xad"; // eraser
+inline constexpr const char* flag = "\xef\x80\xa4"; // flag
+inline constexpr const char* list = "\xef\x80\xba"; // list
+inline constexpr const char* prev = "\xef\x81\x93"; // chevron-left
+inline constexpr const char* next = "\xef\x81\x94"; // chevron-right
+inline constexpr const char* go = "\xef\x81\xa1"; // arrow-right
 
 }
 

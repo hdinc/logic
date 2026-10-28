@@ -54,6 +54,81 @@ time prev_match(const trace& t, time before, const pattern& p)
     return never;
 }
 
+trace slice_trace(const trace& t, int lo, int width)
+{
+    trace result(kind::digital, width);
+    for (size_t i = 0; i < t.size(); i++)
+        result.push(t.at(i), t.value(i).slice(lo, width));
+    return result;
+}
+
+size_t group_end(const std::vector<field>& fields, size_t group)
+{
+    size_t k = group + 1;
+    while (k < fields.size() && fields[k].depth > fields[group].depth)
+        k++;
+    return k;
+}
+
+trace summary_trace(const trace& t, const std::vector<field>& fields, size_t first, size_t end)
+{
+    trace result(kind::text, 1);
+    if (first >= end) return result;
+    int base = fields[first].depth;
+    for (size_t i = 0; i < t.size(); i++) {
+        auto v = t.value(i);
+        std::string text;
+        for (size_t k = first; k < end && k < fields.size(); k++) {
+            auto& f = fields[k];
+            if (f.group) continue;
+            // the path below the summary's own level
+            std::string_view name = f.name;
+            for (int d = 0; d < base; d++)
+                if (auto dot = name.find('.'); dot != std::string_view::npos) name.remove_prefix(dot + 1);
+            auto part = v.slice(f.lo, f.width);
+            if (!text.empty()) text += ' ';
+            text += name;
+            text += '=';
+            text += f.width == 1 ? sim::to_string(part) : sim::to_hex(part);
+        }
+        result.push(t.at(i), std::move(text));
+    }
+    return result;
+}
+
+trace_set expand_fields(const trace_set& set)
+{
+    trace_set r;
+    r.tb = set.tb;
+    r.begin = set.begin;
+    r.end = set.end;
+    r.generation = set.generation;
+    for (auto& s : set.signals) {
+        if (s.fields.empty()) {
+            auto copy = s;
+            copy.trace = (int)r.traces.size();
+            r.traces.push_back(set.trace_of(s));
+            r.signals.push_back(std::move(copy));
+            continue;
+        }
+        auto& t = set.trace_of(s);
+        for (size_t k = 0; k < s.fields.size(); k++) {
+            auto& f = s.fields[k];
+            if (f.group) continue;
+            signal leaf;
+            // a key per field that no other signal has
+            leaf.key = s.key ^ (int64_t(k + 1) << 56);
+            leaf.name = s.name + "." + f.name;
+            leaf.width = f.width;
+            leaf.type = kind::digital;
+            leaf.trace = (int)r.traces.size();
+            r.traces.push_back(slice_trace(t, f.lo, f.width));
+            r.signals.push_back(std::move(leaf));
+        }
+    }
+    return r;
+}
+
 trace bit_trace(const trace& t, int bit)
 {
     trace result(kind::digital, 1);

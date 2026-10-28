@@ -1184,7 +1184,7 @@ void app::messages_panel()
     if (messages.empty()) return;
 
     Begin("Messages");
-    if (Button("Clear")) messages.clear();
+    if (Button((std::string(ui::icon::eraser) + " Clear").c_str())) messages.clear();
     {
         // compiler output lines up its markers by columns
         ui::mono_scope mono;

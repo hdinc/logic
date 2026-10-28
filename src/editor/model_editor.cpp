@@ -29,7 +29,7 @@ bool string_list(const char* id, std::vector<std::string>& list, const char* add
             if (browse_button("browse", list[k], dir ? *dir : std::filesystem::path{}, filters)) changed = true;
         }
         SameLine();
-        if (SmallButton("x")) {
+        if (SmallButton(ui::icon::xmark)) {
             list.erase(list.begin() + k);
             changed = true;
             PopID();
@@ -43,7 +43,7 @@ bool string_list(const char* id, std::vector<std::string>& list, const char* add
         }
         PopID();
     }
-    if (SmallButton(add_label)) {
+    if (SmallButton((std::string(ui::icon::plus) + " " + add_label).c_str())) {
         list.emplace_back();
         changed = true;
     }
@@ -380,7 +380,7 @@ void model_editor::ports_table()
             SetNextItemWidth(-1);
             if (input_string("##desc", p.description)) changed = true;
             TableNextColumn();
-            if (SmallButton("x")) remove = k;
+            if (SmallButton(ui::icon::xmark)) remove = k;
             SetItemTooltip("remove the port and its pin");
             PopID();
         }
@@ -394,7 +394,7 @@ void model_editor::ports_table()
         changed = true;
     }
 
-    if (Button("Add port")) {
+    if (Button((std::string(ui::icon::plus) + " Add port").c_str())) {
         if (grouped) {
             model::port p;
             p.id = c.new_id();
@@ -522,7 +522,7 @@ void model_editor::groups_table()
             }
             SetItemTooltip("the side of the generated symbol");
             TableNextColumn();
-            if (SmallButton("x")) remove = k;
+            if (SmallButton(ui::icon::xmark)) remove = k;
             SetItemTooltip("back to the model's ports");
             PopID();
         }

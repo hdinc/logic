@@ -59,7 +59,14 @@ private:
     // the value of a wide input of the top cell: text in its format, the
     // format, and the bits
     void port_value_popup();
-    void record_signal(int net, const std::string& name);
+    // node: a field of a bundle net (an index into its layout's nodes), -1
+    // for the whole net
+    void record_signal(int net, const std::string& name, int node = -1);
+    // a menu item adding the net to the waveforms, for a bundle a menu of it
+    // and its fields
+    void signal_item(int net, const std::string& name, const char* label);
+    // the bundle carried by the net in the shown scope
+    std::optional<model::bundle_layout> bundle_of(int net) const;
     int pin_net(int instance, int port) const;
     // the state and the debugger of the selected instance
     void instance_panel();

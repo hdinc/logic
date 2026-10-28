@@ -108,6 +108,20 @@ private:
     mutable bool blocks_signed = false;
 };
 
+// a part of a signal shown as its own line under it, e.g. a field of a
+// bundle: bits [lo, lo + width)
+struct field {
+    // relative to the signal, "aw.valid"
+    std::string name;
+    int lo = 0;
+    int width = 1;
+    // nested groups are one deeper than the group they're in
+    int depth = 0;
+    // a nested bundle: the fields after it with a greater depth are its own
+    bool group = false;
+    bool operator==(const field&) const = default;
+};
+
 struct signal {
     // stays the same while the signal is there: the net in the simulator,
     // the declaration order in a vcd file
@@ -118,6 +132,9 @@ struct signal {
     kind type = kind::digital;
     // index in trace_set::traces, signals of the same net share a trace
     int trace = 0;
+    // its parts, in declaration order, each group followed by its own.
+    // empty for a plain signal.
+    std::vector<field> fields = {};
 
     // after the last scope separator
     std::string_view leaf() const;

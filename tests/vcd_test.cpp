@@ -322,6 +322,58 @@ static void test_session()
     CHECK(rejected);
 }
 
+// a 12 bit bundle: valid, data[8], a nested bundle s with x and y[2]
+static void test_fields()
+{
+    trace_set set;
+    set.tb = {-12};
+    set.end = 40;
+    set.traces.emplace_back(kind::digital, 12);
+    auto& t = set.traces[0];
+    t.push(0, sim::known(0, 12));
+    t.push(10, sim::known(0xAB << 1 | 1, 12));          // valid, data AB
+    t.push(20, sim::known(0xAB << 1 | 1 | 0b101 << 9, 12)); // s.x 1, s.y 2
+    auto z = sim::known(1 | 0b101 << 9, 12);
+    z.insert(1, sim::floating(8));
+    t.push(30, z);                                       // data floating
+    std::vector<field> fields{
+        {"valid", 0, 1, 0, false},
+        {"data", 1, 8, 0, false},
+        {"s", 9, 3, 0, true},
+        {"s.x", 9, 1, 1, false},
+        {"s.y", 10, 2, 1, false},
+    };
+    set.signals.push_back({5, "top/bus", 12, kind::digital, 0, fields});
+
+    // a field changes only where its bits do
+    auto data = slice_trace(t, 1, 8);
+    CHECK(data.size() == 3 && data.at(1) == 10 && data.value(1) == sim::known(0xAB, 8) && data.at(2) == 30 && data.fully_floating(2));
+    auto x = slice_trace(t, 9, 1);
+    CHECK(x.size() == 2 && x.at(1) == 20);
+
+    CHECK(group_end(fields, 2) == 5 && group_end(fields, 0) == 1);
+    auto all = summary_trace(t, fields, 0, fields.size());
+    CHECK(all.type() == kind::text && all.size() == 4);
+    CHECK(all.text(1) == "valid=1 data=AB s.x=0 s.y=0");
+    CHECK(all.text(2) == "valid=1 data=AB s.x=1 s.y=2");
+    CHECK(all.text(3) == "valid=1 data=zz s.x=1 s.y=2");
+    // a group's own summary has names relative to it, and fewer changes
+    auto sub = summary_trace(t, fields, 3, 5);
+    CHECK(sub.size() == 2 && sub.text(1) == "x=1 y=2");
+
+    // the vcd gets a signal per field in a scope named after the bundle
+    auto flat = expand_fields(set);
+    CHECK(flat.signals.size() == 4 && flat.find_name("top/bus.s.y") && flat.find_name("top/bus.valid"));
+    if (auto y = flat.find_name("top/bus.s.y")) CHECK(y->width == 2 && flat.trace_of(*y).size() == 2 && flat.trace_of(*y).value(1) == sim::known(2, 2));
+    std::ostringstream out;
+    write_vcd(out, flat);
+    auto back = parse_vcd(out.str());
+    // the reader keeps the range in the name
+    auto d = back.find_name("top.bus.data[7:0]");
+    CHECK(d && d->width == 8 && back.find_name("top.bus.s.x"));
+    if (d) CHECK(back.trace_of(*d).value(1) == sim::known(0xAB, 8));
+}
+
 int main()
 {
     test_parse();
@@ -331,6 +383,7 @@ int main()
     test_search();
     test_formats();
     test_session();
+    test_fields();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

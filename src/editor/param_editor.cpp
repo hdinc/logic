@@ -197,7 +197,7 @@ bool edit_int_params(std::vector<model::param_def>& params, const char* none)
             if (ArrowButton("##down", ImGuiDir_Down)) move_up = k + 1;
             EndDisabled();
             SameLine(0, 2);
-            if (SmallButton("x")) remove = k;
+            if (SmallButton(ui::icon::xmark)) remove = k;
             SetItemTooltip("remove the parameter");
 
             PopID();
@@ -213,7 +213,7 @@ bool edit_int_params(std::vector<model::param_def>& params, const char* none)
         params.erase(params.begin() + remove);
         edited = true;
     }
-    if (Button("Add parameter")) {
+    if (Button((std::string(ui::icon::plus) + " Add parameter").c_str())) {
         std::string name;
         for (int n = 1;; n++) {
             name = n == 1 ? "W" : "W" + std::to_string(n);

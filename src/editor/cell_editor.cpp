@@ -112,7 +112,8 @@ void cell_editor::toolbar()
         TextColored(ui::color(ui::color_id::error), "%s", start_error.c_str());
         SameLine();
         ui::toolbar_center();
-        if (SmallButton("x")) start_error.clear();
+        if (SmallButton(ui::icon::xmark)) start_error.clear();
+        SetItemTooltip("dismiss");
         SameLine();
     }
 

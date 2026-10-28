@@ -45,7 +45,7 @@ value value_of(const simulator& s, int64_t key)
 
 }
 
-void waveform_recorder::add(const simulator& s, int net, std::string name, int lo, int width)
+void waveform_recorder::add(const simulator& s, int net, std::string name, int lo, int width, std::vector<wave::field> fields)
 {
     if (net < 0 || s.net_width(net) == 0) return;
     if (width && (lo < 0 || width < 0 || lo + width > s.net_width(net))) return;
@@ -58,7 +58,7 @@ void waveform_recorder::add(const simulator& s, int net, std::string name, int l
     wave::trace t(wave::kind::digital, w);
     t.push(s.now(), value_of(s, key));
     if (data.signals.empty()) data.begin = s.now();
-    data.signals.push_back({key, std::move(name), w, wave::kind::digital, (int)data.traces.size()});
+    data.signals.push_back({key, std::move(name), w, wave::kind::digital, (int)data.traces.size(), std::move(fields)});
     data.traces.push_back(std::move(t));
     dropped.push_back(0);
     data.end = s.now();
@@ -125,6 +125,12 @@ bool waveform_recorder::contains(int net) const
 {
     std::lock_guard lock(mutex);
     return std::any_of(data.signals.begin(), data.signals.end(), [net](auto& s) { return net_of(s.key) == net; });
+}
+
+bool waveform_recorder::has(int64_t key) const
+{
+    std::lock_guard lock(mutex);
+    return std::any_of(data.signals.begin(), data.signals.end(), [key](auto& s) { return s.key == key; });
 }
 
 size_t waveform_recorder::size() const

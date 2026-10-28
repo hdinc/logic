@@ -264,7 +264,7 @@ void bundle_editor::gui(bool locked)
             if (ArrowButton("##down", ImGuiDir_Down)) move_up = k + 1;
             EndDisabled();
             SameLine(0, 2);
-            if (SmallButton("x")) remove = k;
+            if (SmallButton(ui::icon::xmark)) remove = k;
             SetItemTooltip("remove the field");
 
             PopID();
@@ -280,7 +280,7 @@ void bundle_editor::gui(bool locked)
         b.fields.erase(b.fields.begin() + remove);
         edited = true;
     }
-    if (Button("Add field")) {
+    if (Button((std::string(ui::icon::plus) + " Add field").c_str())) {
         model::bundle_field f;
         for (int n = 1;; n++) {
             f.name = "f" + std::to_string(n);

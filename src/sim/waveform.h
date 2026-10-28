@@ -30,7 +30,9 @@ public:
 
     // Mutations are called on the simulation thread (through runner::query).
     // width 0 records the whole net, otherwise bits [lo, lo + width).
-    void add(const simulator& s, int net, std::string name, int lo = 0, int width = 0);
+    // fields are the parts the view shows under it, e.g. of a bundle,
+    // relative to lo.
+    void add(const simulator& s, int net, std::string name, int lo = 0, int width = 0, std::vector<wave::field> fields = {});
     void remove(int64_t key);
     // starts the history over from the current values
     void clear(const simulator& s);
@@ -38,6 +40,8 @@ public:
 
     // a signal of the net, the whole net or bits of it
     bool contains(int net) const;
+    // the signal of the key, see key_of
+    bool has(int64_t key) const;
     size_t size() const;
     // a copy of everything recorded
     wave::trace_set snapshot() const;

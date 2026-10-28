@@ -350,6 +350,70 @@ static void test_file(frames& frame)
     CHECK(other.rows() == 4 && other.timeline.start() == view.timeline.start());
 }
 
+// a bundle recorded once with its fields, and one field on its own
+static void test_bundle_rows(frames& frame)
+{
+    model::workspace ws;
+    ws.add_builtin_library(builtin::registry());
+    auto& cell = ws.create_cell(ws.add_library("work"), "top");
+    cell.add_port(model::direction::input, {-20, 0}).width = 12;
+    cell.add_port(model::direction::output, {20, 0}).width = 12;
+    sim::runner run(std::make_unique<sim::simulator>(ws, cell, builtin::factory()));
+    int net = run.sim().net_of_port(run.sim().root(), 0);
+    std::vector<wave::field> fields{
+        {"valid", 0, 1, 0, false},
+        {"data", 1, 8, 0, false},
+        {"s", 9, 3, 0, true},
+        {"s.x", 9, 1, 1, false},
+        {"s.y", 10, 2, 1, false},
+    };
+    auto data_key = sim::waveform_recorder::key_of(net, 1, 8);
+    run.query([&](sim::simulator& s) {
+        s.waveforms.add(s, net, "top/bus", 0, 0, fields);
+        s.waveforms.add(s, net, "top/bus.data", 1, 8);
+        s.set_input(0, sim::known(0xAB << 1 | 1, 12));
+        s.run_until(sim::ms);
+        s.set_input(0, sim::known(0xCD << 1 | 0b101 << 9, 12));
+        s.run_until(2 * sim::ms);
+    });
+    run.wait_idle();
+    auto& rec = run.sim().waveforms;
+    CHECK(rec.size() == 2 && rec.has(net) && rec.has(data_key) && !rec.has(sim::waveform_recorder::key_of(net, 0, 1)));
+
+    wave::trace_set data;
+    sim::waveform_recorder::sync_state state;
+    rec.sync(data, state);
+    auto bus = data.find(net);
+    CHECK(bus && bus->fields == fields && bus->width == 12);
+    auto alone = data.find(data_key);
+    CHECK(alone && alone->fields.empty() && alone->width == 8 && data.trace_of(*alone).value(data.trace_of(*alone).size() - 1) == sim::known(0xCD, 8));
+
+    wave::view view;
+    test_host host;
+    host.recording = true;
+    auto draw = [&] {
+        rec.sync(data, state);
+        frame(view, data, host, {1000, 300});
+    };
+    for (int f = 0; f < 3; f++)
+        draw();
+    CHECK(view.rows() == 2);
+    auto plot = frame.plot();
+    CHECK(plot);
+    if (!plot) return;
+    float collapsed = plot->ContentSize.y;
+
+    // expanded: a line per field, closed groups hide theirs
+    auto session = view.save(data);
+    for (auto& r : session.rows)
+        r.expanded = r.name == "top/bus";
+    view.restore(data, session);
+    for (int f = 0; f < 3; f++)
+        draw();
+    float expanded = plot->ContentSize.y;
+    CHECK(expanded > collapsed + 4 * ImGui::GetTextLineHeightWithSpacing() * 2 * 0.8f * 0.9f);
+}
+
 int main()
 {
     test_timeline();
@@ -366,6 +430,7 @@ int main()
     frames frame;
     test_recording(frame);
     test_file(frame);
+    test_bundle_rows(frame);
     CHECK(frame.drew && frame.filled_bus);
     ImGui::DestroyContext();
 
