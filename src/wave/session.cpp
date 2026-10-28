@@ -32,6 +32,7 @@ std::string session_to_json(const session& s)
         json row = {{"name", r.name}, {"display", display_ids[int(r.mode)]}, {"height", r.height}};
         if (r.fmt) row["format"] = format_id(*r.fmt);
         if (r.expanded) row["expanded"] = true;
+        if (r.part_height != 0.8f) row["part_height"] = r.part_height;
         if (r.color) row["color"] = r.color;
         rows.push_back(std::move(row));
     }
@@ -67,6 +68,7 @@ session session_from_json(std::string_view text)
                 if (mode == display_ids[k]) r.mode = display(k);
             r.height = row.value("height", 1.0f);
             r.expanded = row.value("expanded", false);
+            r.part_height = row.value("part_height", 0.8f);
             r.color = row.value("color", uint32_t(0));
             if (!r.name.empty()) s.rows.push_back(std::move(r));
         }

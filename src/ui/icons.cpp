@@ -112,12 +112,11 @@ void toolbar_size_menu()
         if (MenuItem(names[k], nullptr, g_size == (toolbar_size)k)) g_size = (toolbar_size)k;
 }
 
-bool icon_button(const char* icon, const char* tip, bool active, bool enabled)
+bool icon_button_at(const char* icon, const char* tip, float h, bool active, bool enabled)
 {
     using namespace ImGui;
     if (active) PushStyleColor(ImGuiCol_Button, GetStyleColorVec4(ImGuiCol_ButtonActive));
     BeginDisabled(!enabled);
-    float h = toolbar_button_size();
     // padding that puts text on the same line in the middle of the button
     PushStyleVar(ImGuiStyleVar_FramePadding, {GetStyle().FramePadding.x, (h - GetFontSize()) / 2});
     PushID(icon);
@@ -137,12 +136,26 @@ bool icon_button(const char* icon, const char* tip, bool active, bool enabled)
     EndDisabled();
     if (active) PopStyleColor();
     SetItemTooltip("%s", tip);
+    PopID();
+    return clicked;
+}
+
+bool icon_button(const char* icon, const char* tip, bool active, bool enabled)
+{
+    using namespace ImGui;
+    bool clicked = icon_button_at(icon, tip, toolbar_button_size(), active, enabled);
+    PushID(icon);
     if (BeginPopupContextItem("size")) {
         toolbar_size_menu();
         EndPopup();
     }
     PopID();
     return clicked;
+}
+
+bool small_icon_button(const char* icon, const char* tip, float size)
+{
+    return icon_button_at(icon, tip, size > 0 ? size : ImGui::GetFrameHeight(), false, true);
 }
 
 void toolbar_center()

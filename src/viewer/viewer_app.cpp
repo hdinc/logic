@@ -3,6 +3,7 @@
 #include "viewer_app.h"
 #include "../ui/file_dialog.h"
 #include "../ui/fonts.h"
+#include "../ui/icons.h"
 #include "../ui/theme.h"
 
 #include <Hd/Resource.h>
@@ -308,7 +309,8 @@ void viewer_app::draw_gui()
         int dismiss = -1;
         for (int k = 0; k < (int)notes.size(); k++) {
             PushID(k);
-            if (SmallButton("x")) dismiss = k;
+            if (SmallButton(ui::icon::xmark)) dismiss = k;
+            SetItemTooltip("dismiss");
             SameLine();
             TextDisabled("%s", notes[k].c_str());
             PopID();

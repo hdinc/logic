@@ -71,18 +71,29 @@ private:
         bool fit_visible = false;
         // the groups among the signal's fields that are closed, by index
         std::set<int> closed;
+        // the fields shown as bits, by index
+        std::set<int> open_fields;
+        // of the lines under the row (fields, bits), in default row heights
+        float part_height = 0.8f;
     };
-    // a drawn line: a row, or one bit of an expanded row, or a field of a
-    // row whose signal has fields
+    // a drawn line: a row, a field of a row whose signal has fields, or a
+    // bit of either
     struct line {
-        int row;
-        // the bit or the field, -1 for the row itself
-        int bit;
-        float top, height;
-        // of a field
+        int row = 0;
+        // the field, -1 for the row itself
+        int part = -1;
+        // the bit, -1 for the whole row or field
+        int bit = -1;
+        float top = 0, height = 0;
+        // of a field and its bits
         int depth = 0;
     };
-    using line_id = std::pair<int64_t, int>;
+    struct line_id {
+        int64_t key = 0;
+        int part = -1;
+        int bit = -1;
+        auto operator<=>(const line_id&) const = default;
+    };
 
     void sync_rows(const trace_set& data, view_host& host);
     void toolbar(const trace_set& data, view_host& host);
@@ -123,6 +134,10 @@ private:
     std::optional<double> region_from;
     // dragging the overview's window, this far into it
     std::optional<double> overview_grab;
+    // dragging the lower border of a line of this row: its own line, or the
+    // lines under it
+    int resize_row = -1;
+    bool resize_parts = false;
 };
 
 }

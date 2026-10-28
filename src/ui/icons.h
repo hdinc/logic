@@ -44,6 +44,8 @@ inline constexpr const char* list = "\xef\x80\xba"; // list
 inline constexpr const char* prev = "\xef\x81\x93"; // chevron-left
 inline constexpr const char* next = "\xef\x81\x94"; // chevron-right
 inline constexpr const char* go = "\xef\x81\xa1"; // arrow-right
+inline constexpr const char* caret_right = "\xef\x83\x9a"; // caret-right
+inline constexpr const char* caret_down = "\xef\x83\x97"; // caret-down
 
 }
 
@@ -69,6 +71,11 @@ void toolbar_size_menu();
 // right click chooses the size. text after it on the same line is centered
 // on it.
 bool icon_button(const char* icon, const char* tip, bool active = false, bool enabled = true);
+// the same at a given size, without the size menu
+bool icon_button_at(const char* icon, const char* tip, float size, bool active = false, bool enabled = true);
+// an icon button as high as a text button (size 0) or of the given size,
+// e.g. in the waveform view, which doesn't follow the toolbar size
+bool small_icon_button(const char* icon, const char* tip, float size = 0);
 
 // moves the next control with a frame (checkbox, input) down to the middle
 // of a toolbar line, text gets there by itself

@@ -411,7 +411,45 @@ static void test_bundle_rows(frames& frame)
     for (int f = 0; f < 3; f++)
         draw();
     float expanded = plot->ContentSize.y;
-    CHECK(expanded > collapsed + 4 * ImGui::GetTextLineHeightWithSpacing() * 2 * 0.8f * 0.9f);
+    float base = std::max(40.0f, ImGui::GetTextLineHeightWithSpacing() * 2);
+    CHECK(expanded > collapsed + 4 * base * 0.8f * 0.9f);
+
+    // the data field opens into its 8 bits with its caret: lines are the
+    // row, valid, then data
+    auto& io = frame.io;
+    ImGui::SetScrollY(plot, 0);
+    draw();
+    float x = plot->Pos.x + plot->WindowPadding.x;
+    float y = plot->Pos.y + plot->WindowPadding.y + ImGui::GetTextLineHeightWithSpacing() * 2;
+    float ph = base * 0.8f;
+    float caret_x = x + ImGui::GetFontSize() * 3 + (ImGui::GetFontSize() + 4) / 2;
+    float data_y = y + base + ph + ph / 2;
+    io.AddMousePosEvent(caret_x, data_y);
+    draw();
+    io.AddMouseButtonEvent(0, true);
+    draw();
+    io.AddMouseButtonEvent(0, false);
+    // the content size follows a frame later
+    for (int f = 0; f < 3; f++)
+        draw();
+    float with_bits = plot->ContentSize.y;
+    CHECK(std::abs(with_bits - (expanded + 8 * ph)) < 2);
+
+    // dragging the row's lower border makes it taller, the lines under it
+    // stay
+    io.AddMousePosEvent(x + 150, y + base);
+    draw();
+    io.AddMouseButtonEvent(0, true);
+    draw();
+    io.AddMousePosEvent(x + 150, y + base + 30);
+    draw();
+    io.AddMousePosEvent(x + 150, y + base + 60);
+    draw();
+    io.AddMouseButtonEvent(0, false);
+    for (int f = 0; f < 3; f++)
+        draw();
+    CHECK(std::abs(plot->ContentSize.y - (with_bits + 60)) < 2);
+    CHECK(!view.cursor_a);
 }
 
 int main()

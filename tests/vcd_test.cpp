@@ -352,15 +352,6 @@ static void test_fields()
     CHECK(x.size() == 2 && x.at(1) == 20);
 
     CHECK(group_end(fields, 2) == 5 && group_end(fields, 0) == 1);
-    auto all = summary_trace(t, fields, 0, fields.size());
-    CHECK(all.type() == kind::text && all.size() == 4);
-    CHECK(all.text(1) == "valid=1 data=AB s.x=0 s.y=0");
-    CHECK(all.text(2) == "valid=1 data=AB s.x=1 s.y=2");
-    CHECK(all.text(3) == "valid=1 data=zz s.x=1 s.y=2");
-    // a group's own summary has names relative to it, and fewer changes
-    auto sub = summary_trace(t, fields, 3, 5);
-    CHECK(sub.size() == 2 && sub.text(1) == "x=1 y=2");
-
     // the vcd gets a signal per field in a scope named after the bundle
     auto flat = expand_fields(set);
     CHECK(flat.signals.size() == 4 && flat.find_name("top/bus.s.y") && flat.find_name("top/bus.valid"));

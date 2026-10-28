@@ -5681,3 +5681,101 @@ icons on buttons.
 ### Next steps
 
 - See the recommended features.
+
+## 2026-10-28 19:30 +0300
+
+Waveform view follow-ups: same-size row buttons, field bits, activity on
+collapsed bundles, text-sized icons, a whole-line selection, and row
+resizing.
+
+### Changes made
+
+- **The row buttons are the same size.** The ×, the row's expand arrow,
+  and the group and field arrows are all square icon buttons
+  (`small_icon_button`, the font size + 4) with caret icons. Before, the ×
+  was a `SmallButton` and the arrow an `ArrowButton` of another size.
+- **The waveform viewer's icon buttons are as high as text buttons**
+  (`GetFrameHeight`), so they line up with the Follow checkbox, the combos
+  and the search field. The icon-size right-click menu is gone there; it
+  stays on the editor toolbars.
+- **A collapsed bundle (and a closed nested group) shows only activity**:
+  a bus shape that changes wherever any field changes, x/z coloured, with
+  no labels and an empty value column. The field summary is removed (the
+  user changed their mind), and so is `summary_trace` with its tests.
+- The standalone viewer's notes use the × icon.
+
+### Features implemented
+
+- **Fields expand into bits.** A field wider than one bit has a caret that
+  shows its bits below it, msb first, indented one more level.
+- **The selected line is highlighted across the whole line**: the names
+  column as before, plus a faint band (the header colour at 25%) behind
+  the trace. This works for rows, fields and bits.
+- **Row heights resize by dragging the lower border of a line**, in the
+  names column or over the traces:
+  - a row's own line sets the row's height;
+  - a field or bit line sets the height of all the lines under that row
+    (`part_height`, 0.5–8 rows, saved in sessions);
+  - the cursor is a vertical resize arrow, and the drag doesn't select,
+    reorder or move cursor A.
+
+### How it works
+
+- `ui::icon_button_at(icon, tip, size, active, enabled)` holds the drawing
+  that used to be in `icon_button`. `icon_button` (the editor toolbars)
+  adds the size menu around it, and `small_icon_button(icon, tip, size)`
+  (size 0 = frame height) doesn't. New icons: `caret_right` and
+  `caret_down`.
+- `view::line_id` is now a struct `{key, part, bit}` instead of a pair:
+  part = the field index (-1 for the row) and bit = the bit (-1 for the
+  whole).
+  - `line_trace` gives:
+    - (-1, -1): the row's trace, which is the activity for a bundle;
+    - (-1, b): a bit of a plain row;
+    - (f, -1): the field's slice, or a group's bits, since its fields are
+      contiguous;
+    - (f, b): a bit of the field's slice.
+  - All are cached in `parts` by trace version.
+  - `row::open_fields` holds the fields shown as bits and
+    `row::part_height` the height of the lines under the row.
+  - `line` has `part` and `bit`.
+- `draw_digital(..., labels)` draws the bus shape without text for
+  activity lines.
+- The border hit test is done by hand in `plot()` before the timeline
+  handles the mouse: within 3 px of a line's bottom. It starts
+  `resize_row`/`resize_parts` on a click, and while it's active, cursor
+  setting, selection and row dragging are skipped.
+- Decisions, made with the user: resize row heights (not the window or
+  the divider); activity as a bus shape without text; highlight the whole
+  line.
+
+### Testing
+
+- waveform_test `test_bundle_rows`:
+  - clicking the data field's caret adds exactly 8 bit lines;
+  - dragging the bundle row's lower border by 60 px makes the content
+    60 px taller, and doesn't set cursor A.
+  - The content size follows a frame after a click, so the test lets a
+    few frames pass before measuring.
+- vcd_test: the summary checks are removed; the slice and
+  `expand_fields`/VCD checks stay.
+- All 9 ctest suites pass, and the web build compiles.
+- GUI on VNC with axi_demo:
+  - the × and the arrow are the same size;
+  - the waveform toolbar icons are as high as the checkbox and the combos;
+  - right-clicking an icon gives only its tooltip, no size menu;
+  - the collapsed bundle shows a bus shape without text;
+  - `awaddr`'s caret shows [31], [30], …;
+  - the selected `awaddr` is highlighted over the trace too;
+  - dragging the bundle row's border by 40 px made it 40 px taller.
+
+### Outstanding issues
+
+- A long value next to a field name gets clipped by the names column; the
+  names column can be widened with its divider.
+- The caret glyphs are small inside their buttons, since the icon is drawn
+  at 60% of the button.
+
+### Next steps
+
+- None planned for these points.

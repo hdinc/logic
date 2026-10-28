@@ -212,13 +212,13 @@ public:
     void toolbar() override
     {
         using namespace ImGui;
-        if (ui::icon_button(run.running() ? ui::icon::pause : ui::icon::play, run.running() ? "Pause" : "Run")) run.run(!run.running());
-        SameLine(0, ui::toolbar_gap());
-        if (ui::icon_button(ui::icon::step, "Step")) run.step();
-        SameLine(0, ui::toolbar_gap());
-        if (ui::icon_button(ui::icon::eraser, "Clear: start the history over from now")) run.query([](sim::simulator& s) { s.waveforms.clear(s); });
-        SameLine(0, ui::toolbar_gap());
-        if (ui::icon_button(ui::icon::download, "Export VCD..."))
+        if (ui::small_icon_button(run.running() ? ui::icon::pause : ui::icon::play, run.running() ? "Pause" : "Run")) run.run(!run.running());
+        SameLine(0, 2);
+        if (ui::small_icon_button(ui::icon::step, "Step")) run.step();
+        SameLine(0, 2);
+        if (ui::small_icon_button(ui::icon::eraser, "Clear: start the history over from now")) run.query([](sim::simulator& s) { s.waveforms.clear(s); });
+        SameLine(0, 2);
+        if (ui::small_icon_button(ui::icon::download, "Export VCD..."))
             ui::open_dialog(dialog.c_str(), "Export waveforms", ui::waveform_files, std::filesystem::current_path() / (name + ".vcd"), true);
         SameLine(0, 16);
     }

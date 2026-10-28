@@ -70,7 +70,7 @@ void dashed_line(ImDrawList& d, float x, float y0, float y1, ImU32 c)
 // changes closer than a pixel and a half are drawn as one block, found by
 // binary search: the cost is bounded by the width, not the number of
 // changes
-void draw_digital(ImDrawList& draw, const trace& tr, format f, const mapping& m, time end, float top, float height, ImU32 custom)
+void draw_digital(ImDrawList& draw, const trace& tr, format f, const mapping& m, time end, float top, float height, ImU32 custom, bool labels = true)
 {
     using namespace ImGui;
     size_t n = tr.size();
@@ -123,7 +123,7 @@ void draw_digital(ImDrawList& draw, const trace& tr, format f, const mapping& m,
             float y = s == sim::bit_state::one ? high : s == sim::bit_state::zero ? low : mid;
             draw.AddLine({a, y}, {b, y}, color, 2);
             if (i > 0 && raw_a >= left) draw.AddLine({a, high}, {a, low}, color);
-            if (!tr.fully_known(i) && b - a > GetFontSize() + 8 && CalcTextSize(label().c_str()).x + 8 < b - a)
+            if (labels && !tr.fully_known(i) && b - a > GetFontSize() + 8 && CalcTextSize(label().c_str()).x + 8 < b - a)
                 draw.AddText({a + 4, mid - GetTextLineHeight()}, color, label().c_str());
         } else {
             // neighboring hexagons meet at the change, their sloping edges
@@ -134,7 +134,9 @@ void draw_digital(ImDrawList& draw, const trace& tr, format f, const mapping& m,
             draw.AddConvexPolyFilled(polygon, 6, with_alpha(color, 0.18f));
             draw.AddPolyline(polygon, 6, color, 1.5f, ImDrawFlags_Closed);
             float inset = std::max(4.0f, rise + 2);
-            if (b - a > GetFontSize() + inset + 4 && CalcTextSize(label().c_str()).x + inset + std::max(4.0f, fall) < b - a) {
+            if (!labels) {
+                // activity only
+            } else if (b - a > GetFontSize() + inset + 4 && CalcTextSize(label().c_str()).x + inset + std::max(4.0f, fall) < b - a) {
                 draw.AddText({a + inset, mid - GetTextLineHeight() / 2}, color, label().c_str());
             } else if (tr.type() == kind::text && b - a > GetFontSize() + inset + 4) {
                 // texts, e.g. the fields of a bundle, as much as fits
@@ -252,7 +254,7 @@ session view::save(const trace_set& data) const
     for (auto& r : m_rows) {
         auto sig = data.find(r.key);
         if (!sig) continue;
-        s.rows.push_back({sig->name, r.fmt, r.mode, r.height, r.expanded, r.color});
+        s.rows.push_back({sig->name, r.fmt, r.mode, r.height, r.expanded, r.color, r.part_height});
     }
     s.cursor_a = cursor_a;
     s.cursor_b = cursor_b;
@@ -280,6 +282,7 @@ std::vector<std::string> view::restore(const trace_set& data, const session& s)
         r.fmt = rs.fmt;
         r.mode = rs.mode;
         r.height = std::clamp(rs.height, 0.5f, 10.0f);
+        r.part_height = std::clamp(rs.part_height, 0.5f, 8.0f);
         r.expanded = rs.expanded;
         r.color = rs.color;
         m_rows.push_back(r);
@@ -311,28 +314,29 @@ void view::sync_rows(const trace_set& data, view_host& host)
             if (!has(s.key) && std::find(removed.begin(), removed.end(), s.key) == removed.end()) add(data, s.key);
     }
     std::erase_if(m_rows, [&](auto& r) { return !data.find(r.key); });
-    std::erase_if(selection, [&](auto& id) { return !has(id.first); });
+    std::erase_if(selection, [&](auto& id) { return !has(id.key); });
 }
 
 const trace* view::line_trace(const trace_set& data, const line_id& id)
 {
-    auto s = data.find(id.first);
+    auto s = data.find(id.key);
     if (!s) return nullptr;
     auto& t = data.trace_of(*s);
-    if (id.second < 0 && s->fields.empty()) return &t;
+    // the row itself, for a bundle drawn as its activity
+    if (id.part < 0 && id.bit < 0) return &t;
+    if (id.part >= (int)s->fields.size()) return nullptr;
     auto& cached = parts[id];
     if (cached.first == t.version() && t.version() != 0) return &cached.second;
-    if (s->fields.empty()) {
-        cached = {t.version(), bit_trace(t, id.second)};
-    } else if (id.second < 0) {
-        // a bundle's own line: all its fields
-        cached = {t.version(), summary_trace(t, s->fields, 0, s->fields.size())};
-    } else if (id.second < (int)s->fields.size()) {
-        auto k = (size_t)id.second;
-        auto& f = s->fields[k];
-        cached = {t.version(), f.group ? summary_trace(t, s->fields, k + 1, group_end(s->fields, k)) : slice_trace(t, f.lo, f.width)};
+    if (id.part < 0) {
+        cached = {t.version(), bit_trace(t, id.bit)};
+    } else if (id.bit < 0) {
+        // a field, or a group's bits (its fields are contiguous)
+        auto& f = s->fields[id.part];
+        cached = {t.version(), slice_trace(t, f.lo, f.width)};
     } else {
-        return nullptr;
+        auto field = line_trace(data, {id.key, id.part, -1});
+        if (!field) return nullptr;
+        cached = {t.version(), bit_trace(*field, id.bit)};
     }
     return &cached.second;
 }
@@ -347,7 +351,7 @@ std::vector<view::line_id> view::targets() const
     if (!selection.empty()) return selection;
     std::vector<line_id> all;
     for (auto& r : m_rows)
-        all.push_back({r.key, -1});
+        all.push_back({r.key, -1, -1});
     return all;
 }
 
@@ -379,10 +383,10 @@ void view::find(const trace_set& data, bool forward)
         return;
     }
     auto id = selection.front();
-    auto sig = data.find(id.first);
+    auto sig = data.find(id.key);
     auto t = line_trace(data, id);
     if (!sig || !t) return;
-    auto r = std::find_if(m_rows.begin(), m_rows.end(), [&](auto& r) { return r.key == id.first; });
+    auto r = std::find_if(m_rows.begin(), m_rows.end(), [&](auto& r) { return r.key == id.key; });
     auto fmt = r != m_rows.end() && r->fmt ? *r->fmt : default_format;
     auto p = parse_pattern(search_text, t->type(), t->width(), fmt);
     if (!p) {
@@ -414,7 +418,7 @@ void view::remove_row(int index, view_host& host)
 {
     auto key = m_rows[index].key;
     m_rows.erase(m_rows.begin() + index);
-    std::erase_if(selection, [key](auto& id) { return id.first == key; });
+    std::erase_if(selection, [key](auto& id) { return id.key == key; });
     removed.push_back(key);
     host.removed(key);
 }
@@ -458,14 +462,14 @@ void view::toolbar(const trace_set& data, view_host& host)
     using namespace ImGui;
     host.toolbar();
 
-    if (ui::icon_button(ui::icon::fit, "Show everything (F)")) {
+    if (ui::small_icon_button(ui::icon::fit, "Show everything (F)")) {
         fit = true;
         timeline.follow = false;
     }
-    SameLine(0, ui::toolbar_gap());
-    if (ui::icon_button(ui::icon::zoom_out, "Zoom out (-)")) timeline.zoom(-2, 0.5);
-    SameLine(0, ui::toolbar_gap());
-    if (ui::icon_button(ui::icon::zoom_in, "Zoom in (+), or drag over the time ruler")) timeline.zoom(2, 0.5);
+    SameLine(0, 2);
+    if (ui::small_icon_button(ui::icon::zoom_out, "Zoom out (-)")) timeline.zoom(-2, 0.5);
+    SameLine(0, 2);
+    if (ui::small_icon_button(ui::icon::zoom_in, "Zoom in (+), or drag over the time ruler")) timeline.zoom(2, 0.5);
     if (host.live()) {
         SameLine();
         Checkbox("Follow", &timeline.follow);
@@ -480,12 +484,12 @@ void view::toolbar(const trace_set& data, view_host& host)
     SetItemTooltip("Cursor to the next transition of the selected signals (Right, Shift for cursor B)");
 
     SameLine(0, 16);
-    if (ui::icon_button(ui::icon::flag, "Add a marker at cursor A (M). Ctrl+[ and Ctrl+] jump between markers.")) {
+    if (ui::small_icon_button(ui::icon::flag, "Add a marker at cursor A (M). Ctrl+[ and Ctrl+] jump between markers.")) {
         time t = cursor_a ? *cursor_a : as_time(timeline.start() + timeline.span() / 2);
         markers.push_back({"M" + std::to_string(markers.size() + 1), t});
     }
-    SameLine(0, ui::toolbar_gap());
-    if (ui::icon_button(ui::icon::list, "Markers")) OpenPopup("markers");
+    SameLine(0, 2);
+    if (ui::small_icon_button(ui::icon::list, "Markers")) OpenPopup("markers");
     if (BeginPopup("markers")) {
         if (markers.empty()) TextDisabled("No markers. Add one at cursor A with M.");
         int erase = -1;
@@ -522,10 +526,10 @@ void view::toolbar(const trace_set& data, view_host& host)
     SetNextItemWidth(GetFontSize() * 9);
     if (input_string("##find", search_text, ImGuiInputTextFlags_EnterReturnsTrue)) find(data, true);
     SetItemTooltip("A value of the selected signal in its format, 0x, 0b and 0o pick another. ? matches any digit.");
-    SameLine(0, ui::toolbar_gap());
-    if (ui::icon_button(ui::icon::prev, "Find the previous match")) find(data, false);
-    SameLine(0, ui::toolbar_gap());
-    if (ui::icon_button(ui::icon::next, "Find the next match (Enter)")) find(data, true);
+    SameLine(0, 2);
+    if (ui::small_icon_button(ui::icon::prev, "Find the previous match")) find(data, false);
+    SameLine(0, 2);
+    if (ui::small_icon_button(ui::icon::next, "Find the next match (Enter)")) find(data, true);
     if (!search_status.empty()) {
         SameLine();
         TextColored(ColorConvertU32ToFloat4(unknown_color()), "%s", search_status.c_str());
@@ -629,21 +633,30 @@ void view::plot(const trace_set& data, view_host& host, float plot_height)
     float y = 0;
     for (int k = 0; k < (int)m_rows.size(); k++) {
         auto& r = m_rows[k];
-        float h = base_height * r.height;
-        lines.push_back({k, -1, y, h});
+        float h = base_height * r.height, ph = base_height * r.part_height;
+        lines.push_back({k, -1, -1, y, h});
         y += h;
         auto s = data.find(r.key);
         if (r.expanded && s && !s->fields.empty()) {
-            // the fields, without those of closed groups
+            // the fields, without those of closed groups, and the bits of
+            // those opened
             for (size_t f = 0; f < s->fields.size(); f++) {
-                lines.push_back({k, (int)f, y, base_height * 0.8f, s->fields[f].depth});
-                y += base_height * 0.8f;
-                if (s->fields[f].group && r.closed.count((int)f)) f = group_end(s->fields, f) - 1;
+                auto& fd = s->fields[f];
+                lines.push_back({k, (int)f, -1, y, ph, fd.depth});
+                y += ph;
+                if (fd.group && r.closed.count((int)f)) {
+                    f = group_end(s->fields, f) - 1;
+                } else if (!fd.group && fd.width > 1 && r.open_fields.count((int)f)) {
+                    for (int b = fd.width - 1; b >= 0; b--) {
+                        lines.push_back({k, (int)f, b, y, ph, fd.depth + 1});
+                        y += ph;
+                    }
+                }
             }
         } else if (r.expanded && s && s->type == kind::digital && s->width > 1) {
             for (int b = s->width - 1; b >= 0; b--) {
-                lines.push_back({k, b, y, base_height * 0.8f});
-                y += base_height * 0.8f;
+                lines.push_back({k, -1, b, y, ph});
+                y += ph;
             }
         }
     }
@@ -666,6 +679,31 @@ void view::plot(const trace_set& data, view_host& host, float plot_height)
     if (resizing || resize_hovered) SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     float left = origin.x + names + divider;
     float width = std::max(1.0f, avail.x - names - divider);
+
+    // dragging the lower border of a line resizes it: a row's own line, or
+    // all the lines under it (fields, bits) together
+    int border_line = -1;
+    if (resize_row < 0 && !resizing && !resize_hovered && IsWindowHovered() && io.MousePos.y > axis_y + axis_height) {
+        float my = io.MousePos.y - origin.y - axis_height;
+        for (int k = 0; k < (int)lines.size(); k++)
+            if (std::abs(my - (lines[k].top + lines[k].height)) <= 3) border_line = k;
+    }
+    if (border_line >= 0 && IsMouseClicked(ImGuiMouseButton_Left)) {
+        resize_row = lines[border_line].row;
+        resize_parts = lines[border_line].part >= 0 || lines[border_line].bit >= 0;
+    }
+    if (resize_row >= 0) {
+        if (!IsMouseDown(ImGuiMouseButton_Left) || resize_row >= (int)m_rows.size()) {
+            resize_row = -1;
+        } else {
+            auto& r = m_rows[resize_row];
+            auto& h = resize_parts ? r.part_height : r.height;
+            h = std::clamp(h + io.MouseDelta.y / base_height, 0.5f, 8.0f);
+        }
+    }
+    // clicks there don't select or move the cursor
+    bool on_border = border_line >= 0 || resize_row >= 0;
+    if (on_border) SetMouseCursor(ImGuiMouseCursor_ResizeNS);
 
     // the ruler, dragging over it zooms to that range
     SetCursorScreenPos({left, axis_y});
@@ -703,9 +741,9 @@ void view::plot(const trace_set& data, view_host& host, float plot_height)
         for (int k = 0; k < (int)lines.size(); k++)
             if (my >= lines[k].top && my < lines[k].top + lines[k].height) hovered_line = k;
     }
-    auto line_key = [&](const line& l) -> line_id { return {m_rows[l.row].key, l.bit}; };
+    auto line_key = [&](const line& l) -> line_id { return {m_rows[l.row].key, l.part, l.bit}; };
 
-    if (active && IsMouseDown(ImGuiMouseButton_Left)) {
+    if (active && IsMouseDown(ImGuiMouseButton_Left) && !on_border) {
         double t = m.t(io.MousePos.x);
         time c = as_time(t);
         // to the nearest transition of the line within a few pixels
@@ -762,47 +800,66 @@ void view::plot(const trace_set& data, view_host& host, float plot_height)
         auto fmt = r.fmt.value_or(default_format);
         bool sel = selected(id);
 
-        if (sel) draw->AddRectFilled({origin.x, top}, {left - divider, top + l.height}, GetColorU32(ImGuiCol_Header));
+        bool is_row = l.part < 0 && l.bit < 0;
+        const field* fd = l.part >= 0 ? &sig->fields[l.part] : nullptr;
+        // a bundle or group is drawn as its activity, without values
+        bool activity = !sig->fields.empty() && l.bit < 0 && (!fd || fd->group);
+        // the whole name for tooltips
+        std::string full = sig->name + (fd ? "." + fd->name : std::string()) + (l.bit >= 0 ? "[" + std::to_string(l.bit) + "]" : std::string());
+
+        if (sel) {
+            draw->AddRectFilled({origin.x, top}, {left - divider, top + l.height}, GetColorU32(ImGuiCol_Header));
+            draw->AddRectFilled({left, top}, {left + width, top + l.height}, with_alpha(GetColorU32(ImGuiCol_Header), 0.25f));
+        }
         draw->AddLine({origin.x, top}, {left + width, top}, with_alpha(border, 0.6f));
 
         PushID(k);
+        // the buttons of the names column, all the same size
+        float button = GetFontSize() + 4;
+        auto toggle = [&](const char* id, bool open, const char* tip) {
+            PushID(id);
+            bool clicked = ui::small_icon_button(open ? ui::icon::caret_down : ui::icon::caret_right, tip, button);
+            PopID();
+            return clicked;
+        };
         float text_x = origin.x + GetFontSize() * 2;
-        if (l.bit < 0) {
+        if (is_row) {
             SetCursorScreenPos({origin.x + 2, top + 3});
-            PushStyleVar(ImGuiStyleVar_FramePadding, {2, 1});
-            if (SmallButton(ui::icon::xmark)) remove = l.row;
-            SetItemTooltip("Remove (Delete)");
+            PushID("remove");
+            if (ui::small_icon_button(ui::icon::xmark, "Remove (Delete)", button)) remove = l.row;
+            PopID();
             text_x = GetItemRectMax().x + 5;
             if (!sig->fields.empty() || (sig->type == kind::digital && sig->width > 1)) {
                 SameLine(0, 2);
-                if (ArrowButton("expand", r.expanded ? ImGuiDir_Down : ImGuiDir_Right)) r.expanded = !r.expanded;
-                if (!sig->fields.empty())
-                    SetItemTooltip(r.expanded ? "Collapse the fields" : "Show the fields");
-                else
-                    SetItemTooltip(r.expanded ? "Collapse bits" : "Expand into bits");
+                const char* tip = !sig->fields.empty() ? (r.expanded ? "Collapse the fields" : "Show the fields") : (r.expanded ? "Collapse bits" : "Expand into bits");
+                if (toggle("expand", r.expanded, tip)) r.expanded = !r.expanded;
                 text_x = GetItemRectMax().x + 5;
             }
-            PopStyleVar();
-        } else if (!sig->fields.empty()) {
-            // a field, indented under its group. groups open and close.
-            float indent = GetFontSize() * 2 + (l.depth + 1) * GetFontSize();
-            text_x = origin.x + indent;
-            if (sig->fields[l.bit].group) {
-                bool open = !r.closed.count(l.bit);
-                SetCursorScreenPos({text_x, top + (l.height - GetFrameHeight()) / 2});
-                PushStyleVar(ImGuiStyleVar_FramePadding, {2, 1});
-                if (ArrowButton("group", open ? ImGuiDir_Down : ImGuiDir_Right)) {
-                    if (open) r.closed.insert(l.bit);
-                    else r.closed.erase(l.bit);
+        } else if (fd) {
+            // a field indented under its group, its bits under it. groups
+            // open and close, wide fields open into bits.
+            text_x = origin.x + GetFontSize() * 2 + (l.depth + 1) * GetFontSize();
+            if (l.bit < 0 && (fd->group || fd->width > 1)) {
+                SetCursorScreenPos({text_x, top + (l.height - button) / 2});
+                if (fd->group) {
+                    bool open = !r.closed.count(l.part);
+                    if (toggle("group", open, open ? "Collapse the fields" : "Show the fields")) {
+                        if (open) r.closed.insert(l.part);
+                        else r.closed.erase(l.part);
+                    }
+                } else {
+                    bool open = r.open_fields.count(l.part) > 0;
+                    if (toggle("bits", open, open ? "Collapse bits" : "Expand into bits")) {
+                        if (open) r.open_fields.erase(l.part);
+                        else r.open_fields.insert(l.part);
+                    }
                 }
-                SetItemTooltip(open ? "Collapse the fields" : "Show the fields");
-                PopStyleVar();
-                text_x = GetItemRectMax().x + 5;
             }
+            text_x += button + 5;
         }
         SetCursorScreenPos({text_x, top});
         InvisibleButton("name", {std::max(1.0f, origin.x + names - text_x - 4), l.height});
-        if (IsItemClicked(ImGuiMouseButton_Left) || IsItemClicked(ImGuiMouseButton_Right)) {
+        if (!on_border && (IsItemClicked(ImGuiMouseButton_Left) || IsItemClicked(ImGuiMouseButton_Right))) {
             if (io.KeyCtrl) {
                 if (sel) std::erase(selection, id);
                 else selection.push_back(id);
@@ -810,7 +867,7 @@ void view::plot(const trace_set& data, view_host& host, float plot_height)
                 selection = {id};
             }
         }
-        if (l.bit < 0 && BeginDragDropSource()) {
+        if (is_row && !on_border && BeginDragDropSource()) {
             int index = l.row;
             SetDragDropPayload("WAVE_ROW", &index, sizeof(index));
             TextUnformatted(sig->name.c_str());
@@ -824,27 +881,30 @@ void view::plot(const trace_set& data, view_host& host, float plot_height)
             if (auto p = AcceptDragDropPayload(signal_payload)) drops.push_back({*(const int64_t*)p->Data, l.row});
             EndDragDropTarget();
         }
-        if (l.bit < 0 && BeginPopupContextItem("row_menu")) {
+        if (is_row && BeginPopupContextItem("row_menu")) {
             row_menu(data, r, *sig);
             Separator();
             if (MenuItem("Remove", "Delete")) remove = l.row;
             EndPopup();
         }
-        if (IsItemHovered() && !IsPopupOpen("row_menu")) SetTooltip("%s\nRight-click for display options, drag to reorder", sig->name.c_str());
-
-        std::string name = l.bit < 0 ? display_name(sig->name, full_path) : "[" + std::to_string(l.bit) + "]";
-        if (l.bit >= 0 && !sig->fields.empty()) {
-            // the last part of the path
-            auto& path = sig->fields[l.bit].name;
-            auto dot = path.rfind('.');
-            name = dot == std::string::npos ? path : path.substr(dot + 1);
+        if (IsItemHovered() && !IsPopupOpen("row_menu")) {
+            if (is_row)
+                SetTooltip("%s\nRight-click for display options, drag to reorder", full.c_str());
+            else
+                SetTooltip("%s", full.c_str());
         }
-        std::string value = "-";
+
+        std::string name = is_row ? display_name(sig->name, full_path) : "[" + std::to_string(l.bit) + "]";
+        if (fd && l.bit < 0) {
+            // the last part of the path
+            auto dot = fd->name.rfind('.');
+            name = dot == std::string::npos ? fd->name : fd->name.substr(dot + 1);
+        }
+        std::string value = activity ? "" : "-";
         size_t at = tr->index_at(inspect_at);
-        bool bit_line = l.bit >= 0 && sig->fields.empty();
-        if (at != trace::npos) value = bit_line ? sim::to_string(tr->value(at)) : format_change(*tr, at, fmt);
+        if (at != trace::npos && !activity) value = l.bit >= 0 ? sim::to_string(tr->value(at)) : format_change(*tr, at, fmt);
         draw->PushClipRect({text_x, top}, {origin.x + names - 4, top + l.height}, true);
-        if (l.bit >= 0) {
+        if (!is_row) {
             // a bit or field: the name and its value on one line, the value
             // at the right
             float y = top + (l.height - GetTextLineHeight()) / 2;
@@ -860,7 +920,7 @@ void view::plot(const trace_set& data, view_host& host, float plot_height)
 
         // the trace
         draw->PushClipRect({left, top}, {left + width, top + l.height}, true);
-        if (r.mode != display::digital && l.bit < 0 && tr->type() != kind::text) {
+        if (r.mode != display::digital && is_row && sig->fields.empty() && tr->type() != kind::text) {
             bool is_signed = fmt == format::sint;
             size_t i0 = tr->index_at(as_time(m.start)), i1 = tr->index_at(as_time(m.start + m.span));
             auto range = r.fit_visible ? tr->range(i0 == trace::npos ? 0 : i0, i1 == trace::npos ? 0 : i1 + 1, is_signed)
@@ -876,15 +936,15 @@ void view::plot(const trace_set& data, view_host& host, float plot_height)
             draw->AddText({left + 3, top + 2}, muted, format_real(hi).c_str());
             draw->AddText({left + 3, top + l.height - GetTextLineHeight() - 2}, muted, format_real(lo).c_str());
         } else {
-            draw_digital(*draw, *tr, fmt, m, data.end, top, l.height, r.color);
+            draw_digital(*draw, *tr, fmt, m, data.end, top, l.height, r.color, !activity);
         }
         draw->PopClipRect();
 
         if (k == hovered_line && hovered && !IsMouseDown(ImGuiMouseButton_Left)) {
             size_t i = tr->index_at(as_time(m.t(io.MousePos.x)));
             if (i != trace::npos)
-                SetTooltip("%s%s\n%s: %s", sig->name.c_str(), l.bit < 0 ? "" : sig->fields.empty() ? name.c_str() : ("." + sig->fields[l.bit].name).c_str(),
-                    format_time(tr->at(i), data.tb).c_str(), format_change(*tr, i, fmt).c_str());
+                SetTooltip("%s\n%s%s%s", full.c_str(), format_time(tr->at(i), data.tb).c_str(), activity ? "" : ": ",
+                    activity ? "" : format_change(*tr, i, fmt).c_str());
         }
     }
     PopClipRect();
@@ -932,7 +992,7 @@ void view::plot(const trace_set& data, view_host& host, float plot_height)
 
     if (remove < 0 && IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !io.WantTextInput && IsKeyPressed(ImGuiKey_Delete, false)) {
         for (int k = (int)m_rows.size() - 1; k >= 0; k--)
-            if (selected({m_rows[k].key, -1})) remove_row(k, host);
+            if (selected({m_rows[k].key, -1, -1})) remove_row(k, host);
     }
     if (remove >= 0) remove_row(remove, host);
     if (move_from >= 0 && move_to >= 0 && move_from != move_to && move_from < (int)m_rows.size()) {

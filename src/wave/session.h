@@ -23,6 +23,8 @@ struct row_state {
     bool expanded = false;
     // IM_COL32 color, 0 for the default
     uint32_t color = 0;
+    // of its fields and bits, in default row heights
+    float part_height = 0.8f;
 };
 
 struct marker {

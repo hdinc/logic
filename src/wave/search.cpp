@@ -70,32 +70,6 @@ size_t group_end(const std::vector<field>& fields, size_t group)
     return k;
 }
 
-trace summary_trace(const trace& t, const std::vector<field>& fields, size_t first, size_t end)
-{
-    trace result(kind::text, 1);
-    if (first >= end) return result;
-    int base = fields[first].depth;
-    for (size_t i = 0; i < t.size(); i++) {
-        auto v = t.value(i);
-        std::string text;
-        for (size_t k = first; k < end && k < fields.size(); k++) {
-            auto& f = fields[k];
-            if (f.group) continue;
-            // the path below the summary's own level
-            std::string_view name = f.name;
-            for (int d = 0; d < base; d++)
-                if (auto dot = name.find('.'); dot != std::string_view::npos) name.remove_prefix(dot + 1);
-            auto part = v.slice(f.lo, f.width);
-            if (!text.empty()) text += ' ';
-            text += name;
-            text += '=';
-            text += f.width == 1 ? sim::to_string(part) : sim::to_hex(part);
-        }
-        result.push(t.at(i), std::move(text));
-    }
-    return result;
-}
-
 trace_set expand_fields(const trace_set& set)
 {
     trace_set r;
