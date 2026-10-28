@@ -1,4 +1,5 @@
 #include "file_manager.h"
+#include "../ui/zoom.h"
 #include "../editor/context.h"
 #include "../ui/icons.h"
 #include "../ui/theme.h"
@@ -77,8 +78,8 @@ void file_manager::gui(const std::function<void(std::string)>& message)
         SetNextWindowFocus();
         focus = false;
     }
-    if (!Begin("Files", &open)) {
-        End();
+    if (!ui::zoom::begin("Files", &open)) {
+        ui::zoom::end();
         return;
     }
 
@@ -121,7 +122,7 @@ void file_manager::gui(const std::function<void(std::string)>& message)
     if (list.table(activated)) web::download(activated);
 
     popups(message);
-    End();
+    ui::zoom::end();
 }
 
 void file_manager::popups(const std::function<void(std::string)>& message)

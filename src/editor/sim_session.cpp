@@ -1,6 +1,7 @@
 #include "sim_session.h"
 #include "../ui/file_dialog.h"
 #include "../ui/icons.h"
+#include "../ui/zoom.h"
 #include "../wave/search.h"
 #include "../wave/vcd.h"
 
@@ -51,8 +52,8 @@ void sim_session::display_gui(display_window& w)
     auto label = "Framebuffer: " + w.d->path + "###display" + std::to_string(top) + "_" + std::to_string(w.d->component);
     SetNextWindowSize({std::clamp(buf.width * 4.0f, 240.0f, 800.0f) + 20, std::clamp(buf.height * 4.0f, 180.0f, 600.0f) + 60}, ImGuiCond_FirstUseEver);
     SetNextWindowPos(GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, {0.5f, 0.5f});
-    if (!Begin(label.c_str(), &w.open)) {
-        End();
+    if (!ui::zoom::begin(label.c_str(), &w.open, ImGuiWindowFlags_NoCollapse)) {
+        ui::zoom::end();
         return;
     }
 
@@ -113,7 +114,7 @@ void sim_session::display_gui(display_window& w)
         SetTooltip("x %d, y %d: #%02X%02X%02X", x, y, c & 0xFF, (c >> 8) & 0xFF, (c >> 16) & 0xFF);
     }
     EndChild();
-    End();
+    ui::zoom::end();
 }
 
 void sim_session::watch(const sim::scope* s, int instance)
@@ -247,8 +248,9 @@ void sim_session::waveforms_gui(const std::string& title)
     SetNextWindowSize({1000, 460}, ImGuiCond_FirstUseEver);
     auto id = std::to_string(top);
     auto label = "Waveforms: " + title + "###waveforms" + id;
-    if (!Begin(label.c_str(), &waveforms_visible)) {
-        End();
+    // double-clicking the title zooms it instead of collapsing
+    if (!ui::zoom::begin(label.c_str(), &waveforms_visible, ImGuiWindowFlags_NoCollapse)) {
+        ui::zoom::end();
         return;
     }
     auto dialog = "export_vcd_" + id;
@@ -273,7 +275,7 @@ void sim_session::waveforms_gui(const std::string& title)
             wave_message = "Exported to " + file.string() +
                 (truncated ? ". Only the newest " + std::to_string(sim::waveform_recorder::max_samples) + " changes of each signal are kept." : "");
     }
-    End();
+    ui::zoom::end();
 }
 
 }

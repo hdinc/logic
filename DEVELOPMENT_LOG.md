@@ -5779,3 +5779,104 @@ resizing.
 ### Next steps
 
 - None planned for these points.
+
+## 2026-10-28 20:01 +0300
+
+Zoom mode: one window fills the app and the other windows become tabs at
+the bottom, like Questa's zoom/unzoom.
+
+### Features implemented
+
+- **Zooming a window**: double-click its tab (a floating window's title
+  bar), use the right-click menu on its tab, or View > **Zoom window**,
+  which zooms the window that had focus (the Editor if none).
+- While zoomed:
+  - the window fills the app below the menu bar;
+  - a **tab bar at the bottom** lists every open window: the docked panels
+    (Libraries, Editor, Symbol editor, Properties, Hierarchy, Messages,
+    Files on the web) and the floating ones (Waveforms, framebuffer
+    displays);
+  - clicking a tab zooms that window instead;
+  - the **Unzoom** button (compress icon) at the right of the bar, a
+    double-click on the zoomed window's title, its menu "Unzoom", or the
+    View menu go back to the layout, which is exactly as it was.
+- Closing the zoomed window (e.g. a waveform window, or by stopping its
+  simulation) ends the zoom. The zoom isn't remembered after a restart.
+- Help > Keys has a line about it.
+
+### How it works
+
+- `src/ui/zoom.{h,cpp}` (logic_ui):
+  - `zoom::begin(name, open, flags)` / `end()` replace `Begin/End` for the
+    windows that can be zoomed, and `shown()` tells whether the window was
+    made.
+  - **While not zoomed** it calls `Begin`, so the docked layout works as
+    before. After it, the last item is the dock tab or the title bar, so a
+    double-click there or `BeginPopupContextItem` ("Zoom") zooms the
+    window. The window with focus is remembered for the View menu.
+  - **While zoomed**:
+    - the other windows aren't submitted at all; docked ones keep their
+      dock place, so the layout comes back unchanged;
+    - their `SetNextWindow*` data is cleared, so it doesn't go to the next
+      window;
+    - the zoomed window's content goes into a window of its own: no
+      docking, moving, resizing or collapsing, placed at the main
+      viewport's work area minus the bar.
+  - Its ID is `###zoom_` plus the name with `#` replaced. ImGui hashes
+    what follows the **last** `###`, so with the name as it is, a floating
+    window like `Waveforms: top###waveforms1` would have been the layout's
+    own window. Its size then stuck after unzooming; this was found in the
+    GUI and fixed, and a test checks it.
+  - `zoom::end_frame()`, after all windows, ends a zoom whose window wasn't
+    submitted and draws the bar: a tab bar in a child with room for the
+    Unzoom button, with the tab labels being the window names before
+    `###`.
+- app.cpp, file_manager.cpp and sim_session.cpp use it for their windows.
+  The Waveforms and framebuffer windows get `NoCollapse`, so a
+  double-click on the title zooms instead of collapsing. Dialogs such as
+  Settings and the theme editor, and modals, are unchanged.
+- Panels that drew their content even when their tab was hidden still do;
+  they skip it only while another window is zoomed.
+- Decisions, made with the user:
+  - zoom from the tab row (double-click or the tab's menu) and the View
+    menu, with no button inside windows and no key;
+  - every open window as a tab;
+  - the toggle zooms the focused window, and the zoom isn't remembered.
+- Rejected:
+  - Moving the window into a second dockspace, or saving and reloading the
+    dock layout (`SaveIniSettingsToMemory`): a node that loses its last
+    window is deleted, and reloading the layout in the middle of a run is
+    fragile.
+  - Undocking the window.
+
+### Testing
+
+- New `zoom_test` (headless ImGui frames):
+  - zooming A runs only A's content, in a window filling the work area
+    above the bar, and A's layout window isn't drawn;
+  - clicking B's tab zooms B, which has its own window and not the
+    layout's;
+  - closing B ends the zoom, and B keeps its own place and size;
+  - `toggle` zooms the focused window and unzooms again.
+- All 10 ctest suites pass, and the web build compiles.
+- GUI on VNC:
+  - double-clicking the Editor tab fills the app, with the tabs Libraries,
+    Editor, Symbol editor, Properties and Hierarchy below;
+  - clicking Properties shows it full size;
+  - F5 in the zoomed editor and View > Waveforms add "Waveforms: axi_demo"
+    as a tab, and it zooms;
+  - View > Zoom window shows its check mark;
+  - a double-click on the floating Waveforms title zooms it, and Unzoom
+    restores both the docked layout and the window's own size;
+  - the right-click menu on a docked tab shows Zoom.
+
+### Outstanding issues
+
+- Scroll positions and open tree nodes of a zoomed window are its own, not
+  those of the window in the layout.
+- `imgui.ini` from a run before the ID fix can keep a full-screen size for
+  a waveform window. Resizing it once fixes that.
+
+### Recommended features
+
+- A key to zoom the focused window, if one is wanted later.

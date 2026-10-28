@@ -46,6 +46,7 @@ inline constexpr const char* next = "\xef\x81\x94"; // chevron-right
 inline constexpr const char* go = "\xef\x81\xa1"; // arrow-right
 inline constexpr const char* caret_right = "\xef\x83\x9a"; // caret-right
 inline constexpr const char* caret_down = "\xef\x83\x97"; // caret-down
+inline constexpr const char* unzoom = "\xef\x81\xa6"; // compress
 
 }
 

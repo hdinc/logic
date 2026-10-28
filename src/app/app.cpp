@@ -5,6 +5,7 @@
 #include "../plugin/libraries.h"
 #include "../ui/file_dialog.h"
 #include "../ui/theme.h"
+#include "../ui/zoom.h"
 
 #include <Hd/Resource.h>
 #include <imgui.h>
@@ -455,6 +456,8 @@ void app::draw_gui()
 #ifdef __EMSCRIPTEN__
     files.gui([&](std::string m) { message(std::move(m)); });
 #endif
+    // the tab bar of a zoomed window over the others
+    ui::zoom::end_frame();
     settings_window();
     themes.gui(theme_name, [&] { use_theme(); }, [&] { apply_theme(); });
     exit_dialog();
@@ -576,6 +579,8 @@ void app::menu_bar()
 
         if (BeginMenu("View")) {
             if (MenuItem("Settings...")) show_settings = true;
+            if (MenuItem("Zoom window", nullptr, ui::zoom::active())) ui::zoom::toggle();
+            SetItemTooltip("Fill the app with the focused window, the other windows become tabs at the bottom. Also: double-click a window's tab.");
 #ifdef __EMSCRIPTEN__
             MenuItem("Files", nullptr, &files.open);
             SetItemTooltip("The workspace's files in the browser: upload, download, rename, delete");
@@ -643,6 +648,8 @@ void app::menu_bar()
         SeparatorText("Libraries");
         BulletText("Click a cell: place it in the open schematic, double click: edit it");
         BulletText("Right click a cell: edit it, add or edit its symbol, rename, category, delete");
+        SeparatorText("Windows");
+        BulletText("Double-click a window's tab (or View > Zoom window): it fills the app, the others become tabs at the bottom");
         SeparatorText("Both editors");
         BulletText("Wheel: zoom, right drag: pan, G: grid");
         BulletText("Click/drag: select and move, drag on empty space: box select");
@@ -682,7 +689,11 @@ void app::library_panel()
 {
     using namespace ImGui;
 
-    Begin("Libraries", nullptr, ImGuiWindowFlags_NoCollapse);
+    ui::zoom::begin("Libraries", nullptr, ImGuiWindowFlags_NoCollapse);
+    if (!ui::zoom::shown()) {
+        ui::zoom::end();
+        return;
+    }
 
     if (auto work = ws.find_library("work")) {
         if (Button("New cell")) new_cell(*work);
@@ -794,7 +805,7 @@ void app::library_panel()
         EndPopup();
     }
 
-    End();
+    ui::zoom::end();
 }
 
 void app::library_cell(model::library& lib, model::cell& c)
@@ -959,7 +970,11 @@ void app::editor_panel()
 {
     using namespace ImGui;
 
-    Begin("Editor", nullptr, ImGuiWindowFlags_NoCollapse);
+    ui::zoom::begin("Editor", nullptr, ImGuiWindowFlags_NoCollapse);
+    if (!ui::zoom::shown()) {
+        ui::zoom::end();
+        return;
+    }
     if (IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) last_focus = focus::editor;
 
     if (editors.empty() && instance_tabs.empty() && bundle_editors.empty()) {
@@ -1062,7 +1077,7 @@ void app::editor_panel()
         std::erase_if(instance_tabs, [&](auto& t) { return t.id == close_instance; });
     }
 
-    End();
+    ui::zoom::end();
 }
 
 void app::symbol_panel()
@@ -1070,7 +1085,11 @@ void app::symbol_panel()
     using namespace ImGui;
 
     if (!symbol_docked) return;
-    Begin("Symbol editor", nullptr, ImGuiWindowFlags_NoCollapse);
+    ui::zoom::begin("Symbol editor", nullptr, ImGuiWindowFlags_NoCollapse);
+    if (!ui::zoom::shown()) {
+        ui::zoom::end();
+        return;
+    }
     if (IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) last_focus = focus::symbol;
 
     active_symbol = model::no_id;
@@ -1101,19 +1120,21 @@ void app::symbol_panel()
     }
     if (close != model::no_id) close_symbol(close);
 
-    End();
+    ui::zoom::end();
 }
 
 void app::properties_panel()
 {
-    ImGui::Begin("Properties");
-    if (auto p = focused_symbol())
-        p->property_panel();
-    else if (active_instance_tab)
-        active_instance_tab->property_panel();
-    else if (auto e = find_editor(active_cell))
-        e->property_panel();
-    ImGui::End();
+    ui::zoom::begin("Properties");
+    if (ui::zoom::shown()) {
+        if (auto p = focused_symbol())
+            p->property_panel();
+        else if (active_instance_tab)
+            active_instance_tab->property_panel();
+        else if (auto e = find_editor(active_cell))
+            e->property_panel();
+    }
+    ui::zoom::end();
 }
 
 void app::hierarchy_panel()
@@ -1124,12 +1145,14 @@ void app::hierarchy_panel()
     auto lib = FindWindowByName("Libraries");
     if (lib && lib->DockId && !FindWindowSettingsByID(ImHashStr("Hierarchy"))) SetNextWindowDockID(lib->DockId);
 
-    Begin("Hierarchy");
-    if (active_view)
-        active_view->hierarchy_panel();
-    else
-        TextWrapped("Instances of the simulated cell show up here. F5 starts a simulation.");
-    End();
+    ui::zoom::begin("Hierarchy");
+    if (ui::zoom::shown()) {
+        if (active_view)
+            active_view->hierarchy_panel();
+        else
+            TextWrapped("Instances of the simulated cell show up here. F5 starts a simulation.");
+    }
+    ui::zoom::end();
 }
 
 void app::update_simulations()
@@ -1183,7 +1206,11 @@ void app::messages_panel()
 
     if (messages.empty()) return;
 
-    Begin("Messages");
+    ui::zoom::begin("Messages");
+    if (!ui::zoom::shown()) {
+        ui::zoom::end();
+        return;
+    }
     if (Button((std::string(ui::icon::eraser) + " Clear").c_str())) messages.clear();
     {
         // compiler output lines up its markers by columns
@@ -1191,7 +1218,7 @@ void app::messages_panel()
         for (auto& m : messages)
             TextWrapped("%s", m.c_str());
     }
-    End();
+    ui::zoom::end();
 }
 
 void app::exit_dialog()

@@ -143,6 +143,7 @@ add_library(logic_ui STATIC
     src/ui/icons.cpp
     src/ui/search.cpp
     src/ui/theme.cpp
+    src/ui/zoom.cpp
     src/wave/ui/timeline.cpp
     src/wave/ui/view.cpp
 )
@@ -319,6 +320,11 @@ add_executable(waveform_test tests/waveform_test.cpp)
 target_link_libraries(waveform_test logic_core logic_ui)
 target_compile_options(waveform_test PRIVATE ${LOGIC_WARNINGS})
 add_test(NAME waveform_test COMMAND waveform_test)
+
+add_executable(zoom_test tests/zoom_test.cpp)
+target_link_libraries(zoom_test logic_ui)
+target_compile_options(zoom_test PRIVATE ${LOGIC_WARNINGS})
+add_test(NAME zoom_test COMMAND zoom_test)
 
 # distance fields of the canvas font, with fonts of the system when they're there
 add_executable(font_test tests/font_test.cpp)
