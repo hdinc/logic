@@ -106,12 +106,20 @@ public:
     // in the order they were added
     const std::vector<std::unique_ptr<primitive>>& all() const { return list; }
 
+    // bundle types the primitives use, e.g. axi4. they go into the builtin
+    // library with their ids from builtin_bundle_id.
+    void add_bundle(bundle_type b);
+    const std::vector<bundle_type>& bundles() const { return bundle_list; }
+
 private:
     std::vector<std::unique_ptr<primitive>> list;
+    std::vector<bundle_type> bundle_list;
 };
 
 // cell id of a builtin, the same on every run so saved schematics can refer
 // to builtin cells by id like to any other cell
 id builtin_cell_id(const std::string& kind);
+// the same for a builtin bundle type by name
+id builtin_bundle_id(const std::string& name);
 
 }

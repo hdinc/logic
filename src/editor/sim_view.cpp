@@ -629,6 +629,34 @@ void sim_view::property_panel()
     }
 }
 
+void sim_view::axi_master_panel(const sim::scope& sc)
+{
+    using namespace ImGui;
+
+    SeparatorText("AXI master");
+    InputScalar("Address", ImGuiDataType_U64, &axi_addr, nullptr, nullptr, "%llX", ImGuiInputTextFlags_CharsHexadecimal);
+    InputScalar("Data", ImGuiDataType_U64, &axi_data, nullptr, nullptr, "%llX", ImGuiInputTextFlags_CharsHexadecimal);
+    SetItemTooltip("written in every 64 bits of the bus, beat k of a burst writes data + k");
+    if (InputInt("Length", &axi_len)) axi_len = std::clamp(axi_len, 0, 255);
+    SetItemTooltip("beats - 1 of an incrementing burst (AXI4)");
+    int size = axi_size == 63 ? -1 : axi_size;
+    if (InputInt("Size", &size)) axi_size = size < 0 ? 63 : std::clamp(size, 0, 7);
+    SetItemTooltip("2^size bytes per beat, -1 for the whole bus");
+
+    auto start = [&](const char* op) {
+        s->interact(&sc, selected, "addr", (int64_t)axi_addr);
+        s->interact(&sc, selected, "data", (int64_t)axi_data);
+        s->interact(&sc, selected, "len", axi_len);
+        s->interact(&sc, selected, "size", axi_size);
+        s->interact(&sc, selected, op, 0);
+    };
+    if (Button("Write")) start("write");
+    SameLine();
+    if (Button("Read")) start("read");
+    SameLine();
+    TextDisabled("the clock must run");
+}
+
 void sim_view::instance_panel()
 {
     using namespace ImGui;
@@ -655,15 +683,21 @@ void sim_view::instance_panel()
     bool has_terminal = false;
     if (BeginTable("state", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
         for (auto& item : w.items) {
-            if (item.v.width() == 0) {
-                // texts, e.g. a terminal's screen, below the table
-                if (item.name == "screen") {
-                    terminal = item.text;
-                    has_terminal = true;
-                }
+            if (item.v.width() == 0 && item.name == "screen") {
+                // a terminal's screen, below the table
+                terminal = item.text;
+                has_terminal = true;
                 continue;
             }
             TableNextRow();
+            if (item.v.width() == 0) {
+                // a text, e.g. a state's name
+                TableNextColumn();
+                TextUnformatted(item.name.c_str());
+                TableNextColumn();
+                TextUnformatted(item.text.c_str());
+                continue;
+            }
             TableNextColumn();
             TextUnformatted(item.name.c_str());
             TableNextColumn();
@@ -672,6 +706,8 @@ void sim_view::instance_panel()
         }
         EndTable();
     }
+
+    if (auto b = cell ? std::get_if<model::builtin_impl>(&cell->impl) : nullptr; b && b->kind == "axi_master") axi_master_panel(sc);
 
     if (has_terminal) {
         SeparatorText("Terminal");

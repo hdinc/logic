@@ -37,6 +37,8 @@ public:
         std::string description;
         // shown inside the box, the name if empty
         std::string label = {};
+        // drawn as thick as a bundle wire
+        bool bundle = false;
     };
     // a box with inputs on the left, outputs on the right and more inputs
     // (e.g. selects) at the bottom, each with a stub one grid long and a

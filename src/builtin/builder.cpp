@@ -26,7 +26,7 @@ void builder::box(const std::string& title, const std::vector<box_pin>& left, co
 {
     using model::grid;
     constexpr float label_size = 5.0f;
-    auto stroke = [](int w) { return w > 1 ? model::bus_stroke : 0.0f; };
+    auto stroke = [](const box_pin& p) { return p.bundle ? model::bundle_stroke : p.width > 1 ? model::bus_stroke : 0.0f; };
 
     // rows one grid apart from the top, the first at or above the origin
     int rows = (int)std::max<size_t>({left.size(), right.size(), 1});
@@ -40,7 +40,7 @@ void builder::box(const std::string& title, const std::vector<box_pin>& left, co
     auto label_of = [](const box_pin& p) { return p.label.empty() ? p.name : p.label; };
     int y = first;
     for (auto& p : left) {
-        line({-half - grid, y}, {-half, y}, stroke(p.width));
+        line({-half - grid, y}, {-half, y}, stroke(p));
         text({-half + 2, y - 2}, label_of(p), label_size);
         port(p.name, p.dir, p.width, {-half - grid, y}, p.description);
         y -= grid;
@@ -49,14 +49,14 @@ void builder::box(const std::string& title, const std::vector<box_pin>& left, co
     int x = -((int)bottom.size() - 1) * grid / 2;
     x = x / grid * grid;
     for (auto& p : bottom) {
-        line({x, bottom_y - grid}, {x, bottom_y}, stroke(p.width));
+        line({x, bottom_y - grid}, {x, bottom_y}, stroke(p));
         text({x, bottom_y + 2}, label_of(p), label_size, model::text_align::center);
         port(p.name, p.dir, p.width, {x, bottom_y - grid}, p.description);
         x += grid;
     }
     y = first;
     for (auto& p : right) {
-        line({half, y}, {half + grid, y}, stroke(p.width));
+        line({half, y}, {half + grid, y}, stroke(p));
         text({half - 2, y - 2}, label_of(p), label_size, model::text_align::right);
         port(p.name, p.dir, p.width, {half + grid, y}, p.description);
         y -= grid;

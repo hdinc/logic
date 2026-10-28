@@ -2640,6 +2640,226 @@ static void test_random()
     CHECK(clock(*wide_l, p64).fully_known());
 }
 
+// masters, a crossbar and rams on one clock. instance 0 is the clock, then
+// the masters, the crossbar (if any) and the rams.
+struct axi_bench : fixture {
+    int clock = 0;
+    std::vector<int> masters, rams;
+    int xbar = -1;
+    int mx = 2000;
+
+    axi_bench(int n_masters, int n_rams, const std::string& map, bool lite = false, bool with_xbar = true)
+    {
+        model::param_values axi{{"protocol", std::string(lite ? "AXI4-Lite" : "AXI4")}};
+        place("clock", {-200, 500}, {{"frequency", int64_t(1000000)}});
+        for (int i = 0; i < n_masters; i++) {
+            masters.push_back((int)sch().instances.size());
+            place("axi_master", {0, -300 * i}, axi);
+        }
+        if (with_xbar) {
+            xbar = (int)sch().instances.size();
+            auto v = axi;
+            v["masters"] = int64_t(n_masters);
+            v["slaves"] = int64_t(n_rams);
+            v["map"] = map;
+            place("axi_crossbar", {600, 0}, v);
+        }
+        for (int j = 0; j < n_rams; j++) {
+            rams.push_back((int)sch().instances.size());
+            place("axi_ram", {1200, -300 * j}, axi);
+        }
+
+        // master i to s i, m j to ram j, or the master straight to the ram
+        for (int i = 0; i < n_masters; i++)
+            connect(instance_pin(*this, masters[i], 2), with_xbar ? instance_pin(*this, xbar, i) : instance_pin(*this, rams[i], 0));
+        for (int j = 0; with_xbar && j < n_rams; j++)
+            connect(instance_pin(*this, xbar, n_masters + 2 + j), instance_pin(*this, rams[j], 0));
+
+        // the clock to every aclk
+        auto clk = instance_pin(*this, clock, 0);
+        for (int i : masters)
+            connect(clk, instance_pin(*this, i, 0));
+        if (with_xbar) connect(clk, instance_pin(*this, xbar, n_masters));
+        for (int j : rams)
+            connect(clk, instance_pin(*this, j, 1));
+    }
+
+    // an L-shaped route through its own column, wires only join at their ends
+    void connect(glm::ivec2 a, glm::ivec2 b)
+    {
+        mx += 10;
+        wire(a, {mx, a.y});
+        wire({mx, a.y}, {mx, b.y});
+        wire({mx, b.y}, b);
+    }
+};
+
+static sim::value axi_item(sim::simulator& s, int instance, const std::string& name)
+{
+    for (auto& item : s.inspect(s.root(), instance))
+        if (item.name == name) return item.v;
+    std::printf("  no item %s\n", name.c_str());
+    failures++;
+    return {};
+}
+
+static void axi_start(sim::simulator& s, int master, const std::string& op, uint64_t addr, uint64_t data = 0, int len = 0, int size = -1)
+{
+    s.interact(s.root(), master, "addr", (int64_t)addr);
+    s.interact(s.root(), master, "data", (int64_t)data);
+    s.interact(s.root(), master, "len", len);
+    s.interact(s.root(), master, "size", size < 0 ? 63 : size);
+    s.interact(s.root(), master, op, 0);
+}
+
+// runs whole clock cycles until the masters are idle, false after max
+static bool axi_wait(sim::simulator& s, const axi_bench& b, int max = 100, int* cycles = nullptr)
+{
+    for (int k = 1; k <= max; k++) {
+        s.run_until(s.now() + sim::us);
+        bool busy = false;
+        for (int m : b.masters)
+            busy |= axi_item(s, m, "busy") == sim::known(1, 1);
+        if (!busy) {
+            if (cycles) *cycles = k;
+            return true;
+        }
+    }
+    return false;
+}
+
+static std::vector<uint8_t> ram_bytes(sim::simulator& s, int ram, uint64_t at, size_t n)
+{
+    std::vector<uint8_t> r(n, 0xEE);
+    auto c = s.component_of(s.root(), ram);
+    if (!c || !c->debug() || !c->debug()->read_memory(0, at, r)) {
+        std::printf("  can't read ram %d\n", ram);
+        failures++;
+    }
+    return r;
+}
+
+static void test_axi()
+{
+    // two masters, two rams of 4 KiB at 0 and 0x1000
+    {
+        axi_bench b(2, 2, "0x0000/4K, 0x1000/4K");
+        CHECK(netlist::extract(b.ws, *b.top).problems.empty());
+        CHECK(b.ws.check_instance(b.sch().instances[b.xbar]).empty());
+        sim::simulator s(b.ws, *b.top, builtin::factory());
+        for (auto& p : s.problems())
+            std::printf("  %s\n", p.c_str());
+        CHECK(s.problems().empty());
+        s.run_until(3 * sim::us);
+
+        // different slaves at the same time take as long as one alone
+        int both = 0, alone = 0;
+        axi_start(s, b.masters[0], "write", 0x10, 0x11223344);
+        axi_start(s, b.masters[1], "write", 0x1020, 0xAABBCCDD);
+        CHECK(axi_wait(s, b, 100, &both));
+        axi_start(s, b.masters[0], "write", 0x14, 0x55667788);
+        CHECK(axi_wait(s, b, 100, &alone));
+        CHECK(both == alone);
+        CHECK(axi_item(s, b.masters[0], "done") == sim::known(2, 32) && axi_item(s, b.masters[1], "done") == sim::known(1, 32));
+        CHECK(axi_item(s, b.masters[0], "resp") == sim::known(0, 2) && axi_item(s, b.masters[1], "resp") == sim::known(0, 2));
+        CHECK((ram_bytes(s, b.rams[0], 0x10, 8) == std::vector<uint8_t>{0x44, 0x33, 0x22, 0x11, 0x88, 0x77, 0x66, 0x55}));
+        CHECK((ram_bytes(s, b.rams[1], 0x20, 4) == std::vector<uint8_t>{0xDD, 0xCC, 0xBB, 0xAA}));
+
+        // read back across the crossbar
+        axi_start(s, b.masters[0], "read", 0x1020);
+        CHECK(axi_wait(s, b));
+        CHECK(axi_item(s, b.masters[0], "rdata first") == sim::known(0xAABBCCDD, 32));
+        CHECK(axi_item(s, b.masters[0], "beats") == sim::known(1, 9));
+
+        // an incrementing burst of 4 and reading it back
+        axi_start(s, b.masters[1], "write", 0x100, 0x1000, 3);
+        CHECK(axi_wait(s, b));
+        CHECK((ram_bytes(s, b.rams[0], 0x100, 16) ==
+            std::vector<uint8_t>{0x00, 0x10, 0, 0, 0x01, 0x10, 0, 0, 0x02, 0x10, 0, 0, 0x03, 0x10, 0, 0}));
+        axi_start(s, b.masters[1], "read", 0x100, 0, 3);
+        CHECK(axi_wait(s, b));
+        CHECK(axi_item(s, b.masters[1], "beats") == sim::known(4, 9));
+        CHECK(axi_item(s, b.masters[1], "rdata first") == sim::known(0x1000, 32));
+        CHECK(axi_item(s, b.masters[1], "rdata last") == sim::known(0x1003, 32));
+
+        // both on the same slave: one waits for the other, both finish
+        axi_start(s, b.masters[0], "write", 0x200, 0xA0A0A0A0, 1);
+        axi_start(s, b.masters[1], "write", 0x300, 0xB0B0B0B0, 1);
+        CHECK(axi_wait(s, b, 100, &both));
+        CHECK(both > alone);
+        CHECK(ram_bytes(s, b.rams[0], 0x204, 1)[0] == 0xA1 && ram_bytes(s, b.rams[0], 0x304, 1)[0] == 0xB1);
+
+        // one byte in lane 1: only that byte changes
+        axi_start(s, b.masters[0], "write", 0x201, 0x5A00, 0, 0);
+        CHECK(axi_wait(s, b));
+        CHECK((ram_bytes(s, b.rams[0], 0x200, 4) == std::vector<uint8_t>{0xA0, 0x5A, 0xA0, 0xA0}));
+
+        // nothing at 0x8000: DECERR, a burst read gets all its beats
+        axi_start(s, b.masters[0], "write", 0x8000, 1, 1);
+        CHECK(axi_wait(s, b));
+        CHECK(axi_item(s, b.masters[0], "resp") == sim::known(3, 2));
+        axi_start(s, b.masters[1], "read", 0x8000, 0, 2);
+        CHECK(axi_wait(s, b));
+        CHECK(axi_item(s, b.masters[1], "resp") == sim::known(3, 2) && axi_item(s, b.masters[1], "beats") == sim::known(3, 9));
+        // and the slaves still work
+        axi_start(s, b.masters[1], "read", 0x14);
+        CHECK(axi_wait(s, b));
+        CHECK(axi_item(s, b.masters[1], "resp") == sim::known(0, 2) && axi_item(s, b.masters[1], "rdata first") == sim::known(0x55667788, 32));
+    }
+
+    // AXI4-Lite through a 1x3 crossbar with the default map: 3 slices of
+    // 1 GiB (2^32 / 4)
+    {
+        axi_bench b(1, 3, "", true);
+        CHECK(netlist::extract(b.ws, *b.top).problems.empty());
+        sim::simulator s(b.ws, *b.top, builtin::factory());
+        CHECK(s.problems().empty());
+        s.run_until(3 * sim::us);
+        axi_start(s, b.masters[0], "write", 0x80000008, 0xCAFEF00D);
+        CHECK(axi_wait(s, b));
+        CHECK(axi_item(s, b.masters[0], "resp") == sim::known(0, 2));
+        CHECK((ram_bytes(s, b.rams[2], 8, 4) == std::vector<uint8_t>{0x0D, 0xF0, 0xFE, 0xCA}));
+        axi_start(s, b.masters[0], "read", 0x80000008);
+        CHECK(axi_wait(s, b));
+        CHECK(axi_item(s, b.masters[0], "rdata first") == sim::known(0xCAFEF00D, 32));
+        // the fourth slice has no slave
+        axi_start(s, b.masters[0], "read", 0xC0000000);
+        CHECK(axi_wait(s, b));
+        CHECK(axi_item(s, b.masters[0], "resp") == sim::known(3, 2));
+    }
+
+    // a master straight on a ram, reset in the middle of a write
+    {
+        axi_bench b(1, 1, "", false, false);
+        int rst = b.port(model::direction::input, instance_pin(b, b.masters[0], 1));
+        int rst_ram = b.port(model::direction::input, instance_pin(b, b.rams[0], 2));
+        sim::simulator s(b.ws, *b.top, builtin::factory());
+        CHECK(s.problems().empty());
+        s.set_input(rst, bit(true));
+        s.set_input(rst_ram, bit(true));
+        s.run_until(3 * sim::us);
+        axi_start(s, b.masters[0], "write", 0x40, 0x12345678, 7);
+        s.run_until(s.now() + 2 * sim::us);
+        CHECK(axi_item(s, b.masters[0], "busy") == sim::known(1, 1));
+        s.set_input(rst, bit(false));
+        s.set_input(rst_ram, bit(false));
+        s.run_until(s.now() + 2 * sim::us);
+        CHECK(axi_item(s, b.masters[0], "busy") == sim::known(0, 1));
+        CHECK(axi_item(s, b.rams[0], "writing") == sim::known(0, 1));
+        s.set_input(rst, bit(true));
+        s.set_input(rst_ram, bit(true));
+        axi_start(s, b.masters[0], "write", 0x40, 0x12345678);
+        CHECK(axi_wait(s, b));
+        CHECK((ram_bytes(s, b.rams[0], 0x40, 4) == std::vector<uint8_t>{0x78, 0x56, 0x34, 0x12}));
+    }
+
+    // a bad map is shown on the crossbar
+    {
+        axi_bench b(1, 2, "0x0000/8K, 0x1000/4K");
+        CHECK(b.ws.check_instance(b.sch().instances[b.xbar]).find("overlap") != std::string::npos);
+    }
+}
+
 int main()
 {
     test_values();
@@ -2677,6 +2897,7 @@ int main()
     test_io_parts();
     test_framebuffer();
     test_random();
+    test_axi();
     test_seg7_view();
     test_rom_ram();
 

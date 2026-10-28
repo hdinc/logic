@@ -1,6 +1,7 @@
 // tests for the model and io layers. no test framework, a failing check
 // prints the location and the test exits with 1.
 
+#include "../src/builtin/axi.h"
 #include "../src/builtin/builtin.h"
 #include "../src/io/json.h"
 #include "../src/io/storage.h"
@@ -1504,6 +1505,70 @@ static void test_cell_params(const std::filesystem::path& dir)
     std::filesystem::remove_all(dir);
 }
 
+static void test_axi_bundles()
+{
+    using namespace builtin;
+    model::workspace ws;
+    auto& lib = ws.add_builtin_library(builtin::registry());
+
+    // the bundles are in the builtin library with stable ids
+    auto a4 = ws.find_bundle(model::builtin_bundle_id("axi4"));
+    auto al = ws.find_bundle(model::builtin_bundle_id("axi4_lite"));
+    CHECK(a4 && al && lib.find_bundle("axi4") == a4 && lib.find_bundle("axi4_lite") == al && lib.read_only);
+    CHECK(model::builtin_bundle_id("axi4") != model::builtin_cell_id("axi4"));
+
+    // the parts' layout is the bundle's for any values
+    for (auto proto : {axi::protocol::axi4, axi::protocol::lite}) {
+        for (auto w : {axi::widths{}, axi::widths{0, 40, 128, 3, false}, axi::widths{8, 64, 1024, 64, true}, axi::widths{2, 12, 64, 0, true}}) {
+            if (proto == axi::protocol::lite) w.data = std::min(w.data, 64);
+            auto l = axi::make_layout(proto, w);
+            auto args = axi::bundle_args(proto, w);
+            auto id = model::builtin_bundle_id(axi::bundle_name(proto));
+            auto bl = ws.layout_of(id, false, args);
+            CHECK(bl && bl.width == l.total);
+            auto at = [&](const char* name, const axi::sig& s) {
+                auto n = bl.find(name);
+                if (!s.w) return !n;
+                return n && n->offset == s.off && n->width == s.w;
+            };
+            CHECK(at("awaddr", l.awaddr) && at("wstrb", l.wstrb) && at("rdata", l.rdata) && at("rready", l.rready) && at("awid", l.awid) &&
+                at("aruser", l.aruser) && at("wlast", l.wlast) && at("arqos", l.arqos) && at("bresp", l.bresp));
+            // channels: payload, valid, ready
+            CHECK(l.w.off == l.awready.off + 1 && l.w.valid == l.wvalid.off && l.r.ready == l.rready.off && l.r.off + l.r.w == l.rvalid.off);
+        }
+    }
+    auto l = axi::make_layout(axi::protocol::axi4, {});
+    CHECK(l.awid.w == 4 && l.wstrb.w == 4 && l.awuser.w == 0 && l.awqos.w == 4 && l.rlast.w == 1);
+    l = axi::make_layout(axi::protocol::lite, {4, 32, 32, 0, false});
+    CHECK(l.awprot.w == 0 && l.awid.w == 0 && l.wlast.w == 0 && l.total == 32 + 2 + 32 + 4 + 2 + 2 + 2 + 32 + 2 + 32 + 2 + 2);
+
+    // the crossbar's ports: s flipped, m normal, with the values
+    model::instance x{1, model::builtin_cell_id("axi_crossbar"), "X", {0, 0}, {}, {{"masters", int64_t(3)}, {"slaves", int64_t(1)}, {"DATA_W", int64_t(64)}}, {}};
+    auto iface = ws.interface_of(x);
+    CHECK(iface && iface.ports->size() == 3 + 2 + 1);
+    auto& ports = *iface.ports;
+    CHECK(ports[0].name == "s0" && ports[0].flipped && ports[0].bundle == a4->id && ports[3].name == "aclk" && ports[5].name == "m0" && !ports[5].flipped);
+    CHECK(ws.bundle_label(ports[0]) == "~axi4<DATA_W=64>" && ports[0].width == ws.layout_of(a4->id, false, ports[0].bundle_args).width);
+    CHECK(ws.check_instance(x).empty());
+    x.params["map"] = std::string("0/4K, 0x800/1K");
+    CHECK(ws.check_instance(x) == "the address map has 2 ranges for 1 slave");
+    x.params["DATA_W"] = int64_t(48);
+    CHECK(ws.check_instance(x) == "the data bits must be a power of two, at least 8");
+
+    // address maps
+    std::string error;
+    auto m = axi::parse_map("0x0000/4K, 0x1000 / 4k, 0x8000_0000/1G", 3, 32, error);
+    CHECK(m && m->size() == 3 && (*m)[1].base == 0x1000 && (*m)[1].size == 4096 && (*m)[2].base == 0x80000000 && (*m)[2].size == (1u << 30));
+    m = axi::parse_map("", 3, 32, error);
+    CHECK(m && m->size() == 3 && (*m)[1].base == 0x40000000 && (*m)[2].size == 0x40000000);
+    m = axi::parse_map("", 1, 64, error);
+    CHECK(m && (*m)[0].base == 0 && (*m)[0].size == ~uint64_t(0));
+    CHECK(!axi::parse_map("0/8K, 0x1000/4K", 2, 32, error) && error.find("overlap") != std::string::npos);
+    CHECK(!axi::parse_map("0xF000/8K", 1, 16, error) && error.find("doesn't fit") != std::string::npos);
+    CHECK(!axi::parse_map("0x1000", 1, 32, error) && error.find("base/size") != std::string::npos);
+    CHECK(!axi::parse_map("0/0", 1, 32, error));
+}
+
 int main(int argc, char** argv)
 {
     auto dir = std::filesystem::path(argc > 1 ? argv[1] : ".") / "model_test_workspace";
@@ -1531,6 +1596,7 @@ int main(int argc, char** argv)
     test_expr();
     test_bundle_params(dir);
     test_cell_params(dir);
+    test_axi_bundles();
     test_label_alignment();
     test_categories(dir);
     test_fill_outlines();

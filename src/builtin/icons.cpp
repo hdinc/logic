@@ -101,6 +101,18 @@ const std::map<std::string, icon_fn>& icons()
         {"register", [](builder& b) { chip(b, "D"); }},
         {"counter", [](builder& b) { chip(b, "CT"); }},
         {"ram", [](builder& b) { chip(b, "RW"); }},
+        {"axi_ram", [](builder& b) { chip(b, "M"); b.line({-10, -10}, {-10, 10}, model::bundle_stroke); }},
+        {"axi_master", [](builder& b) { chip(b, "TM"); b.line({10, -10}, {10, 10}, model::bundle_stroke); }},
+        {"axi_crossbar",
+            [](builder& b) {
+                b.rect({-6, -10}, {6, 10});
+                for (int y : {6, -6}) {
+                    b.line({-11, y}, {-6, y}, model::bundle_stroke);
+                    b.line({6, y}, {11, y}, model::bundle_stroke);
+                }
+                b.line({-6, 6}, {6, -6});
+                b.line({-6, -6}, {6, 6});
+            }},
         {"rom", [](builder& b) { chip(b, "R"); }},
 
         // arithmetic

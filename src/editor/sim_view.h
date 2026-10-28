@@ -100,6 +100,12 @@ private:
     uint64_t disassemble_from = 0;
     uint64_t new_breakpoint = 0;
     std::string terminal_input;
+    // what the selected axi test master is asked to do
+    uint64_t axi_addr = 0;
+    uint64_t axi_data = 0;
+    int axi_len = 0;
+    int axi_size = 63;
+    void axi_master_panel(const sim::scope& sc);
 };
 
 }

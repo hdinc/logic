@@ -29,6 +29,7 @@ const model::primitive_registry& registry()
         add_wiring(r);
         add_io(r);
         add_random(r);
+        add_axi(r);
         return r;
     }();
     return r;

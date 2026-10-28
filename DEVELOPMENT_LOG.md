@@ -5369,3 +5369,177 @@ Parameterized schematic cells, step 2 of 2: subcircuits with parameters.
 ### Next steps
 
 - None planned. See the recommended features.
+
+## 2026-10-28 17:37 +0300
+
+AXI bundles, an AXI crossbar, an AXI RAM and an AXI test master.
+
+### Features implemented
+
+- **Builtin bundle types `axi4` and `axi4_lite`.** They live in the
+  read-only builtin library with stable ids (`model::builtin_bundle_id`),
+  so they can be used for ports, HDL/C port groups and breakouts in every
+  workspace.
+  - Parameters: `ID_W` (0..32, default 4), `ADDR_W` (12..64, 32), `DATA_W`
+    (8..1024, 32; Lite 32..64), `USER_W` (0..64, 0), and `SIDE` (0/1, 1),
+    which turns lock/cache/prot/qos/region on or off (Lite: prot).
+  - The fields are flat with the usual names (`awid`, `awaddr`, `awlen`,
+    …, `rready`), so an HDL port group with a prefix like `m_axi_` matches
+    a Verilog module's ports. The normal view is the master's.
+- **AXI crossbar** (`axi_crossbar`):
+  - parameters: the protocol (AXI4 or AXI4-Lite), 1–16 masters, 1–16
+    slaves, and an address map such as `"0x0000/4K, 0x1000/4K"`
+    (`_` between digits, K/M/G/T sizes; empty splits the address space
+    into equal power-of-two slices);
+  - ports: `s0..` for the masters (flipped view), `aclk`, `aresetn`, and
+    `m0..` for the slaves;
+  - each slave is arbitrated round robin, separately for writes and reads,
+    and masters on different slaves run in parallel;
+  - each master has one outstanding write and one outstanding read, so
+    responses stay in order and ids pass through unchanged;
+  - every channel goes through a 2-entry skid buffer, so there are no
+    combinational paths from a master to a slave;
+  - unmapped addresses get DECERR from an internal error slave, and a burst
+    read gets all of its beats.
+- **AXI RAM** (`axi_ram`):
+  - 2^size bytes (4 B to 16 MiB), optionally loaded from a firmware file;
+  - FIXED/INCR/WRAP bursts, narrow sizes and byte strobes;
+  - independent write and read paths at one beat per cycle;
+  - its contents show and can be edited in the debugger's memory view.
+- **AXI test master** (`axi_master`):
+  - the simulation's Properties panel has an "AXI master" section with
+    the address, data, length (INCR beats write data + k) and size, plus
+    Write and Read buttons;
+  - its state shows the state name, busy, done, the response
+    (OKAY/SLVERR/DECERR), the beat count, and the first and last read
+    data.
+- **Example `examples/axi_demo`**: two test masters, a 2×2 crossbar
+  (`0x0000/4K, 0x1000/4K`) and two 4 KiB RAMs. A 1 kHz clock reaches every
+  `aclk` through tunnels.
+
+### Changes made
+
+- `model::primitive_registry` gets `add_bundle`/`bundles()`, and
+  `workspace::add_builtin_library` adds those bundle types to the builtin
+  library.
+- `builder::box_pin::bundle` draws a box pin as thick as a bundle wire.
+- The sim view's state table now shows text items (e.g. "state: idle").
+  Before, every text item except a terminal's screen was dropped.
+- README: the AXI parts.
+
+### How it works
+
+- `src/builtin/axi.{h,cpp}`:
+  - One X-macro table, `LOGIC_AXI_FIELDS` (name, direction, AXI4 width,
+    Lite width or none), is the single source for both the bundle types
+    (`axi::bundle`) and the layout the components use (`axi::make_layout`,
+    evaluated with `eval_expr`). model_test checks that the layout is the
+    one `workspace::layout_of` gives for several sets of values.
+  - A channel's payload is the fields before its `valid`, and they are
+    contiguous. So a beat is one `sim::value` slice (`channel{off, w,
+    valid, ready}`), and the crossbar passes ids, user, qos etc. through
+    untouched.
+- The parts are `clocked` components. Inputs are sampled on the rising
+  edge of `aclk`; `aresetn` = 0 at an edge resets, and unconnected means
+  running. Outputs are written on every eval from the state only.
+- The bundle ports are `inout`: a part reads the net and drives only its
+  own fields, and the others are left floating.
+- Skid buffers (`fifo`):
+  - `ready = size < 2` and `valid = !empty`;
+  - at an edge, the pops the other side accepted go first, then the
+    internal moves (responses, W beats, arbitration, decode errors), then
+    the beats accepted from outside, pushed using the ready seen before
+    the edge;
+  - this gives one beat per cycle per channel. A single write takes 8
+    cycles end to end through the crossbar.
+- Crossbar state:
+  - per master: input buffers AW/W/AR, output buffers B/R, busy flags, the
+    slave its W beats go to, and the error-slave state with separate write
+    and read ids;
+  - per slave: output buffers AW/W/AR, input buffers B/R, the write and
+    read owners, and round-robin pointers.
+  - A slave's B goes back only after all the W beats have gone to it. A
+    read is released at `rlast` (Lite: every beat).
+- RAM: one write and one read burst at a time. The address of each beat
+  comes from `beat_address` (fixed/incr/wrap). Bytes are written by strobe
+  at the bus-aligned address, and a read returns the whole bus word.
+  Addresses wrap at the size, so a RAM at 0x1000 needs no offset.
+- Test master: AW → W beats → B and AR → R beats, with `interact` actions
+  (`addr`, `data`, `len`, `size`, `write`, `read`). Narrow sizes set the
+  strobes of the lanes their address covers.
+- The example is generated by a throwaway program against the model API,
+  with pin positions from `interface_of`. Its wires don't end on other
+  wires, so editing won't join nets.
+- Decisions, made with the user:
+  - AXI4 and AXI4-Lite;
+  - a crossbar with one outstanding transaction per master and direction;
+  - registered channels (skid buffers);
+  - a text address map;
+  - the bundles in the builtin library;
+  - a RAM, a test master and an example on top.
+- Rejected:
+  - Several outstanding transactions per master. That needs id extension
+    and response reordering.
+  - Combinational routing.
+  - Per-slave integer parameters: a primitive's parameter list is fixed,
+    so they can't follow the slave count.
+
+### Testing
+
+- model_test `test_axi_bundles`:
+  - both bundles are in the builtin library with stable ids;
+  - `make_layout` matches `layout_of` for both protocols and several
+    widths, including ID_W 0, SIDE 0, 1024 bits and USER_W 64;
+  - the channel offsets;
+  - the crossbar's ports (s flipped, m normal, `~axi4<DATA_W=64>`) and its
+    `check()` messages;
+  - `parse_map`: suffixes, spaces, default slices including a 64-bit
+    space, overlap, out of range, bad syntax, size 0.
+- sim_test `test_axi`, with test masters, a crossbar and RAMs on a 1 MHz
+  clock:
+  - two masters writing to different RAMs take as long as one alone
+    (8 cycles);
+  - a read back across the crossbar, an INCR burst of 4 written and read
+    back;
+  - both masters on the same RAM finish (15 cycles), and a one-byte write
+    in lane 1 changes only that byte;
+  - DECERR for an unmapped write and for a 3-beat burst read, and the RAMs
+    still work afterwards;
+  - AXI4-Lite through a 1×3 crossbar with the default map, including
+    DECERR in the unmapped fourth slice;
+  - a master straight on a RAM, reset in the middle of a burst, then
+    writing again;
+  - an overlapping map shown on the crossbar.
+- All 9 ctest suites pass. The web build compiles.
+- GUI on VNC:
+  - the AXI parts are in the builtin library's AXI group, and
+    `examples/axi_demo` opens without problems;
+  - with F5 and Run, M0's Properties show the master section; writing
+    0xDEADBEEF to 0x1004 gives done 1, OKAY;
+  - RAM1's memory view shows `EF BE AD DE` at 4.
+
+### Recommended features
+
+- Several outstanding transactions per master (id extension, reordering)
+  for more throughput.
+- Data width and protocol converters (AXI4 ↔ Lite, 64 ↔ 32 bits) as
+  parts.
+- A scriptable master, e.g. a list of transactions from a file, and a
+  monitor that logs transactions.
+- An hdl_test with a Verilog AXI-Lite slave grouped with the builtin
+  `axi4_lite` bundle behind the crossbar (planned as optional, not done).
+
+### Outstanding issues
+
+- All ports of a crossbar share one set of widths.
+- The test master writes at most 64 bits of distinct data per beat: it
+  repeats them across wider buses. It shows only the low 64 bits of read
+  data.
+- The RAM doesn't check that a WRAP burst is aligned and has a length of
+  2, 4, 8 or 16, nor exclusive access (it never answers EXOKAY).
+- Bundle wires are thin unless View > Thick buses and bundles is on, so
+  the AXI wires look like plain wires apart from their color.
+
+### Next steps
+
+- See the recommended features.

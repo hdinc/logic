@@ -33,6 +33,14 @@ standalone VCD viewer, `logic-wave`.
   values, and `axis<64>` and `axis<32>` are different types. An HDL cell's
   bundle port can take its values from the module's parameters
   (`DATA_W = TDATA_WIDTH`).
+- **AXI**: builtin `axi4` and `axi4_lite` bundle types (parameters `ID_W`,
+  `ADDR_W`, `DATA_W`, `USER_W`, `SIDE`, signal names as in HDL, e.g.
+  `awvalid`). The **AXI crossbar** connects 1–16 masters to 1–16 slaves by
+  an address map (`0x0000/4K, 0x1000/4K`, unmapped addresses get DECERR).
+  It arbitrates round robin per slave and buffers every channel in a
+  register. The **AXI RAM** is a slave memory with bursts and byte strobes.
+  The **AXI test master** writes and reads when asked to from the
+  simulation's Properties panel. See `examples/axi_demo`.
 - **Parameterized subcircuits**: a schematic cell can have integer
   parameters (cell properties, nothing selected). Port widths, bundle
   values and the parameters of the parts inside can be expressions of them

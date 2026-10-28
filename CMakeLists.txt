@@ -99,6 +99,7 @@ add_library(logic_core STATIC
     src/builtin/sources.cpp
     src/builtin/memory.cpp
     src/builtin/wiring.cpp
+    src/builtin/axi.cpp
     src/builtin/io.cpp
     src/builtin/arith.cpp
     src/builtin/plexers.cpp

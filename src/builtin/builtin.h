@@ -59,5 +59,7 @@ void add_random(model::primitive_registry& r);
 void add_arith(model::primitive_registry& r);
 // mux, demux, decoder, priority encoder, bit counter, bit selector
 void add_plexers(model::primitive_registry& r);
+// the axi4 and axi4_lite bundles, test master, crossbar, ram
+void add_axi(model::primitive_registry& r);
 
 }

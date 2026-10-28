@@ -609,6 +609,8 @@ library& workspace::add_builtin_library(const primitive_registry& r, const std::
         c->symbol = std::move(iface.symbol);
         lib.cells.push_back(std::move(c));
     }
+    for (auto& b : r.bundles())
+        lib.bundles.push_back(std::make_unique<bundle_type>(b));
     return lib;
 }
 
