@@ -41,7 +41,10 @@ struct param_def {
         // paths of fields of the bundle in bundle_param, separated by ','
         fields,
         // the path of one field of the bundle in bundle_param
-        field
+        field,
+        // values of the parameters of the bundle in bundle_param, see
+        // parse_bundle_args
+        bundle_args
     };
     role_t role = plain;
     std::string bundle_param;
@@ -61,6 +64,10 @@ param_def file_param(std::string name, std::string label, std::string descriptio
 param_def bundle_param(std::string name, std::string label, std::string description = {});
 // text parameters holding fields of the bundle in parameter `bundle`
 param_def fields_param(std::string name, std::string label, std::string bundle, bool one, std::string description = {});
+
+// a text parameter holding values of the parameters of the bundle in
+// parameter `bundle`, empty by default
+param_def bundle_args_param(std::string name, std::string label, std::string bundle, std::string description = {});
 
 // a value for every definition: the stored one if it is valid (right type,
 // integers in range, a known choice), otherwise the default. values without a

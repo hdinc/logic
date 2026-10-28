@@ -31,8 +31,11 @@ struct net {
     // the bundle type of the connected ports, no_id for plain bits. a bundle
     // and plain bits of the same width, or two bundle types, are a type
     // error. the views (flipped or not) aren't checked, a net can connect a
-    // master to several slaves.
+    // master to several slaves. the same bundle with other values of its
+    // parameters is another type, bundle_args are those of the first port
+    // (only the ones that differ from the defaults).
     model::id bundle = model::no_id;
+    model::param_values bundle_args;
     bool type_error = false;
 };
 

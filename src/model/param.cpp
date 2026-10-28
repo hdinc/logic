@@ -62,6 +62,14 @@ param_def fields_param(std::string name, std::string label, std::string bundle, 
     return d;
 }
 
+param_def bundle_args_param(std::string name, std::string label, std::string bundle, std::string description)
+{
+    auto d = text_param(std::move(name), std::move(label), "", std::move(description));
+    d.role = param_def::bundle_args;
+    d.bundle_param = std::move(bundle);
+    return d;
+}
+
 param_def text_param(std::string name, std::string label, std::string def, std::string description)
 {
     param_def d;

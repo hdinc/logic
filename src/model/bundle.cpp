@@ -2,6 +2,7 @@
 
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 
 namespace logic::model {
 
@@ -70,6 +71,37 @@ std::vector<std::string> split_fields(const std::string& s)
             b--;
         if (a < b) r.push_back(s.substr(a, b - a));
         start = end + 1;
+    }
+    return r;
+}
+
+std::string format_bundle_args(const param_values& args)
+{
+    std::string r;
+    for (auto& [name, v] : args)
+        if (auto i = std::get_if<int64_t>(&v)) r += (r.empty() ? "" : ", ") + name + "=" + std::to_string(*i);
+    return r;
+}
+
+param_values parse_bundle_args(const std::string& s)
+{
+    param_values r;
+    for (auto& part : split_fields(s)) {
+        auto eq = part.find('=');
+        if (eq == std::string::npos) continue;
+        auto name = part.substr(0, eq);
+        auto value = part.substr(eq + 1);
+        while (!name.empty() && std::isspace((unsigned char)name.back()))
+            name.pop_back();
+        size_t a = 0;
+        while (a < value.size() && std::isspace((unsigned char)value[a]))
+            a++;
+        value = value.substr(a);
+        if (name.empty() || value.empty()) continue;
+        char* end = nullptr;
+        long long v = std::strtoll(value.c_str(), &end, 10);
+        if (*end != 0) continue;
+        r[name] = int64_t(v);
     }
     return r;
 }

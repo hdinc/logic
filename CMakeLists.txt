@@ -88,6 +88,7 @@ add_library(logic_core STATIC
     src/model/workspace.cpp
     src/model/history.cpp
     src/model/param.cpp
+    src/model/expr.cpp
     src/model/primitive.cpp
     src/io/json.cpp
     src/io/storage.cpp

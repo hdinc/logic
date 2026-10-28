@@ -31,7 +31,7 @@ simulator::simulator(const model::workspace& w, const model::cell& top, const co
     for (int k = 0; k < (int)top_ports.size(); k++) {
         auto& p = top_ports[k];
         int n = net_of_port(*m_root, k);
-        auto layout = p.bundle != model::no_id ? ws.layout_of(p.bundle, p.flipped) : model::bundle_layout{};
+        auto layout = p.bundle != model::no_id ? ws.layout_of(p.bundle, p.flipped, p.bundle_args) : model::bundle_layout{};
         if (layout && layout.width == p.width) {
             // the outside drives the fields that are inputs of the cell,
             // inouts start released

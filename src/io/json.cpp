@@ -1,4 +1,5 @@
 #include "json.h"
+#include "../model/expr.h"
 
 #include <algorithm>
 #include <map>
@@ -195,6 +196,34 @@ model::id id_from_string(const std::string& s)
 
 namespace {
 
+// parameter values, e.g. of a bundle port
+json values_to_json(const param_values& v)
+{
+    json j = json::object();
+    for (auto& [name, x] : v)
+        j[name] = param_value_json(x);
+    return j;
+}
+
+param_values values_from_json(const json& j)
+{
+    param_values r;
+    if (!j.is_object()) return r;
+    for (auto& [name, v] : j.items())
+        if (auto x = param_value_from_json(v)) r[name] = *x;
+    return r;
+}
+
+// names to expressions, other values are skipped
+std::map<std::string, std::string> texts_from_json(const json& j)
+{
+    std::map<std::string, std::string> r;
+    if (!j.is_object()) return r;
+    for (auto& [name, v] : j.items())
+        if (v.is_string()) r[name] = v.get<std::string>();
+    return r;
+}
+
 json port_to_json(const port& p)
 {
     json j{
@@ -210,6 +239,7 @@ json port_to_json(const port& p)
     if (p.bundle != no_id) {
         j["bundle"] = id_to_string(p.bundle);
         if (p.flipped) j["flipped"] = true;
+        if (!p.bundle_args.empty()) j["bundle_args"] = values_to_json(p.bundle_args);
     }
     if (p.format != number_format{}) {
         j["format"] = {{"kind", kind_id(p.format.kind)}};
@@ -232,6 +262,7 @@ port port_from_json(const json& j)
     if (j.contains("bundle")) {
         r.bundle = id_from_string(j.at("bundle"));
         r.flipped = j.value("flipped", false);
+        if (auto it = j.find("bundle_args"); it != j.end()) r.bundle_args = values_from_json(*it);
     }
     // an unknown kind (from a newer version) shows as hex
     if (auto it = j.find("format"); it != j.end() && it->is_object()) {
@@ -252,6 +283,7 @@ void groups_to_json(json& impl, const std::vector<port_group>& groups, const std
         if (g.flipped) jg["flipped"] = true;
         if (!g.prefix.empty()) jg["prefix"] = g.prefix;
         if (!g.description.empty()) jg["description"] = g.description;
+        if (!g.args.empty()) jg["args"] = g.args;
         a.push_back(std::move(jg));
     }
     auto& l = impl["leaf_ports"] = json::array();
@@ -269,6 +301,7 @@ void groups_from_json(const json& impl, std::vector<port_group>& groups, std::ve
         g.prefix = jg.value("prefix", "");
         g.side = direction_from_string(jg.value("side", "output"));
         g.description = jg.value("description", "");
+        g.args = texts_from_json(jg.value("args", json::object()));
         groups.push_back(std::move(g));
     }
     for (auto& p : impl.value("leaf_ports", json::array()))
@@ -474,15 +507,21 @@ json to_json(const bundle_type& b)
     j["id"] = id_to_string(b.id);
     j["name"] = b.name;
     if (!b.description.empty()) j["description"] = b.description;
+    if (!b.params.empty()) j["params"] = params_to_json(b.params);
     j["fields"] = json::array();
     for (auto& f : b.fields) {
         json jf{{"name", f.name}};
         if (f.bundle != no_id) {
             jf["bundle"] = id_to_string(f.bundle);
             if (f.flipped) jf["flipped"] = true;
+            if (!f.args.empty()) jf["args"] = f.args;
         } else {
             jf["dir"] = to_string(f.dir);
-            jf["width"] = f.width;
+            // a number unless it's an expression, older versions read numbers
+            if (is_literal(f.width))
+                jf["width"] = std::stoll(f.width);
+            else
+                jf["width"] = f.width;
         }
         if (!f.description.empty()) jf["description"] = f.description;
         j["fields"].push_back(std::move(jf));
@@ -500,6 +539,7 @@ bundle_type bundle_from_json(const json& j)
     b.id = id_from_string(j.at("id"));
     b.name = j.at("name");
     b.description = j.value("description", "");
+    b.params = params_from_json(j.value("params", json::array()));
     for (auto& jf : j.at("fields")) {
         bundle_field f;
         f.name = jf.at("name");
@@ -507,9 +547,14 @@ bundle_type bundle_from_json(const json& j)
         if (jf.contains("bundle")) {
             f.bundle = id_from_string(jf.at("bundle"));
             f.flipped = jf.value("flipped", false);
+            f.args = texts_from_json(jf.value("args", json::object()));
         } else {
             f.dir = direction_from_string(jf.at("dir"));
-            f.width = std::clamp(jf.value("width", 1), 1, max_width);
+            auto w = jf.value("width", json(1));
+            if (w.is_number_integer())
+                f.width = std::to_string(std::clamp(w.get<int64_t>(), int64_t(0), int64_t(max_width)));
+            else if (w.is_string())
+                f.width = w.get<std::string>();
         }
         b.fields.push_back(std::move(f));
     }

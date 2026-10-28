@@ -197,6 +197,8 @@ public:
 struct bundle_view {
     model::id id = model::no_id;
     bool flipped = false;
+    // the values of its parameters that differ from the defaults
+    model::param_values args;
     model::bundle_layout layout;
     // the fields in the order of the parameter, unknown and repeated ones
     // dropped
@@ -210,7 +212,9 @@ struct bundle_view {
         id = model::parse_bundle_ref(model::get_string(v, "bundle"));
         flipped = model::get_bool(v, "flipped");
         if (id == model::no_id || !ctx.ws) return;
-        layout = ctx.ws->layout_of(id, flipped);
+        auto given = model::parse_bundle_args(model::get_string(v, "args"));
+        args = ctx.ws->bundle_args(id, given);
+        layout = ctx.ws->layout_of(id, flipped, given);
         if (!layout) return;
         valid = true;
 
@@ -243,14 +247,20 @@ struct bundle_view {
         return {};
     }
 
+    // "axi_stream<32>", "bundle" without a type
+    std::string label(const model::build_context& ctx) const
+    {
+        return ctx.ws && id != model::no_id ? ctx.ws->bundle_label(id, flipped, args) : std::string("bundle");
+    }
+
     // the bundle side of the part, plain bits if the type is unknown
     model::port& bundle_port(builder& b, const model::build_context& ctx, glm::ivec2 pin) const
     {
-        auto label = ctx.ws && id != model::no_id ? ctx.ws->bundle_label(id, flipped) : std::string("bundle");
-        auto& p = b.port("bundle", direction::inout, valid ? std::max(layout.width, 1) : 1, pin, "the whole bundle, " + label);
+        auto& p = b.port("bundle", direction::inout, valid ? std::max(layout.width, 1) : 1, pin, "the whole bundle, " + label(ctx));
         if (valid) {
             p.bundle = id;
             p.flipped = flipped;
+            p.bundle_args = args;
         }
         return p;
     }
@@ -258,11 +268,12 @@ struct bundle_view {
     // an end for a field: the field's bits, or a bundle port of a nested bundle
     void end_port(builder& b, const model::build_context& ctx, const model::bundle_node& n, glm::ivec2 pin) const
     {
-        std::string what = n.bundle != model::no_id ? "bundle " + ctx.ws->bundle_label(n.bundle, n.flipped) : std::string(model::to_string(n.dir));
+        std::string what = n.bundle != model::no_id ? "bundle " + ctx.ws->bundle_label(n.bundle, n.flipped, n.args) : std::string(model::to_string(n.dir));
         auto& p = b.port(n.path, direction::inout, std::max(n.width, 1), pin, "field " + n.path + ", " + what);
         if (n.bundle != model::no_id) {
             p.bundle = n.bundle;
             p.flipped = n.flipped;
+            p.bundle_args = ctx.ws->bundle_args(n.bundle, n.args);
         }
     }
 };
@@ -285,6 +296,7 @@ std::vector<model::param_def> bundle_params(bool one)
     std::vector<model::param_def> r{
         model::bundle_param("bundle", "Bundle", "the bundle type"),
         model::bool_param("flipped", "Flipped", false, "the flipped view of the bundle, inputs and outputs swapped"),
+        model::bundle_args_param("args", "Arguments", "bundle", "values of the bundle's parameters, e.g. \"DATA_W=32\". the others take their defaults"),
     };
     if (one)
         r.push_back(model::fields_param("field", "Field", "bundle", true, "the field to tap, e.g. \"valid\" or \"aw.ready\""));
@@ -323,7 +335,7 @@ public:
         b.line({0, 0}, {grid, -grid}, model::bundle_stroke);
         if (n > 1) b.line({grid, -grid}, {grid, -n * grid}, model::bundle_stroke);
         // the type under the bundle pin, clear of the instance name above
-        auto type = ctx.ws && view.id != model::no_id ? ctx.ws->bundle_label(view.id, view.flipped) : std::string("bundle");
+        auto type = view.label(ctx);
         b.text({-label_grids(type, label_size) * grid + 4, -8}, type, label_size);
         view.bundle_port(b, ctx, {0, 0});
 

@@ -15,4 +15,10 @@ void bundle_fields_table(const model::bundle_layout& layout, const sim::value* v
 // outputs of the view show their value. returns true if v changed.
 bool edit_bundle_value(const model::bundle_layout& layout, sim::value& v, const sim::value& current);
 
+// an integer input per parameter of the bundle type, labelled with its name.
+// args keeps only the values that differ from the defaults, see
+// workspace::bundle_args. nothing for a bundle without parameters. returns
+// true if args changed.
+bool edit_bundle_args(const model::bundle_type& t, model::param_values& args);
+
 }

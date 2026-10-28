@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -73,10 +74,31 @@ public:
     // itself
     bool would_create_bundle_cycle(id outer, id inner) const;
 
-    // the fields of the bundle type flattened for the view
-    bundle_layout layout_of(id bundle, bool flipped = false) const;
-    // "axi_lite" or "~axi_lite", the id if the type is missing
-    std::string bundle_label(id bundle, bool flipped = false) const;
+    // the fields of the bundle type flattened for the view, with the given
+    // values of its parameters (the defaults for missing ones). an error
+    // layout if a value is out of range or a width can't be evaluated.
+    bundle_layout layout_of(id bundle, bool flipped = false, const param_values& args = {}) const;
+    // "axi_lite" or "~axi_lite", the id if the type is missing. values
+    // that differ from the defaults follow: "axi_stream<32>" for a bundle
+    // with one parameter, "axi_stream<DATA_W=32,USER_W=0>" for more.
+    std::string bundle_label(id bundle, bool flipped = false, const param_values& args = {}) const;
+    std::string bundle_label(const port& p) const { return bundle_label(p.bundle, p.flipped, p.bundle_args); }
+
+    // the values of all parameters of the bundle: the given integers, the
+    // defaults for the others. names the bundle doesn't have are dropped.
+    param_values bundle_values(id bundle, const param_values& args) const;
+    // only the given values that differ from the defaults, as ports store
+    // them
+    param_values bundle_args(id bundle, const param_values& args) const;
+    // a problem with the values: names the bundle doesn't have, values out
+    // of range. empty if there is none.
+    std::string check_bundle_args(id bundle, const param_values& args) const;
+    // true if the two are the same type: the same bundle with the same
+    // values (views aren't compared)
+    bool same_bundle(id a, const param_values& a_args, id b, const param_values& b_args) const;
+    // the values of a port group's bundle for the model's parameter values,
+    // see bundle_args. nullopt with an error if an expression fails.
+    std::optional<param_values> group_args(const port_group& g, const param_values& model_values, std::string& error) const;
 
     // call after a bundle type changed: updates the widths of the ports of
     // that type and the port groups of external cells (marking their
@@ -94,7 +116,8 @@ public:
         std::vector<model_port> model_ports;
         std::vector<std::string> problems;
     };
-    grouping group_ports(const std::vector<port>& leaves, const std::vector<port_group>& groups) const;
+    // the groups' bundle args are evaluated for the model's parameter values.
+    grouping group_ports(const std::vector<port>& leaves, const std::vector<port_group>& groups, const param_values& model_values = {}) const;
     // a new bundle type in lib made of the ports with a common prefix: a
     // field per port, the rest of its name, with its width and direction.
     // the type is named after the last part of the prefix (io_jtag_ ->
@@ -185,7 +208,8 @@ private:
     };
     mutable std::map<id, auto_entry> auto_symbols;
     // the model ports for the cell's ports from its leaves, by port name
-    std::vector<model_port> map_model_ports(const std::vector<port>& ports, const std::vector<port>& leaves, const std::vector<port_group>& groups) const;
+    std::vector<model_port> map_model_ports(const std::vector<port>& ports, const std::vector<port>& leaves, const std::vector<port_group>& groups,
+        const param_values& model_values) const;
 };
 
 }

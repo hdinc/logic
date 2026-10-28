@@ -4,6 +4,8 @@
 
 #include <imgui.h>
 
+#include <algorithm>
+
 namespace logic::editor {
 
 namespace {
@@ -142,6 +144,27 @@ bool edit_bundle_value(const model::bundle_layout& layout, sim::value& v, const 
         PopID();
     }
     EndTable();
+    return changed;
+}
+
+bool edit_bundle_args(const model::bundle_type& t, model::param_values& args)
+{
+    using namespace ImGui;
+    bool changed = false;
+    for (auto& d : t.params) {
+        PushID(d.name.c_str());
+        auto it = args.find(d.name);
+        int64_t v = it != args.end() && std::holds_alternative<int64_t>(it->second) ? std::get<int64_t>(it->second) : std::get<int64_t>(d.def);
+        int64_t step = 1;
+        if (InputScalar(d.name.c_str(), ImGuiDataType_S64, &v, &step)) {
+            model::set_param(args, d, std::clamp(v, d.min, d.max));
+            changed = true;
+        }
+        auto tip = d.description.empty() ? std::string() : d.description + "\n";
+        tip += "default " + std::to_string(std::get<int64_t>(d.def)) + ", " + std::to_string(d.min) + ".." + std::to_string(d.max);
+        SetItemTooltip("%s", tip.c_str());
+        PopID();
+    }
     return changed;
 }
 

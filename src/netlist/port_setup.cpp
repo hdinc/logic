@@ -71,12 +71,14 @@ bool adopt_pin_settings(const model::workspace& ws, model::cell& c, const std::v
 
         auto& first = *pins[0];
         bool agree = std::all_of(pins.begin(), pins.end(), [&](auto q) {
-            return q->width == first.width && q->bundle == first.bundle && (first.bundle == model::no_id || q->flipped == first.flipped);
+            return q->width == first.width && ws.same_bundle(q->bundle, q->bundle_args, first.bundle, first.bundle_args) &&
+                (first.bundle == model::no_id || q->flipped == first.flipped);
         });
         if (agree && p.bundle == model::no_id && p.width == 1 && (first.width != 1 || first.bundle != model::no_id)) {
             p.width = first.width;
             p.bundle = first.bundle;
             p.flipped = first.bundle != model::no_id && first.flipped;
+            p.bundle_args = ws.bundle_args(first.bundle, first.bundle_args);
             changed = true;
         }
         if (pins.size() != 1) continue;
@@ -133,6 +135,7 @@ std::vector<model::id> add_ports_for_pins(const model::workspace& ws, model::cel
         p.width = std::max(src.width, 1);
         p.bundle = src.bundle;
         p.flipped = src.flipped;
+        p.bundle_args = ws.bundle_args(src.bundle, src.bundle_args);
         p.description = src.description;
         p.format = src.format;
         added.push_back(p.id);

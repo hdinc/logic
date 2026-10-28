@@ -24,6 +24,9 @@ private:
     void hdl_build(const model::hdl_impl& h);
     void ports_table();
     // bundle ports made of the model's ports
+    // inputs for the values of the group's bundle parameters, true if
+    // changed
+    bool group_args(model::port_group& g, const model::param_values& defaults);
     void groups_table();
     // read only ports and parameters of a plugin's model
     void plugin_tables();

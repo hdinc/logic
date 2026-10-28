@@ -4,6 +4,7 @@
 #include "../src/builtin/builtin.h"
 #include "../src/io/json.h"
 #include "../src/io/storage.h"
+#include "../src/model/expr.h"
 #include "../src/model/history.h"
 #include "../src/model/workspace.h"
 #include "../src/netlist/netlist.h"
@@ -844,9 +845,9 @@ struct bundle_fixture {
     {
         lib = &ws.add_library("work");
         hs = &ws.create_bundle(*lib, "hs");
-        hs->fields = {{"valid", "", 1, model::direction::output}, {"ready", "", 1, model::direction::input}, {"data", "", 8, model::direction::output}};
+        hs->fields = {{"valid", "", "1", model::direction::output}, {"ready", "", "1", model::direction::input}, {"data", "", "8", model::direction::output}};
         bus = &ws.create_bundle(*lib, "bus");
-        bus->fields = {sub_field("a", hs->id), sub_field("b", hs->id, true), {"irq", "", 1, model::direction::input}};
+        bus->fields = {sub_field("a", hs->id), sub_field("b", hs->id, true), {"irq", "", "1", model::direction::input}};
     }
 };
 
@@ -900,12 +901,12 @@ static void test_bundles(const std::filesystem::path& dir)
     sub.symbol.pins.push_back({sub.new_id(), m_id, {0, 0}});
     ws.bundles_changed();
     CHECK(sub.find_port(m_id)->width == 21);
-    f.hs->fields[2].width = 4;
+    f.hs->fields[2].width = "4";
     auto rev = ws.bundle_revision();
     ws.bundles_changed();
     CHECK(ws.bundle_revision() == rev + 1);
     CHECK(sub.find_port(m_id)->width == 13);
-    f.hs->fields[2].width = 8;
+    f.hs->fields[2].width = "8";
     ws.bundles_changed();
 
     // a bundle pin connected to the same bundle is fine, to plain bits or
@@ -972,12 +973,12 @@ static void test_bundles(const std::filesystem::path& dir)
     // a stored width from before the type changed is updated on loading:
     // the port is saved with 21 bits, with 2 bits of data both handshakes
     // are 4 bits
-    f.hs->fields[2].width = 2;
+    f.hs->fields[2].width = "2";
     io::save_library(*f.lib, dir);
     model::workspace changed;
     io::load_workspace(changed, dir);
     CHECK(changed.find_library("work")->find_cell("sub")->ports[0].width == 9);
-    f.hs->fields[2].width = 8;
+    f.hs->fields[2].width = "8";
 
     // a deleted bundle removes its file. f.bus goes with it.
     auto bus_id = f.bus->id;
@@ -1205,6 +1206,220 @@ static void test_seg7_display()
     CHECK(builtin::seg7_hex(0) == 0x3F && builtin::seg7_hex(8) == 0x7F && builtin::seg7_hex(10) == 0x77 && builtin::seg7_hex(15) == 0x71);
 }
 
+static void test_expr()
+{
+    model::param_values scope{{"DATA_W", int64_t(32)}, {"N", int64_t(5)}, {"flag", true}};
+    std::string error;
+    auto eval = [&](const char* text) { return model::eval_expr(text, scope, error); };
+
+    CHECK(eval("8") == 8);
+    CHECK(eval(" DATA_W / 8 ") == 4);
+    CHECK(eval("1 + 2 * 3") == 7);
+    CHECK(eval("(1 + 2) * 3") == 9);
+    CHECK(eval("-N + 10") == 5);
+    CHECK(eval("10 - 4 - 3") == 3);
+    CHECK(eval("-7 / 2") == -3);
+    CHECK(eval("7 % 4") == 3);
+    CHECK(eval("clog2(DATA_W)") == 5);
+    CHECK(eval("clog2(33)") == 6);
+    CHECK(eval("clog2(1)") == 0 && eval("clog2(0)") == 0);
+    CHECK(eval("max(N, 8) + min(N, 8)") == 13);
+
+    CHECK(!eval("WIDTH") && error == "unknown name 'WIDTH'");
+    // only integers are in scope
+    CHECK(!eval("flag"));
+    CHECK(!eval("N / (N - 5)") && error == "division by zero");
+    CHECK(!eval("N % 0"));
+    CHECK(!eval("9223372036854775807 + 1") && error == "the value is too large");
+    CHECK(!eval("99999999999999999999"));
+    CHECK(!eval("1 +"));
+    CHECK(!eval("(1"));
+    CHECK(!eval("1 2"));
+    CHECK(!eval(""));
+    CHECK(!eval("min(1)"));
+    CHECK(!eval("clog2(-1)"));
+
+    CHECK(model::is_literal("8") && model::is_literal(" -12 ") && !model::is_literal("W") && !model::is_literal("") && !model::is_literal("1+1"));
+    CHECK((model::expr_names("A * (B + A) + clog2(C)") == std::vector<std::string>{"A", "B", "C"}));
+    CHECK(model::valid_param_name("DATA_W") && model::valid_param_name("_x1"));
+    CHECK(!model::valid_param_name("1x") && !model::valid_param_name("a-b") && !model::valid_param_name("") && !model::valid_param_name("clog2"));
+
+    CHECK((model::parse_bundle_args("DATA_W=32, USER_W = 0, bad, x=y") == model::param_values{{"DATA_W", int64_t(32)}, {"USER_W", int64_t(0)}}));
+    CHECK(model::format_bundle_args({{"A", int64_t(1)}, {"B", int64_t(-2)}}) == "A=1, B=-2");
+}
+
+// an axi stream with a data width and an optional user field, and a
+// channel holding one
+struct stream_fixture {
+    model::workspace ws;
+    model::library* lib;
+    model::bundle_type* axis;
+    model::bundle_type* chan;
+
+    stream_fixture()
+    {
+        using model::direction;
+        lib = &ws.add_library("work");
+        axis = &ws.create_bundle(*lib, "axis");
+        axis->params = {model::int_param("DATA_W", "DATA_W", 32, 8, 1024), model::int_param("USER_W", "USER_W", 0, 0, 64)};
+        axis->fields = {{"tvalid", "", "1", direction::output}, {"tready", "", "1", direction::input}, {"tdata", "", "DATA_W", direction::output},
+            {"tkeep", "", "DATA_W / 8", direction::output}, {"tuser", "", "USER_W", direction::output}};
+        chan = &ws.create_bundle(*lib, "chan");
+        chan->params = {model::int_param("W", "W", 16, 8, 64)};
+        model::bundle_field s;
+        s.name = "s";
+        s.bundle = axis->id;
+        s.args = {{"DATA_W", "W * 2"}, {"USER_W", "1"}};
+        chan->fields = {s, {"irq", "", "1", direction::input}};
+    }
+};
+
+static void test_bundle_params(const std::filesystem::path& dir)
+{
+    using model::direction;
+    stream_fixture f;
+    auto& ws = f.ws;
+
+    // the defaults: 1 + 1 + 32 + 4 bits, tuser of width 0 is left out
+    auto l = ws.layout_of(f.axis->id);
+    CHECK(l && l.width == 38 && l.leaves.size() == 4 && !l.find("tuser"));
+    CHECK((l.leaves[3] == model::bundle_leaf{"tkeep", direction::output, 34, 4}));
+
+    // other values
+    model::param_values a64{{"DATA_W", int64_t(64)}, {"USER_W", int64_t(3)}};
+    l = ws.layout_of(f.axis->id, false, a64);
+    CHECK(l && l.width == 1 + 1 + 64 + 8 + 3 && l.leaves.size() == 5);
+    CHECK((l.leaves[4] == model::bundle_leaf{"tuser", direction::output, 74, 3}));
+
+    // out of range values and unknown names are errors, not clamped
+    CHECK(!ws.layout_of(f.axis->id, false, {{"DATA_W", int64_t(4)}}));
+    CHECK(ws.layout_of(f.axis->id, false, {{"DATA_W", int64_t(4)}}).error.find("out of range") != std::string::npos);
+    CHECK(!ws.layout_of(f.axis->id, false, {{"WIDTH", int64_t(8)}}));
+    CHECK(ws.check_bundle_args(f.axis->id, a64).empty());
+
+    // a nested bundle's values are expressions of the outer one's
+    l = ws.layout_of(f.chan->id);
+    CHECK(l && l.width == 1 + 1 + 32 + 4 + 1 + 1);
+    auto s = l.find("s");
+    CHECK(s && s->width == 39 && (s->args == model::param_values{{"DATA_W", int64_t(32)}, {"USER_W", int64_t(1)}}));
+    l = ws.layout_of(f.chan->id, true, {{"W", int64_t(8)}});
+    CHECK(l && l.width == 1 + 1 + 16 + 2 + 1 + 1 && l.find("s.tdata")->width == 16 && l.find("s.tvalid")->dir == direction::input);
+    f.chan->fields[0].args["DATA_W"] = "V";
+    CHECK(!ws.layout_of(f.chan->id) && ws.layout_of(f.chan->id).error.find("unknown name 'V'") != std::string::npos);
+    f.chan->fields[0].args["DATA_W"] = "W * 2";
+
+    // a width that can't be evaluated or is negative
+    f.axis->fields[3].width = "DATA_W / (USER_W)";
+    CHECK(!ws.layout_of(f.axis->id) && ws.layout_of(f.axis->id).error.find("division by zero") != std::string::npos);
+    f.axis->fields[3].width = "USER_W - 1";
+    CHECK(!ws.layout_of(f.axis->id));
+    f.axis->fields[3].width = "DATA_W / 8";
+
+    // labels show the values that differ from the defaults
+    CHECK(ws.bundle_label(f.axis->id) == "axis");
+    CHECK(ws.bundle_label(f.axis->id, true, {{"DATA_W", int64_t(32)}}) == "~axis");
+    CHECK(ws.bundle_label(f.axis->id, false, {{"USER_W", int64_t(2)}, {"DATA_W", int64_t(64)}}) == "axis<DATA_W=64,USER_W=2>");
+    CHECK(ws.bundle_label(f.chan->id, false, {{"W", int64_t(32)}}) == "chan<32>");
+    CHECK((ws.bundle_args(f.axis->id, {{"DATA_W", int64_t(32)}, {"USER_W", int64_t(2)}, {"X", int64_t(1)}}) == model::param_values{{"USER_W", int64_t(2)}}));
+    CHECK(ws.same_bundle(f.axis->id, {}, f.axis->id, {{"DATA_W", int64_t(32)}}));
+    CHECK(!ws.same_bundle(f.axis->id, {}, f.axis->id, {{"DATA_W", int64_t(64)}}));
+
+    // ports follow the width for their values
+    auto& sub = ws.create_cell(*f.lib, "sub");
+    auto& m = sub.add_port(direction::output, {0, 0});
+    m.name = "m";
+    m.bundle = f.axis->id;
+    m.bundle_args = {{"DATA_W", int64_t(64)}};
+    sub.symbol.pins.push_back({sub.new_id(), m.id, {0, 0}});
+    ws.bundles_changed();
+    CHECK(sub.ports[0].width == 74);
+
+    // the same bundle with other values of the same total width is another
+    // type
+    auto& two = ws.create_bundle(*f.lib, "two");
+    two.params = {model::int_param("A", "A", 1, 1, 16), model::int_param("B", "B", 1, 1, 16)};
+    two.fields = {{"a", "", "A", direction::output}, {"b", "", "B", direction::output}};
+    sub.ports[0].bundle = two.id;
+    sub.ports[0].bundle_args = {{"A", int64_t(8)}, {"B", int64_t(4)}};
+    ws.bundles_changed();
+    auto& top = ws.create_cell(*f.lib, "top");
+    auto& in = top.add_port(direction::input, {80, 0});
+    in.bundle = two.id;
+    in.bundle_args = {{"A", int64_t(8)}, {"B", int64_t(4)}};
+    in.width = 12;
+    top.get_schematic()->instances.push_back({top.new_id(), sub.id, "U1", {100, 0}, {}, {}});
+    auto nl = netlist::extract(ws, top);
+    CHECK(nl.problems.empty() && nl.nets.size() == 1 && (nl.nets[0].bundle_args == model::param_values{{"A", int64_t(8)}, {"B", int64_t(4)}}));
+    top.ports[0].bundle_args = {{"A", int64_t(4)}, {"B", int64_t(8)}};
+    nl = netlist::extract(ws, top);
+    CHECK(nl.nets.size() == 1 && nl.nets[0].type_error && !nl.nets[0].width_error);
+    CHECK(nl.problems.size() == 1 && nl.problems[0].find("is two<A=4,B=8>") != std::string::npos &&
+        nl.problems[0].find("is two<A=8,B=4>") != std::string::npos);
+
+    // a port made for the pin takes its values
+    top.ports.clear();
+    auto added = netlist::add_ports_for_pins(ws, top, 0);
+    CHECK(added.size() == 1 && top.ports.size() == 1 && top.ports[0].bundle == two.id && top.ports[0].width == 12);
+    CHECK((top.ports[0].bundle_args == model::param_values{{"A", int64_t(8)}, {"B", int64_t(4)}}));
+    sub.ports[0].bundle = f.axis->id;
+    sub.ports[0].bundle_args = {{"DATA_W", int64_t(64)}};
+    ws.bundles_changed();
+
+    // an hdl cell with a data width parameter: the bundle port's values are
+    // expressions of the model's parameters
+    model::hdl_impl h;
+    h.top = "m";
+    h.params = {model::int_param("TDATA_WIDTH", "TDATA_WIDTH", 16, 8, 512)};
+    auto& hc = ws.create_cell(*f.lib, "hdl", h);
+    for (auto [name, dir, w] : {std::tuple{"s_tvalid", direction::input, 1}, {"s_tready", direction::output, 1}, {"s_tdata", direction::input, 16},
+             {"s_tkeep", direction::input, 2}}) {
+        auto& p = hc.add_port(dir, {0, 0});
+        p.name = name;
+        p.width = w;
+    }
+    model::port_group g;
+    g.name = "s";
+    g.bundle = f.axis->id;
+    g.flipped = true;
+    g.args = {{"DATA_W", "TDATA_WIDTH"}};
+    hc.port_groups()->push_back(g);
+    CHECK(ws.apply_groups(hc).empty());
+    CHECK(hc.ports.size() == 1 && hc.ports[0].width == 20 && (hc.ports[0].bundle_args == model::param_values{{"DATA_W", int64_t(16)}}));
+    CHECK(ws.bundle_label(hc.ports[0]) == "~axis<DATA_W=16>");
+    std::string error;
+    CHECK((ws.group_args(g, {{"TDATA_WIDTH", int64_t(32)}}, error) == model::param_values{}));
+    CHECK(!ws.group_args(g, {}, error) && error.find("unknown name") != std::string::npos);
+    hc.port_groups()->at(0).args["DATA_W"] = "TDATA_WIDTH * 4";
+    auto problems = ws.apply_groups(hc);
+    CHECK(problems.size() == 1 && problems[0].find("s_tdata has 16 bits") != std::string::npos);
+    hc.port_groups()->at(0).args["DATA_W"] = "TDATA_WIDTH";
+    ws.apply_groups(hc);
+
+    // saved and loaded, widths as numbers unless they are expressions
+    std::filesystem::remove_all(dir);
+    io::save_library(*f.lib, dir);
+    auto j = io::to_json(*f.axis);
+    CHECK(j["fields"][0]["width"] == 1 && j["fields"][2]["width"] == "DATA_W" && j["params"].size() == 2);
+    model::workspace loaded;
+    CHECK(io::load_workspace(loaded, dir).empty());
+    auto ll = loaded.find_library("work");
+    CHECK(ll && ll->bundles.size() == 3);
+    if (ll) {
+        CHECK(*ll->find_bundle("axis") == *f.axis);
+        CHECK(*ll->find_bundle("chan") == *f.chan);
+        CHECK(ll->find_cell("sub")->ports == sub.ports);
+        CHECK(ll->find_cell("hdl")->impl == hc.impl);
+        CHECK(ll->find_cell("hdl")->ports == hc.ports);
+    }
+
+    // a bundle from before parameters loads as it was
+    auto old = nlohmann::json::parse(R"({"format": 1, "id": "00000000000000aa", "name": "old",
+        "fields": [{"name": "a", "dir": "output", "width": 8}]})");
+    auto ob = io::bundle_from_json(old);
+    CHECK(ob.params.empty() && ob.fields.size() == 1 && ob.fields[0].width == "8");
+    std::filesystem::remove_all(dir);
+}
+
 int main(int argc, char** argv)
 {
     auto dir = std::filesystem::path(argc > 1 ? argv[1] : ".") / "model_test_workspace";
@@ -1229,6 +1444,8 @@ int main(int argc, char** argv)
     test_external_cells(dir);
     test_bundles(dir);
     test_bundles_from_prefixes();
+    test_expr();
+    test_bundle_params(dir);
     test_label_alignment();
     test_categories(dir);
     test_fill_outlines();

@@ -1531,7 +1531,7 @@ struct bundle_fixture : fixture {
     {
         auto& lib = *ws.find_library("work");
         hs = &ws.create_bundle(lib, "hs");
-        hs->fields = {{"valid", "", 1, model::direction::output}, {"ready", "", 1, model::direction::input}, {"data", "", 8, model::direction::output}};
+        hs->fields = {{"valid", "", "1", model::direction::output}, {"ready", "", "1", model::direction::input}, {"data", "", "8", model::direction::output}};
         bus = &ws.create_bundle(lib, "bus");
         model::bundle_field a, b;
         a.name = "a";
@@ -1539,7 +1539,7 @@ struct bundle_fixture : fixture {
         b.name = "b";
         b.bundle = hs->id;
         b.flipped = true;
-        bus->fields = {a, b, {"irq", "", 1, model::direction::input}};
+        bus->fields = {a, b, {"irq", "", "1", model::direction::input}};
         ws.bundles_changed();
     }
 
@@ -1739,7 +1739,7 @@ static void test_bundles()
         CHECK(f.ws.check_instance(f.sch().instances[2]) == "choose a field");
         f.place("breakout", {0, 300}, f.params(*f.hs));
         CHECK(f.ws.interface_of(f.sch().instances[3]).ports->size() == 4);
-        f.hs->fields.push_back({"last", "", 1, direction::input});
+        f.hs->fields.push_back({"last", "", "1", direction::input});
         f.ws.bundles_changed();
         CHECK(f.ws.interface_of(f.sch().instances[3]).ports->size() == 5);
         CHECK((*f.ws.interface_of(f.sch().instances[3]).ports)[0].width == 11);
@@ -1748,6 +1748,48 @@ static void test_bundles()
         // simulation problems
         print_problems(s);
         CHECK(s.problems().empty());
+    }
+
+    // a bundle with a parameter: the breakout and the port use the same
+    // values, the fields sit at their offsets for them
+    {
+        bundle_fixture f;
+        auto& lib = *f.ws.find_library("work");
+        auto& st = f.ws.create_bundle(lib, "st");
+        st.params = {model::int_param("W", "W", 8, 1, 64), model::int_param("U", "U", 0, 0, 8)};
+        st.fields = {{"valid", "", "1", direction::output}, {"data", "", "W", direction::output}, {"user", "", "U", direction::output},
+            {"last", "", "1", direction::output}};
+        auto v = f.params(st);
+        v["args"] = std::string("W=16");
+        f.place("breakout", {0, 0}, v);
+        auto iface = f.ws.interface_of(f.sch().instances[0]);
+        // valid, data, last: user has no bits
+        CHECK(iface.ports->size() == 4 && (*iface.ports)[0].width == 18 && (*iface.ports)[2].width == 16);
+        CHECK(((*iface.ports)[0].bundle_args == model::param_values{{"W", int64_t(16)}}));
+        int in = f.port(direction::input, {0, 0}, 18);
+        f.top->ports[in].bundle = st.id;
+        f.top->ports[in].flipped = true;
+        f.top->ports[in].bundle_args = {{"W", int64_t(16)}};
+        int data = f.port(direction::output, instance_pin(f, 0, 2), 16);
+        int last = f.port(direction::output, instance_pin(f, 0, 3));
+
+        sim::simulator s(f.ws, *f.top, builtin::factory());
+        print_problems(s);
+        CHECK(s.problems().empty());
+        s.set_input(in, sim::known(uint64_t(1) << 17 | 0xBEEF << 1 | 1, 18));
+        CHECK(s.port_value(data) == sim::known(0xBEEF, 16));
+        CHECK(s.port_value(last) == bit(true));
+
+        // other values on the port are another type
+        f.top->ports[in].bundle_args = {{"W", int64_t(16)}, {"U", int64_t(0)}};
+        CHECK(netlist::extract(f.ws, *f.top).problems.empty());
+        f.top->ports[in].bundle_args = {{"W", int64_t(15)}, {"U", int64_t(1)}};
+        auto nl = netlist::extract(f.ws, *f.top);
+        CHECK(nl.problems.size() == 1 && nl.problems[0].find("type mismatch") != std::string::npos);
+
+        // a bad value shows on the instance
+        f.sch().instances[0].params["args"] = std::string("W=100");
+        CHECK(f.ws.check_instance(f.sch().instances[0]).find("out of range") != std::string::npos);
     }
 }
 

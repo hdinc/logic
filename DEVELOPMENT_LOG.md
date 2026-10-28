@@ -5067,3 +5067,156 @@ The user changed their mind about the look of the 7-segment display:
 ### Next steps
 
 - None for this fix.
+
+## 2026-10-28 16:55 +0300
+
+Parameterized bundles, step 1 of 2. Step 2 adds parameters to schematic
+cells.
+
+### Features implemented
+
+- **Bundle parameters.** A bundle type has integer parameters (name,
+  default, min, max, description), e.g. `DATA_W` and `USER_W` on an
+  `axis` bundle.
+- **Field widths are expressions** of the parameters: numbers, parameter
+  names, `+ - * / %`, parentheses, `clog2()`, `min()`, `max()`. For
+  example, `tkeep` is `DATA_W / 8`.
+- **A field of width 0 is left out**, which makes fields optional. For
+  example, `tuser` is `USER_W`, and USER_W defaults to 0.
+- **Every use of a bundle gives the values of its parameters**:
+  - ports: Properties has one integer input per parameter;
+  - nested fields: expressions of the outer bundle's parameters;
+  - breakouts and taps: a new "Arguments" parameter;
+  - port groups of HDL/C cells: expressions of the model's parameters,
+    e.g. `DATA_W = TDATA_WIDTH`. A Verilog/VHDL instance placed with
+    `TDATA_WIDTH=64` gets a bundle port with 64 data bits.
+- **The same bundle with other values is another type.** Wiring
+  `axis<DATA_W=64>` to `axis` gives a width or type error. Labels show only
+  the values that differ from the defaults: `axis<32>` for a bundle with
+  one parameter, `axis<DATA_W=64,USER_W=2>` for more.
+- Bundle editor: a Parameters table; the width column is a text field
+  that turns orange, with the reason as a tooltip, when it can't be
+  evaluated at the defaults; nested bundle fields get an input per
+  parameter of the nested type.
+
+### Changes made
+
+- `bundle_field::width` is now `std::string` (an expression), no longer
+  `int`. Careful: assigning an int to it still compiles (as a char). The
+  tests were updated for that.
+- `workspace::layout_of`, `bundle_label` and `group_ports` take the
+  values.
+- `netlist::net` carries `bundle_args`, and the type check compares them.
+- `port_setup` copies and compares the values.
+- The simulator's top ports, the sim view (fields, waveforms) and all
+  editor labels and tooltips pass the values.
+
+### How it works
+
+- `src/model/expr.{h,cpp}` (new): `eval_expr(text, scope, error)` is a
+  recursive-descent evaluator over `int64_t` with overflow checks
+  (`__builtin_*_overflow`). Also `is_literal`, `expr_names` and
+  `valid_param_name`.
+- Model (`bundle.h`, `cell.h`):
+  - `bundle_type::params` holds integer `param_def`s.
+  - `bundle_field::args` maps the nested bundle's parameters to
+    expressions.
+  - `bundle_node::args` holds a nested bundle's resolved values.
+  - `port::bundle_args` holds resolved integers, only those that differ
+    from the defaults.
+  - `port_group::args` holds expressions over the model's parameters.
+- Workspace:
+  - `bundle_values` fills in the defaults and `bundle_args` drops them.
+  - `check_bundle_args` reports unknown names and out-of-range values
+    instead of clamping like `resolve_params`.
+  - `same_bundle` is the type test and `group_args` evaluates a port
+    group.
+  - In `layout_of` each bundle level evaluates its widths in its own scope
+    and evaluates the nested args in the outer scope; width 0 skips the
+    field.
+- Port groups:
+  - `apply_groups` and the group cache evaluate with the model's default
+    parameters.
+  - `external_interface` (instances with other parameters) uses the
+    instance's values, so the bundle port follows the HDL parameter.
+- Breakout and tap:
+  - A new text parameter `args` with the new `param_def::bundle_args` role
+    (`"DATA_W=32, USER_W=0"`, see `parse_bundle_args`/`format_bundle_args`).
+  - The parameter editor shows it as one integer input per parameter,
+    and only for a bundle that has parameters.
+  - The fields chooser lays the bundle out with those values.
+- JSON:
+  - Bundles get `params`, and a field's `width` is a number when it's a
+    literal and a string otherwise. Old files load unchanged, and files
+    whose widths are all numbers stay readable by older versions.
+  - Fields get `args`, ports get `bundle_args` and groups get `args`.
+  - The format version stays 1: everything new is optional.
+- Decisions, made with the user:
+  - Values come from every use site, from HDL parameters and (step 2)
+    from schematic parameters.
+  - Widths are expressions, and width 0 drops a field.
+  - Other values make a different type, labeled `name<…>`.
+  - Parameters are integers only.
+  - The work is delivered in two steps.
+- Rejected:
+  - Storing each specialization as a synthesized bundle type with its own
+    id: every consumer would need to know about the generated types, and
+    they would have to be kept in sync.
+  - Clamping out-of-range values like instance parameters do: a silent
+    clamp would hide wrong widths.
+
+### Testing
+
+- model_test:
+  - `test_expr`: precedence, functions, errors (unknown names, division
+    by zero, overflow, syntax), `parse_bundle_args`.
+  - `test_bundle_params`:
+    - layouts for the defaults and other values, the dropped `tuser`,
+      out-of-range and unknown values;
+    - nested args, including the flipped view and an unknown name;
+    - widths that fail or go negative, labels, `bundle_args`/`same_bundle`;
+    - port widths following their values, and a type error between
+      `two<A=8,B=4>` and `two<A=4,B=8>` (same width);
+    - `add_ports_for_pins` copying the values;
+    - an HDL cell's port group with `DATA_W = TDATA_WIDTH` and its errors;
+    - a JSON round trip, and an old-format bundle file.
+- sim_test: a breakout with `args = "W=16"` on a parameterized bundle
+  port. The fields sit at the right offsets, a zero-width field is left
+  out, other values on the port give a type mismatch, and an out-of-range
+  value shows on the instance.
+- hdl_test: a new `stream_sink` (.sv and .vhd) with `TDATA_WIDTH`, grouped
+  with `DATA_W = TDATA_WIDTH`. The instance with 32 gets a 34-bit bundle
+  port and simulates on Verilator, Icarus and GHDL.
+- All 9 ctest suites pass. The web build (build-web) compiles.
+- GUI, on VNC with a scratch workspace:
+  - the bundle editor shows the Parameters table and expression widths;
+    an unknown name turns the width orange with a tooltip and a problem
+    line;
+  - an `axis<DATA_W=64>` port shows its label, layout tooltip and a
+    width mismatch with a default `~axis` pin;
+  - setting DATA_W back to 32 in the port's Properties makes it `~axis`
+    and the wire a normal bundle wire;
+  - a breakout's Arguments inputs: USER_W=2 adds `tuser` and the label
+    becomes `axis<USER_W=2>`.
+
+### Recommended features
+
+- "Find bundle ports" in the model editor only matches bundles at their
+  default values. It could infer the values from the ports' widths, e.g.
+  `DATA_W = 64` from a 64-bit `s_tdata`.
+- Bundles declared by plugins (the `bundles` JSON of a plugin) could take
+  `params` and expression widths too.
+
+### Outstanding issues
+
+- Renaming a bundle parameter doesn't rename the values that ports,
+  fields, breakouts and groups give for it. They then report "it has no
+  parameter …".
+- An expression is checked only at the defaults in the bundle editor;
+  other values are checked where they're used.
+
+### Next steps
+
+- Step 2: parameters on schematic cells. Port widths, bundle values and
+  child instance parameters become expressions of the cell's parameters,
+  and each instance is specialized for its values.

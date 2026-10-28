@@ -411,7 +411,7 @@ void sim_view::record_signal(int net, const std::string& name)
     for (size_t local = 0; local < sc.flat_net.size(); local++) {
         auto& n = sc.nets->nets[local];
         if (sc.flat_net[local] != net || n.bundle == model::no_id || n.type_error || n.width_error) continue;
-        auto layout = ws.layout_of(n.bundle);
+        auto layout = ws.layout_of(n.bundle, false, n.bundle_args);
         if (layout && layout.width == s->sim().net_width(net)) fields = layout.leaves;
         break;
     }
@@ -555,10 +555,10 @@ void sim_view::property_panel()
             auto& p = ports[k];
             // bundles have inputs whatever side they're on
             if (p.bundle != model::no_id) {
-                auto layout = ws.layout_of(p.bundle, p.flipped);
+                auto layout = ws.layout_of(p.bundle, p.flipped, p.bundle_args);
                 if (layout && layout.width == p.width) {
                     PushID(k);
-                    if (TreeNodeEx(p.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen, "%s : %s", p.name.c_str(), ws.bundle_label(p.bundle, p.flipped).c_str())) {
+                    if (TreeNodeEx(p.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen, "%s : %s", p.name.c_str(), ws.bundle_label(p).c_str())) {
                         auto v = sim.input_value(k);
                         if (edit_bundle_value(layout, v, sim.port_value(k))) s->run.set_input(k, v);
                         TreePop();
@@ -618,7 +618,7 @@ void sim_view::property_panel()
             auto v = sim.port_value(sc, k);
             if (p.bundle != model::no_id) {
                 PushID(k);
-                bundle_fields_table(ws.layout_of(p.bundle, p.flipped), &v);
+                bundle_fields_table(ws.layout_of(p.bundle, p.flipped, p.bundle_args), &v);
                 PopID();
                 continue;
             }

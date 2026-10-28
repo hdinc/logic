@@ -34,6 +34,10 @@ private:
     bool unchanged() const;
     void commit();
     void restore();
+    // the parameters table, true if edited
+    bool params_table();
+    // the values of a nested bundle's parameters, true if edited
+    bool nested_args(model::bundle_field& f);
 
     model::workspace& ws;
     model::library& lib;

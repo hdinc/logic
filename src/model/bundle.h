@@ -1,7 +1,9 @@
 #pragma once
 
+#include "param.h"
 #include "types.h"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -12,13 +14,18 @@ struct bundle_field {
     std::string name;
     std::string description;
 
-    // bits, used when bundle is no_id
-    int width = 1;
+    // bits, used when bundle is no_id. the width is an integer expression
+    // over the parameters of the bundle (see expr.h), e.g. "DATA_W / 8". a
+    // field of width 0 is left out.
+    std::string width = "1";
     direction dir = direction::output;
 
-    // a nested bundle, flipped swaps the directions of all its fields
+    // a nested bundle, flipped swaps the directions of all its fields. args
+    // are the values of its parameters, expressions over the parameters of
+    // this bundle. missing ones take their defaults.
     model::id bundle = no_id;
     bool flipped = false;
+    std::map<std::string, std::string> args{};
 
     bool operator==(const bundle_field&) const = default;
 };
@@ -31,6 +38,9 @@ struct bundle_type {
     model::id id = no_id;
     std::string name;
     std::string description;
+    // integer parameters, e.g. a data width. a use of the bundle (a port, a
+    // nested field, a breakout) gives their values, see bundle_args.
+    std::vector<param_def> params;
     std::vector<bundle_field> fields;
 
     const bundle_field* find_field(const std::string& name) const;
@@ -56,9 +66,10 @@ struct bundle_node {
     int depth = 0;
     int offset = 0;
     int width = 0;
-    // set for nested bundles
+    // set for nested bundles, with the values of all its parameters
     model::id bundle = no_id;
     bool flipped = false;
+    param_values args;
     // for bits, in the view the layout was made for
     direction dir = direction::output;
 };
@@ -87,6 +98,11 @@ std::string view_name(const std::string& bundle, bool flipped);
 // text isn't one
 std::string bundle_ref(id bundle);
 id parse_bundle_ref(const std::string& s);
+
+// the values of a bundle's parameters as text, "DATA_W=32, USER_W=0", and
+// back. parsing skips parts that aren't name=integer.
+std::string format_bundle_args(const param_values& args);
+param_values parse_bundle_args(const std::string& s);
 
 // the paths in a fields parameter: separated by ',', without spaces around
 // them, empty ones dropped

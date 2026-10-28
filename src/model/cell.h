@@ -26,9 +26,12 @@ struct port {
     // a port of a bundle type: width is the bundle's total width (kept up to
     // date by the workspace) and the fields have their own directions. dir
     // only says on which side the port sits. flipped is the other view, its
-    // inputs and outputs are swapped.
+    // inputs and outputs are swapped. bundle_args are the values of the
+    // bundle's parameters that differ from their defaults, the same bundle
+    // with other values is another type.
     model::id bundle = no_id;
     bool flipped = false;
+    param_values bundle_args;
 
     // how its value is shown and entered while simulating
     number_format format;
@@ -59,6 +62,10 @@ struct port_group {
     // the side of the generated symbol: inputs left, the others right
     direction side = direction::output;
     std::string description;
+    // values of the bundle's parameters, expressions over the model's
+    // parameters, e.g. DATA_W = "TDATA_WIDTH". missing ones take their
+    // defaults.
+    std::map<std::string, std::string> args;
 
     std::string field_prefix() const { return prefix.empty() ? name + "_" : prefix; }
     bool operator==(const port_group&) const = default;

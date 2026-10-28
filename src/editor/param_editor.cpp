@@ -1,4 +1,5 @@
 #include "param_editor.h"
+#include "bundle_ui.h"
 #include "context.h"
 #include "file_dialog.h"
 
@@ -172,10 +173,28 @@ bool edit_params(const std::vector<model::param_def>& defs, model::param_values&
                 TextUnformatted(d.label.c_str());
             } else if (ws && d.role == model::param_def::bundle) {
                 edited = edit_bundle(d.label.c_str(), s, *ws);
+            } else if (ws && d.role == model::param_def::bundle_args && resolved.count(d.bundle_param)) {
+                // only for a bundle with parameters
+                auto t = ws->find_bundle(model::parse_bundle_ref(std::get<std::string>(resolved.at(d.bundle_param))));
+                if (t && !t->params.empty()) {
+                    SeparatorText(d.label.c_str());
+                    auto args = model::parse_bundle_args(s);
+                    if (edit_bundle_args(*t, args)) {
+                        s = model::format_bundle_args(ws->bundle_args(t->id, args));
+                        edited = true;
+                    }
+                    Separator();
+                }
             } else if (ws && (d.role == model::param_def::fields || d.role == model::param_def::field) && resolved.count(d.bundle_param)) {
                 auto bundle = model::parse_bundle_ref(std::get<std::string>(resolved.at(d.bundle_param)));
                 auto flipped = resolved.find("flipped");
-                auto layout = ws->layout_of(bundle, flipped != resolved.end() && std::holds_alternative<bool>(flipped->second) && std::get<bool>(flipped->second));
+                // the values of the bundle's parameters, if a parameter has them
+                model::param_values args;
+                for (auto& a : defs)
+                    if (a.role == model::param_def::bundle_args && a.bundle_param == d.bundle_param)
+                        args = model::parse_bundle_args(std::get<std::string>(resolved.at(a.name)));
+                auto layout = ws->layout_of(bundle, flipped != resolved.end() && std::holds_alternative<bool>(flipped->second) && std::get<bool>(flipped->second),
+                    ws->bundle_values(bundle, args));
                 if (layout)
                     edited = edit_fields(d.label.c_str(), s, layout, d.role == model::param_def::field);
                 else

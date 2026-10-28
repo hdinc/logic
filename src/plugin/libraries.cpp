@@ -92,7 +92,7 @@ bool parse_bundles(model::library& lib, const std::string& plugin, const std::st
                     f.flipped = jf.value("flipped", false);
                 } else {
                     f.dir = dir(jf.value("dir", "output"));
-                    f.width = std::clamp(jf.value("width", 1), 1, model::max_width);
+                    f.width = std::to_string(std::clamp(jf.value("width", 1), 1, model::max_width));
                 }
                 b->fields.push_back(std::move(f));
             }

@@ -1,4 +1,5 @@
 #include "workspace.h"
+#include "expr.h"
 
 #include <algorithm>
 #include <cctype>
@@ -253,13 +254,14 @@ bool workspace::would_create_bundle_cycle(id outer, id inner) const
     return false;
 }
 
-bundle_layout workspace::layout_of(id bundle, bool flipped) const
+bundle_layout workspace::layout_of(id bundle, bool flipped, const param_values& args) const
 {
     bundle_layout r;
     std::vector<id> open;
 
     // adds the fields of the type at bit offset, false on an error
-    std::function<bool(id, bool, const std::string&, int, int&)> add = [&](id b, bool flip_view, const std::string& prefix, int depth, int& offset) {
+    std::function<bool(id, bool, const param_values&, const std::string&, int, int&)> add = [&](id b, bool flip_view, const param_values& given,
+                                                                                                    const std::string& prefix, int depth, int& offset) {
         auto t = find_bundle(b);
         if (!t) {
             r.error = "bundle type " + bundle_label(b) + " is missing";
@@ -269,7 +271,12 @@ bundle_layout workspace::layout_of(id bundle, bool flipped) const
             r.error = "bundle '" + t->name + "' contains itself";
             return false;
         }
+        if (auto problem = check_bundle_args(b, given); !problem.empty()) {
+            r.error = "bundle '" + t->name + "': " + problem;
+            return false;
+        }
         open.push_back(b);
+        auto scope = bundle_values(b, given);
 
         for (auto& f : t->fields) {
             bundle_node n;
@@ -278,14 +285,38 @@ bundle_layout workspace::layout_of(id bundle, bool flipped) const
             n.depth = depth;
             n.offset = offset;
             if (f.bundle != no_id) {
+                // the nested bundle's values from this one's
+                param_values inner;
+                for (auto& [name, text] : f.args) {
+                    std::string error;
+                    auto v = eval_expr(text, scope, error);
+                    if (!v) {
+                        r.error = "bundle '" + t->name + "', field " + f.name + ", " + name + ": " + error;
+                        return false;
+                    }
+                    inner[name] = *v;
+                }
                 n.bundle = f.bundle;
                 n.flipped = flip_view != f.flipped;
+                n.args = bundle_values(f.bundle, inner);
                 size_t at = r.nodes.size();
                 r.nodes.push_back(n);
-                if (!add(f.bundle, n.flipped, n.path + ".", depth + 1, offset)) return false;
+                if (!add(f.bundle, n.flipped, inner, n.path + ".", depth + 1, offset)) return false;
                 r.nodes[at].width = offset - n.offset;
             } else {
-                n.width = std::clamp(f.width, 1, max_width);
+                std::string error;
+                auto w = eval_expr(f.width, scope, error);
+                if (!w) {
+                    r.error = "bundle '" + t->name + "', width of " + f.name + ": " + error;
+                    return false;
+                }
+                if (*w < 0 || *w > max_width) {
+                    r.error = "bundle '" + t->name + "': field " + f.name + " has a width of " + std::to_string(*w);
+                    return false;
+                }
+                // an optional field that is off
+                if (*w == 0) continue;
+                n.width = (int)*w;
                 n.dir = flip_view ? flip(f.dir) : f.dir;
                 r.nodes.push_back(n);
                 r.leaves.push_back({n.path, n.dir, offset, n.width});
@@ -302,7 +333,7 @@ bundle_layout workspace::layout_of(id bundle, bool flipped) const
     };
 
     int width = 0;
-    if (!add(bundle, flipped, "", 0, width)) {
+    if (!add(bundle, flipped, args, "", 0, width)) {
         auto error = std::move(r.error);
         r = {};
         r.error = std::move(error);
@@ -312,24 +343,101 @@ bundle_layout workspace::layout_of(id bundle, bool flipped) const
     return r;
 }
 
-std::string workspace::bundle_label(id bundle, bool flipped) const
+std::string workspace::bundle_label(id bundle, bool flipped, const param_values& args) const
 {
     auto t = find_bundle(bundle);
-    return view_name(t ? t->name : "#" + std::to_string(bundle), flipped);
+    auto name = view_name(t ? t->name : "#" + std::to_string(bundle), flipped);
+    if (!t) return name;
+    auto values = bundle_args(bundle, args);
+    if (values.empty()) return name;
+    if (t->params.size() == 1) return name + "<" + std::to_string(std::get<int64_t>(values.begin()->second)) + ">";
+    // in the order of the parameters
+    std::string list;
+    for (auto& d : t->params)
+        if (auto it = values.find(d.name); it != values.end())
+            list += (list.empty() ? "" : ",") + d.name + "=" + std::to_string(std::get<int64_t>(it->second));
+    return name + "<" + list + ">";
 }
 
-workspace::grouping workspace::group_ports(const std::vector<port>& leaves, const std::vector<port_group>& groups) const
+param_values workspace::bundle_values(id bundle, const param_values& args) const
+{
+    param_values r;
+    auto t = find_bundle(bundle);
+    if (!t) return r;
+    for (auto& d : t->params) {
+        auto it = args.find(d.name);
+        r[d.name] = it != args.end() && std::holds_alternative<int64_t>(it->second) ? it->second : d.def;
+    }
+    return r;
+}
+
+param_values workspace::bundle_args(id bundle, const param_values& args) const
+{
+    param_values r;
+    auto t = find_bundle(bundle);
+    if (!t) return r;
+    for (auto& d : t->params) {
+        auto it = args.find(d.name);
+        if (it != args.end() && std::holds_alternative<int64_t>(it->second) && it->second != d.def) r[d.name] = it->second;
+    }
+    return r;
+}
+
+std::string workspace::check_bundle_args(id bundle, const param_values& args) const
+{
+    auto t = find_bundle(bundle);
+    if (!t) return {};
+    for (auto& [name, v] : args) {
+        auto d = std::find_if(t->params.begin(), t->params.end(), [&](const param_def& d) { return d.name == name; });
+        if (d == t->params.end()) return "it has no parameter " + name;
+        auto i = std::get_if<int64_t>(&v);
+        if (!i) return name + " is not an integer";
+        if (*i < d->min || *i > d->max)
+            return name + " = " + std::to_string(*i) + " is out of range " + std::to_string(d->min) + ".." + std::to_string(d->max);
+    }
+    return {};
+}
+
+bool workspace::same_bundle(id a, const param_values& a_args, id b, const param_values& b_args) const
+{
+    return a == b && (a == no_id || bundle_values(a, a_args) == bundle_values(b, b_args));
+}
+
+std::optional<param_values> workspace::group_args(const port_group& g, const param_values& model_values, std::string& error) const
+{
+    param_values r;
+    for (auto& [name, text] : g.args) {
+        std::string e;
+        auto v = eval_expr(text, model_values, e);
+        if (!v) {
+            error = name + ": " + e;
+            return std::nullopt;
+        }
+        r[name] = *v;
+    }
+    return bundle_args(g.bundle, r);
+}
+
+workspace::grouping workspace::group_ports(const std::vector<port>& leaves, const std::vector<port_group>& groups, const param_values& model_values) const
 {
     grouping r;
     // per leaf the group it's in and its offset there, -1 for none
     std::vector<int> group_of(leaves.size(), -1);
     std::vector<int> bit_of(leaves.size(), 0);
     std::vector<int> width_of(groups.size(), 0);
+    std::vector<param_values> args_of(groups.size());
 
     for (int g = 0; g < (int)groups.size(); g++) {
         auto& grp = groups[g];
-        auto layout = layout_of(grp.bundle, grp.flipped);
         auto what = "bundle port " + grp.name + ": ";
+        std::string error;
+        auto args = group_args(grp, model_values, error);
+        if (!args) {
+            r.problems.push_back(what + error);
+            continue;
+        }
+        args_of[g] = *args;
+        auto layout = layout_of(grp.bundle, grp.flipped, *args);
         if (!layout) {
             r.problems.push_back(what + layout.error);
             continue;
@@ -385,6 +493,7 @@ workspace::grouping workspace::group_ports(const std::vector<port>& leaves, cons
             p.description = grp.description;
             p.bundle = grp.bundle;
             p.flipped = grp.flipped;
+            p.bundle_args = args_of[g];
             port_of_group[g] = (int)r.ports.size();
             r.ports.push_back(p);
         }
@@ -409,7 +518,7 @@ port_group workspace::bundle_from_ports(library& lib, const std::vector<port>& p
         auto& port = ports[k];
         bundle_field f;
         f.name = port.name.substr(p.prefix.size());
-        f.width = port.width;
+        f.width = std::to_string(port.width);
         f.dir = port.dir;
         f.description = port.description;
         b.fields.push_back(f);
@@ -437,7 +546,7 @@ std::vector<std::string> workspace::apply_groups(cell& c)
         leaves->clear();
     } else {
         if (leaves->empty()) *leaves = c.ports;
-        auto g = group_ports(*leaves, *groups);
+        auto g = group_ports(*leaves, *groups, resolve_params(*c.external_params(), {}));
         c.set_ports(g.ports);
         if (c.ports != before)
             if (auto l = library_of(c.id)) l->dirty = true;
@@ -448,9 +557,10 @@ std::vector<std::string> workspace::apply_groups(cell& c)
     return {};
 }
 
-std::vector<model_port> workspace::map_model_ports(const std::vector<port>& ports, const std::vector<port>& leaves, const std::vector<port_group>& groups) const
+std::vector<model_port> workspace::map_model_ports(const std::vector<port>& ports, const std::vector<port>& leaves, const std::vector<port_group>& groups,
+    const param_values& model_values) const
 {
-    auto g = group_ports(leaves, groups);
+    auto g = group_ports(leaves, groups, model_values);
     std::vector<model_port> r;
     for (auto& m : g.model_ports) {
         auto& name = g.ports[m.of].name;
@@ -471,7 +581,7 @@ void workspace::bundles_changed()
             if (auto g = c->port_groups(); g && !g->empty()) apply_groups(*c);
             for (auto& p : c->ports) {
                 if (p.bundle == no_id) continue;
-                auto layout = layout_of(p.bundle);
+                auto layout = layout_of(p.bundle, false, p.bundle_args);
                 // an empty bundle still needs a bit for the net
                 int w = layout ? std::max(layout.width, 1) : p.width;
                 if (p.width == w) continue;
@@ -529,7 +639,7 @@ interface_view workspace::interface_of(const instance& i) const
             e.ports = c->ports;
             e.leaves = c->model_ports();
             e.revision = m_bundle_revision;
-            e.model_ports = map_model_ports(c->ports, e.leaves, *groups);
+            e.model_ports = map_model_ports(c->ports, e.leaves, *groups, resolve_params(*c->external_params(), {}));
         }
         return {&c->ports, &c->symbol, &no_links, &no_pulls, &e.model_ports};
     }
@@ -651,9 +761,9 @@ const workspace::external_entry* workspace::external_interface(const cell& c, co
         auto groups = c.port_groups();
         if (groups && !groups->empty()) {
             // the model's ports for these parameters, grouped
-            auto g = group_ports(ports, *groups);
+            auto g = group_ports(ports, *groups, values);
             tmp.set_ports(g.ports);
-            e.iface.model_ports = map_model_ports(tmp.ports, ports, *groups);
+            e.iface.model_ports = map_model_ports(tmp.ports, ports, *groups, values);
         } else {
             tmp.set_ports(ports);
         }

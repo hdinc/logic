@@ -1,5 +1,6 @@
 #include "model_editor.h"
 #include "../ui/theme.h"
+#include "../model/expr.h"
 #include "param_editor.h"
 #include "file_dialog.h"
 
@@ -139,7 +140,7 @@ void model_editor::plugin_tables()
             TextUnformatted(p.bundle != model::no_id ? "bundle" : model::to_string(p.dir));
             TableNextColumn();
             if (p.bundle != model::no_id)
-                Text("%s (%d)", ctx.ws.bundle_label(p.bundle, p.flipped).c_str(), p.width);
+                Text("%s (%d)", ctx.ws.bundle_label(p).c_str(), p.width);
             else
                 Text("%d", p.width);
             TableNextColumn();
@@ -423,6 +424,48 @@ void model_editor::ports_table()
         TextColored(ui::color(ui::color_id::warning), "%s", problem.c_str());
 }
 
+bool model_editor::group_args(model::port_group& g, const model::param_values& defaults)
+{
+    using namespace ImGui;
+
+    auto t = ctx.ws.find_bundle(g.bundle);
+    if (!t) return false;
+    std::string names;
+    for (auto& [name, v] : defaults)
+        if (std::holds_alternative<int64_t>(v)) names += (names.empty() ? "" : ", ") + name;
+
+    bool changed = false;
+    for (auto& d : t->params) {
+        PushID(d.name.c_str());
+        auto it = g.args.find(d.name);
+        std::string text = it != g.args.end() ? it->second : std::string();
+        std::string error;
+        if (!text.empty()) model::eval_expr(text, defaults, error);
+
+        AlignTextToFramePadding();
+        TextUnformatted(d.name.c_str());
+        SameLine();
+        if (!error.empty()) PushStyleColor(ImGuiCol_Text, ui::color(ui::color_id::warning));
+        SetNextItemWidth(-1);
+        auto hint = std::to_string(std::get<int64_t>(d.def));
+        if (input_string("##arg", text, 0, hint.c_str())) {
+            if (text.empty())
+                g.args.erase(d.name);
+            else
+                g.args[d.name] = text;
+            changed = true;
+        }
+        if (!error.empty()) PopStyleColor();
+        if (!error.empty())
+            SetItemTooltip("%s", error.c_str());
+        else
+            SetItemTooltip("the value of %s, an expression of the model's parameters (%s). empty for its default", d.name.c_str(),
+                names.empty() ? "it has none" : names.c_str());
+        PopID();
+    }
+    return changed;
+}
+
 void model_editor::groups_table()
 {
     using namespace ImGui;
@@ -430,6 +473,8 @@ void model_editor::groups_table()
     auto& c = ctx.cell;
     auto groups = c.port_groups();
     if (!groups) return;
+    // the groups' bundle args are evaluated for the model's defaults
+    auto defaults = model::resolve_params(*c.external_params(), {});
 
     SeparatorText("Bundle ports");
     TextDisabled("Ports of the model named <prefix><field> as one bundle port, e.g. m0_valid and m0_data as m0");
@@ -459,8 +504,9 @@ void model_editor::groups_table()
                     SeparatorText(l->name.c_str());
                     for (auto& b : l->bundles) {
                         PushID(b.get());
-                        if (Selectable(b->name.c_str(), g.bundle == b->id)) {
+                        if (Selectable(b->name.c_str(), g.bundle == b->id) && g.bundle != b->id) {
                             g.bundle = b->id;
+                            g.args.clear();
                             changed = true;
                         }
                         PopID();
@@ -468,6 +514,7 @@ void model_editor::groups_table()
                 }
                 EndCombo();
             }
+            if (group_args(g, defaults)) changed = true;
             TableNextColumn();
             if (Checkbox("##flipped", &g.flipped)) changed = true;
             SetItemTooltip("the model is the other side of the bundle: its inputs and outputs swapped");
@@ -523,7 +570,7 @@ void model_editor::groups_table()
                         // all fields there and not in a group yet
                         auto others = *groups;
                         others.push_back(g);
-                        if (!ctx.ws.group_ports(leaves, others).problems.empty()) continue;
+                        if (!ctx.ws.group_ports(leaves, others, defaults).problems.empty()) continue;
                         any = true;
                         auto label = g.name + " : " + ctx.ws.bundle_label(b->id, flipped);
                         if (MenuItem(label.c_str())) {
@@ -537,7 +584,7 @@ void model_editor::groups_table()
         if (!any) TextDisabled("none fits the model's ports");
 
         // new types from ports with a common prefix that aren't grouped yet
-        auto grouping = ctx.ws.group_ports(leaves, *groups);
+        auto grouping = ctx.ws.group_ports(leaves, *groups, defaults);
         auto grouped = [&](int k) { return grouping.ports[grouping.model_ports[k].of].bundle != model::no_id; };
         bool header = false;
         for (auto& p : model::common_prefixes(leaves)) {
@@ -577,7 +624,7 @@ void model_editor::groups_table()
         ctx.modified();
     }
     if (!groups->empty())
-        for (auto& p : ctx.ws.group_ports(c.model_ports(), *groups).problems)
+        for (auto& p : ctx.ws.group_ports(c.model_ports(), *groups, defaults).problems)
             TextColored(ui::color(ui::color_id::warning), "%s", p.c_str());
 }
 

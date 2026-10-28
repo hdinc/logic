@@ -1,5 +1,6 @@
 #include "bundle_editor.h"
 #include "../ui/theme.h"
+#include "../model/expr.h"
 #include "bundle_ui.h"
 #include "context.h"
 
@@ -40,7 +41,7 @@ void bundle_editor::changed()
 bool bundle_editor::unchanged() const
 {
     // renaming isn't an undo step
-    return b.fields == current.fields && b.description == current.description;
+    return b.fields == current.fields && b.params == current.params && b.description == current.description;
 }
 
 void bundle_editor::commit()
@@ -84,6 +85,14 @@ void bundle_editor::redo()
 std::vector<std::string> bundle_editor::check() const
 {
     std::vector<std::string> r;
+    std::set<std::string> params;
+    for (auto& d : b.params) {
+        if (!model::valid_param_name(d.name))
+            r.push_back("parameter '" + d.name + "': start with a letter or '_', then letters, digits and '_'");
+        else if (!params.insert(d.name).second)
+            r.push_back("duplicate parameter name '" + d.name + "'");
+        if (d.min > d.max) r.push_back("parameter '" + d.name + "': the minimum is above the maximum");
+    }
     std::set<std::string> names;
     for (auto& f : b.fields) {
         if (f.name.empty())
@@ -97,6 +106,136 @@ std::vector<std::string> bundle_editor::check() const
     return r;
 }
 
+bool bundle_editor::params_table()
+{
+    using namespace ImGui;
+
+    SeparatorText("Parameters");
+    if (b.params.empty()) TextDisabled("none, every use of the bundle has the same fields and widths");
+
+    bool edited = false;
+    int remove = -1, move_up = -1;
+    auto flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp;
+    if (!b.params.empty() && BeginTable("params", 6, flags)) {
+        TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        TableSetupColumn("Default", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+        TableSetupColumn("Min", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+        TableSetupColumn("Max", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+        TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        auto& style = GetStyle();
+        float actions = 2 * GetFrameHeight() + CalcTextSize("x").x + 2 * style.FramePadding.x + 4;
+        TableSetupColumn("##actions", ImGuiTableColumnFlags_WidthFixed, actions);
+        TableHeadersRow();
+
+        for (int k = 0; k < (int)b.params.size(); k++) {
+            auto& d = b.params[k];
+            PushID(k);
+            TableNextRow();
+
+            TableNextColumn();
+            SetNextItemWidth(-FLT_MIN);
+            if (input_string("##name", d.name)) {
+                d.label = d.name;
+                edited = true;
+            }
+            SetItemTooltip("uses of the bundle give values by this name, renaming breaks them");
+
+            auto value = [&](const char* id, int64_t& v) {
+                TableNextColumn();
+                SetNextItemWidth(-FLT_MIN);
+                if (InputScalar(id, ImGuiDataType_S64, &v)) edited = true;
+            };
+            auto def = std::get<int64_t>(d.def);
+            value("##default", def);
+            value("##min", d.min);
+            value("##max", d.max);
+            d.def = std::clamp(def, std::min(d.min, d.max), std::max(d.min, d.max));
+
+            TableNextColumn();
+            SetNextItemWidth(-FLT_MIN);
+            if (input_string("##description", d.description)) edited = true;
+
+            TableNextColumn();
+            BeginDisabled(k == 0);
+            if (ArrowButton("##up", ImGuiDir_Up)) move_up = k;
+            EndDisabled();
+            SameLine(0, 2);
+            BeginDisabled(k + 1 == (int)b.params.size());
+            if (ArrowButton("##down", ImGuiDir_Down)) move_up = k + 1;
+            EndDisabled();
+            SameLine(0, 2);
+            if (SmallButton("x")) remove = k;
+            SetItemTooltip("remove the parameter");
+
+            PopID();
+        }
+        EndTable();
+    }
+
+    if (move_up > 0) {
+        std::swap(b.params[move_up - 1], b.params[move_up]);
+        edited = true;
+    }
+    if (remove >= 0) {
+        b.params.erase(b.params.begin() + remove);
+        edited = true;
+    }
+    if (Button("Add parameter")) {
+        std::string name;
+        for (int n = 1;; n++) {
+            name = n == 1 ? "W" : "W" + std::to_string(n);
+            if (std::none_of(b.params.begin(), b.params.end(), [&](auto& d) { return d.name == name; })) break;
+        }
+        b.params.push_back(model::int_param(name, name, 8, 0, model::max_width));
+        edited = true;
+    }
+    return edited;
+}
+
+bool bundle_editor::nested_args(model::bundle_field& f)
+{
+    using namespace ImGui;
+
+    auto t = ws.find_bundle(f.bundle);
+    if (!t) return false;
+    bool edited = false;
+    auto scope = ws.bundle_values(b.id, {});
+    for (auto& d : t->params) {
+        PushID(d.name.c_str());
+        auto it = f.args.find(d.name);
+        std::string text = it != f.args.end() ? it->second : std::string();
+        std::string error;
+        if (!text.empty()) model::eval_expr(text, scope, error);
+
+        AlignTextToFramePadding();
+        TextUnformatted(d.name.c_str());
+        SameLine();
+        if (!error.empty()) PushStyleColor(ImGuiCol_Text, ui::color(ui::color_id::warning));
+        SetNextItemWidth(-FLT_MIN);
+        auto hint = std::to_string(std::get<int64_t>(d.def));
+        if (input_string("##arg", text, 0, hint.c_str())) {
+            if (text.empty())
+                f.args.erase(d.name);
+            else
+                f.args[d.name] = text;
+            edited = true;
+        }
+        if (!error.empty()) PopStyleColor();
+        if (!error.empty())
+            SetItemTooltip("%s", error.c_str());
+        else
+            SetItemTooltip("the value of %s of %s, an expression of this bundle's parameters. empty for its default", d.name.c_str(), t->name.c_str());
+        PopID();
+    }
+    // values of parameters it no longer has
+    std::erase_if(f.args, [&](auto& a) {
+        bool gone = std::none_of(t->params.begin(), t->params.end(), [&](auto& d) { return d.name == a.first; });
+        edited |= gone;
+        return gone;
+    });
+    return edited;
+}
+
 void bundle_editor::gui(bool locked)
 {
     using namespace ImGui;
@@ -106,6 +245,10 @@ void bundle_editor::gui(bool locked)
     auto layout = ws.layout_of(b.id);
     SameLine();
     TextDisabled(layout.width == 1 ? "%d bit" : "%d bits", layout.width);
+    if (!b.params.empty()) {
+        SameLine();
+        TextDisabled("with the default values");
+    }
 
     if (locked) TextColored(ui::color(ui::color_id::warning), "A simulation is running, stop it to edit the bundle");
     BeginDisabled(locked || lib.read_only);
@@ -114,8 +257,11 @@ void bundle_editor::gui(bool locked)
     TextUnformatted("Description");
     if (input_multiline("##description", b.description, {-FLT_MIN, GetTextLineHeight() * 2.5f})) edited = true;
 
+    if (params_table()) edited = true;
+
     SeparatorText("Fields");
     TextDisabled("Directions are those of the normal view, the flipped view swaps inputs and outputs.");
+    if (!b.params.empty()) TextDisabled("Widths are expressions of the parameters, e.g. DATA_W / 8. A field of width 0 is left out.");
 
     int remove = -1, move_up = -1;
     auto flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp;
@@ -148,6 +294,7 @@ void bundle_editor::gui(bool locked)
                     if (Selectable(model::to_string(d), f.bundle == model::no_id && f.dir == d)) {
                         f.bundle = model::no_id;
                         f.flipped = false;
+                        f.args.clear();
                         f.dir = d;
                         edited = true;
                     }
@@ -159,8 +306,9 @@ void bundle_editor::gui(bool locked)
                         // a bundle can't contain itself
                         if (ws.would_create_bundle_cycle(b.id, o->id)) continue;
                         PushID(o.get());
-                        if (Selectable(o->name.c_str(), f.bundle == o->id)) {
+                        if (Selectable(o->name.c_str(), f.bundle == o->id) && f.bundle != o->id) {
                             f.bundle = o->id;
+                            f.args.clear();
                             edited = true;
                         }
                         PopID();
@@ -174,12 +322,22 @@ void bundle_editor::gui(bool locked)
             if (f.bundle != model::no_id) {
                 if (Checkbox("flipped", &f.flipped)) edited = true;
                 SetItemTooltip("the other view of the nested bundle");
+                if (nested_args(f)) edited = true;
             } else {
+                // red while it can't be evaluated at the defaults
+                std::string error;
+                auto w = model::eval_expr(f.width, ws.bundle_values(b.id, {}), error);
+                if (w && (*w < 0 || *w > model::max_width)) error = "the width must be 0.." + std::to_string(model::max_width);
+                if (!error.empty()) PushStyleColor(ImGuiCol_Text, ui::color(ui::color_id::warning));
                 SetNextItemWidth(-FLT_MIN);
-                if (InputInt("##width", &f.width)) {
-                    f.width = std::clamp(f.width, 1, model::max_width);
-                    edited = true;
-                }
+                if (input_string("##width", f.width)) edited = true;
+                if (!error.empty()) PopStyleColor();
+                if (!error.empty())
+                    SetItemTooltip("%s", error.c_str());
+                else if (!model::is_literal(f.width))
+                    SetItemTooltip("%lld bits with the default values", (long long)*w);
+                else if (!b.params.empty())
+                    SetItemTooltip("a number or an expression of the parameters, 0 leaves the field out");
             }
 
             TableNextColumn();

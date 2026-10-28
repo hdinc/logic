@@ -442,7 +442,7 @@ static void test_bundle_port()
 {
     fixture f;
     auto& hs = f.ws.create_bundle(*f.lib, "handshake");
-    hs.fields = {{"valid", "", 1, model::direction::output}, {"ready", "", 1, model::direction::input}, {"data", "", 8, model::direction::output}};
+    hs.fields = {{"valid", "", "1", model::direction::output}, {"ready", "", "1", model::direction::input}, {"data", "", "8", model::direction::output}};
     auto& c = f.hdl_cell("sink");
     model::port_group g;
     g.name = "s";
@@ -470,6 +470,48 @@ static void test_bundle_port()
     CHECK(s.port_value(in) == sim::known(0x3C << 2 | 0b11, 10));
     s.set_input(in, sim::known(0x3C << 2, 10));
     CHECK(s.port_value(seen) == sim::known(0, 8));
+}
+
+// a stream bundle port whose data width follows the design's TDATA_WIDTH
+static void test_parameterized_bundle_port()
+{
+    fixture f;
+    auto& axis = f.ws.create_bundle(*f.lib, "axis");
+    axis.params = {model::int_param("DATA_W", "DATA_W", 8, 1, 128)};
+    axis.fields = {{"tvalid", "", "1", model::direction::output}, {"tready", "", "1", model::direction::input}, {"tdata", "", "DATA_W", model::direction::output}};
+    auto& c = f.hdl_cell("stream_sink");
+    model::port_group g;
+    g.name = "s";
+    g.bundle = axis.id;
+    g.flipped = true;
+    g.args = {{"DATA_W", "TDATA_WIDTH"}};
+    c.port_groups()->push_back(g);
+    CHECK(f.ws.apply_groups(c).empty());
+    CHECK(c.ports.size() == 2 && c.ports[0].width == 10 && c.ports[0].bundle_args.empty());
+
+    // other parameters give a bundle port with other values
+    int u = f.place(c.id, {0, 0}, {{"TDATA_WIDTH", int64_t(32)}});
+    auto iface = f.ws.interface_of(f.sch().instances[u]);
+    CHECK(iface && iface.ports->size() == 2 && (*iface.ports)[0].width == 34);
+    CHECK(((*iface.ports)[0].bundle_args == model::param_values{{"DATA_W", int64_t(32)}}));
+    CHECK(f.ws.check_instance(f.sch().instances[u]).empty());
+
+    int in = f.port(model::direction::input, f.pin(u, "s"), 34);
+    f.top->ports[in].bundle = axis.id;
+    f.top->ports[in].flipped = true;
+    f.top->ports[in].bundle_args = {{"DATA_W", int64_t(32)}};
+    int seen = f.port(model::direction::output, f.pin(u, "seen"), 32);
+    auto s = f.simulate();
+    CHECK(s.problems().empty());
+    s.set_input(in, sim::known(uint64_t(0xDEADBEEF) << 2 | 1, 34));
+    CHECK(s.port_value(seen) == sim::known(0xDEADBEEF, 32));
+    // ready comes from the design
+    CHECK(s.port_value(in).slice(1, 1) == sim::known(1, 1));
+
+    // the cell's own port for the defaults stays 8 bits of data, so wiring
+    // it to the 32 bit port is a type error
+    f.sch().instances[u].params.clear();
+    CHECK(!netlist::extract(f.ws, *f.top).problems.empty());
 }
 
 int main(int argc, char** argv)
@@ -513,6 +555,7 @@ int main(int argc, char** argv)
         test_counter();
         test_wide();
         test_bundle_port();
+        test_parameterized_bundle_port();
         test_delay_and_finish();
         test_background_build();
         test_runner();
