@@ -346,7 +346,8 @@ void model_editor::ports_table()
     if (grouped) TextDisabled("The model's ports, some of them make up the bundle ports below");
     bool changed = false;
 
-    model::id remove = model::no_id;
+    // by index: the model's ports (the leaf ports) have no ids
+    int remove = -1;
     if (BeginTable("ports", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
         TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 2);
         TableSetupColumn("Direction", ImGuiTableColumnFlags_WidthStretch, 1.2f);
@@ -355,8 +356,9 @@ void model_editor::ports_table()
         TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
         TableHeadersRow();
 
-        for (auto& p : list) {
-            PushID((int)p.id);
+        for (int k = 0; k < (int)list.size(); k++) {
+            auto& p = list[k];
+            PushID(k);
             TableNextRow();
             TableNextColumn();
             SetNextItemWidth(-1);
@@ -378,17 +380,17 @@ void model_editor::ports_table()
             SetNextItemWidth(-1);
             if (input_string("##desc", p.description)) changed = true;
             TableNextColumn();
-            if (SmallButton("x")) remove = p.id;
+            if (SmallButton("x")) remove = k;
             SetItemTooltip("remove the port and its pin");
             PopID();
         }
         EndTable();
     }
-    if (remove != model::no_id) {
+    if (remove >= 0) {
         if (grouped)
-            std::erase_if(list, [&](auto& p) { return p.id == remove; });
+            list.erase(list.begin() + remove);
         else
-            c.remove_port(remove);
+            c.remove_port(list[remove].id);
         changed = true;
     }
 

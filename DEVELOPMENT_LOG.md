@@ -5037,3 +5037,33 @@ The user changed their mind about the look of the 7-segment display:
 
 - Keyboard navigation in `file_list`, shared by the dialog and the Files
   panel.
+
+## 2026-10-28 13:38 +0300
+
+### Changes made
+
+- **Fixed the "conflicting ID" error in the model editor's Ports table for
+  cells with bundle ports** (e.g. the AVR's ATmega328P). In that case the
+  table lists the model's own ports (the leaf ports). They come straight
+  from the plugin's `describe` and are never given ids, so all of them have
+  id 0. The table used `PushID(p.id)`, so every row had the same ImGui IDs.
+- The same cause broke the remove button there: it erased leaf ports by id,
+  so removing one port removed all of them.
+
+### How it works
+
+- `model_editor::ports_table` (`src/editor/model_editor.cpp`) now keys
+  each row by its index. A remove deletes that index from the leaf list,
+  or calls `cell::remove_port` with the row's id for an ungrouped cell.
+- Rejected: giving leaf ports ids when they're read or described. That
+  needs changes in the plugin loader, `refresh`, the JSON reader and
+  `apply_groups`, and only the editor uses the ids anyway. The cell's real
+  ports, which pins and wires refer to, keep getting ids from `set_ports`.
+
+### Testing
+
+- Built. All 9 ctest suites pass. The GUI wasn't checked again.
+
+### Next steps
+
+- None for this fix.
