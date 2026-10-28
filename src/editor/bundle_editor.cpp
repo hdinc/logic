@@ -3,6 +3,7 @@
 #include "../model/expr.h"
 #include "bundle_ui.h"
 #include "context.h"
+#include "param_editor.h"
 
 #include <imgui.h>
 
@@ -108,88 +109,8 @@ std::vector<std::string> bundle_editor::check() const
 
 bool bundle_editor::params_table()
 {
-    using namespace ImGui;
-
-    SeparatorText("Parameters");
-    if (b.params.empty()) TextDisabled("none, every use of the bundle has the same fields and widths");
-
-    bool edited = false;
-    int remove = -1, move_up = -1;
-    auto flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp;
-    if (!b.params.empty() && BeginTable("params", 6, flags)) {
-        TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 1.2f);
-        TableSetupColumn("Default", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-        TableSetupColumn("Min", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-        TableSetupColumn("Max", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-        TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch, 2.0f);
-        auto& style = GetStyle();
-        float actions = 2 * GetFrameHeight() + CalcTextSize("x").x + 2 * style.FramePadding.x + 4;
-        TableSetupColumn("##actions", ImGuiTableColumnFlags_WidthFixed, actions);
-        TableHeadersRow();
-
-        for (int k = 0; k < (int)b.params.size(); k++) {
-            auto& d = b.params[k];
-            PushID(k);
-            TableNextRow();
-
-            TableNextColumn();
-            SetNextItemWidth(-FLT_MIN);
-            if (input_string("##name", d.name)) {
-                d.label = d.name;
-                edited = true;
-            }
-            SetItemTooltip("uses of the bundle give values by this name, renaming breaks them");
-
-            auto value = [&](const char* id, int64_t& v) {
-                TableNextColumn();
-                SetNextItemWidth(-FLT_MIN);
-                if (InputScalar(id, ImGuiDataType_S64, &v)) edited = true;
-            };
-            auto def = std::get<int64_t>(d.def);
-            value("##default", def);
-            value("##min", d.min);
-            value("##max", d.max);
-            d.def = std::clamp(def, std::min(d.min, d.max), std::max(d.min, d.max));
-
-            TableNextColumn();
-            SetNextItemWidth(-FLT_MIN);
-            if (input_string("##description", d.description)) edited = true;
-
-            TableNextColumn();
-            BeginDisabled(k == 0);
-            if (ArrowButton("##up", ImGuiDir_Up)) move_up = k;
-            EndDisabled();
-            SameLine(0, 2);
-            BeginDisabled(k + 1 == (int)b.params.size());
-            if (ArrowButton("##down", ImGuiDir_Down)) move_up = k + 1;
-            EndDisabled();
-            SameLine(0, 2);
-            if (SmallButton("x")) remove = k;
-            SetItemTooltip("remove the parameter");
-
-            PopID();
-        }
-        EndTable();
-    }
-
-    if (move_up > 0) {
-        std::swap(b.params[move_up - 1], b.params[move_up]);
-        edited = true;
-    }
-    if (remove >= 0) {
-        b.params.erase(b.params.begin() + remove);
-        edited = true;
-    }
-    if (Button("Add parameter")) {
-        std::string name;
-        for (int n = 1;; n++) {
-            name = n == 1 ? "W" : "W" + std::to_string(n);
-            if (std::none_of(b.params.begin(), b.params.end(), [&](auto& d) { return d.name == name; })) break;
-        }
-        b.params.push_back(model::int_param(name, name, 8, 0, model::max_width));
-        edited = true;
-    }
-    return edited;
+    ImGui::SeparatorText("Parameters");
+    return edit_int_params(b.params, "none, every use of the bundle has the same fields and widths");
 }
 
 bool bundle_editor::nested_args(model::bundle_field& f)
@@ -204,27 +125,19 @@ bool bundle_editor::nested_args(model::bundle_field& f)
         PushID(d.name.c_str());
         auto it = f.args.find(d.name);
         std::string text = it != f.args.end() ? it->second : std::string();
-        std::string error;
-        if (!text.empty()) model::eval_expr(text, scope, error);
-
         AlignTextToFramePadding();
         TextUnformatted(d.name.c_str());
         SameLine();
-        if (!error.empty()) PushStyleColor(ImGuiCol_Text, ui::color(ui::color_id::warning));
         SetNextItemWidth(-FLT_MIN);
         auto hint = std::to_string(std::get<int64_t>(d.def));
-        if (input_string("##arg", text, 0, hint.c_str())) {
+        auto tip = "the value of " + d.name + " of " + t->name + ", an expression of this bundle's parameters. empty for its default";
+        if (edit_expr("##arg", text, scope, hint.c_str(), tip)) {
             if (text.empty())
                 f.args.erase(d.name);
             else
                 f.args[d.name] = text;
             edited = true;
         }
-        if (!error.empty()) PopStyleColor();
-        if (!error.empty())
-            SetItemTooltip("%s", error.c_str());
-        else
-            SetItemTooltip("the value of %s of %s, an expression of this bundle's parameters. empty for its default", d.name.c_str(), t->name.c_str());
         PopID();
     }
     // values of parameters it no longer has
@@ -324,20 +237,18 @@ void bundle_editor::gui(bool locked)
                 SetItemTooltip("the other view of the nested bundle");
                 if (nested_args(f)) edited = true;
             } else {
-                // red while it can't be evaluated at the defaults
+                // a width out of range is a problem too
                 std::string error;
                 auto w = model::eval_expr(f.width, ws.bundle_values(b.id, {}), error);
-                if (w && (*w < 0 || *w > model::max_width)) error = "the width must be 0.." + std::to_string(model::max_width);
-                if (!error.empty()) PushStyleColor(ImGuiCol_Text, ui::color(ui::color_id::warning));
-                SetNextItemWidth(-FLT_MIN);
-                if (input_string("##width", f.width)) edited = true;
-                if (!error.empty()) PopStyleColor();
-                if (!error.empty())
-                    SetItemTooltip("%s", error.c_str());
-                else if (!model::is_literal(f.width))
-                    SetItemTooltip("%lld bits with the default values", (long long)*w);
+                std::string tip;
+                if (w && (*w < 0 || *w > model::max_width))
+                    tip = "the width must be 0.." + std::to_string(model::max_width);
+                else if (w && !model::is_literal(f.width))
+                    tip = std::to_string(*w) + " bits with the default values";
                 else if (!b.params.empty())
-                    SetItemTooltip("a number or an expression of the parameters, 0 leaves the field out");
+                    tip = "a number or an expression of the parameters, 0 leaves the field out";
+                SetNextItemWidth(-FLT_MIN);
+                if (edit_expr("##width", f.width, ws.bundle_values(b.id, {}), nullptr, tip)) edited = true;
             }
 
             TableNextColumn();

@@ -27,7 +27,17 @@ standalone VCD viewer, `logic-wave`.
   flipped view for the other side. Ports and wires can carry a whole
   bundle; a breakout part shows the chosen fields and a tap picks one field
   off a bundle wire. HDL and C model cells group their ports (`m0_valid`,
-  `m0_data`, ...) into bundle ports.
+  `m0_data`, ...) into bundle ports. A bundle can have integer parameters,
+  and its field widths are expressions of them, e.g. `tkeep` as
+  `DATA_W / 8`. A width of 0 leaves the field out. Each use sets the
+  values, and `axis<64>` and `axis<32>` are different types. An HDL cell's
+  bundle port can take its values from the module's parameters
+  (`DATA_W = TDATA_WIDTH`).
+- **Parameterized subcircuits**: a schematic cell can have integer
+  parameters (cell properties, nothing selected). Port widths, bundle
+  values and the parameters of the parts inside can be expressions of them
+  (`W`, `W * 2`, `clog2(DEPTH)`), and each instance sets its own values.
+  The cell is edited and simulated with its defaults.
 - **Builtin parts**: constants, clocks, random number generators (random,
   LFSR), logic gates, tristate buffers,
   registers, counters, RAM, ROM, pull resistors, buttons, switches, LEDs,

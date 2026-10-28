@@ -82,6 +82,12 @@ std::vector<std::string> cell::check() const
     return r;
 }
 
+const std::vector<param_def>* cell::schematic_params() const
+{
+    auto s = get_schematic();
+    return s ? &s->params : nullptr;
+}
+
 const std::vector<param_def>* cell::external_params() const
 {
     return const_cast<cell*>(this)->external_params();

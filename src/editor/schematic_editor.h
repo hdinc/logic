@@ -192,6 +192,10 @@ private:
     // connectivity for drawing buses and width errors while editing,
     // extracted again every frame
     netlist::netlist nets;
+    // problems with the expressions of the cell, see update_param_values
+    std::vector<std::string> param_problems;
+    // evaluates the expressions of the cell for its default parameter values
+    void update_param_values();
     // the pins each port was connected to in the last frame, so normalize
     // can tell which ports were just connected (see adopt_pin_settings)
     std::map<model::id, std::set<std::pair<model::id, int>>> linked;

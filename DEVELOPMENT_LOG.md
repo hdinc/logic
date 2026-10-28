@@ -5220,3 +5220,152 @@ cells.
 - Step 2: parameters on schematic cells. Port widths, bundle values and
   child instance parameters become expressions of the cell's parameters,
   and each instance is specialized for its values.
+
+## 2026-10-28 17:03 +0300
+
+Parameterized schematic cells, step 2 of 2: subcircuits with parameters.
+
+### Features implemented
+
+- **Schematic cells have integer parameters.** They're edited in the cell
+  properties (nothing selected) in the same kind of table the bundle
+  editor uses. Each instance sets its values in its Properties, like the
+  parameters of builtins.
+- **Expressions of the cell's parameters** can be used for:
+  - a port's width (e.g. `W`, `W + 1`);
+  - a bundle port's values (e.g. `DATA_W = W`);
+  - the integer parameters of instances inside (e.g. a NOT gate's
+    `width = W`, a sub-cell's `N = W * 2`).
+- In a cell with parameters these fields become text inputs that take a
+  number or an expression. They turn orange with the reason as a tooltip
+  while the expression fails, and the cell properties list the problems.
+- **Every instance is specialized for its values.** Its pins have the
+  widths for its values, and the simulator uses a copy of the cell for each
+  set of values, nested generics included. The sim view shows each copy
+  with its own widths and values.
+- An open generic cell is shown, checked and simulated (F5 as top) with
+  its default values.
+
+### Changes made
+
+- `schematic::params`, `port::width_expr` / `port::bundle_arg_exprs` and
+  `instance::param_exprs` are new.
+- `workspace::params_of` returns a schematic cell's parameters, so the
+  instance parameter editor shows them without changes.
+- `edit_params` takes an optional map of expressions and a scope.
+- `bundle_editor::params_table` and the expression inputs of the bundle
+  and model editors now use the shared `edit_int_params` / `edit_expr`
+  (param_editor).
+- The sim view keeps its per-cell editors by cell pointer instead of id,
+  because instances with other values have their own copies with the same
+  id.
+- The "how its value is shown" tooltip of a port's Format went to the
+  Width input when the format wasn't shown (1-bit ports). It now attaches
+  only to Format.
+- README: parameterized bundles and subcircuits.
+
+### How it works
+
+- **The stored cell is the specialization for the defaults.** Each
+  expression sits next to a plain value (`port.width`, `port.bundle_args`,
+  `instance.params`), and that value is kept evaluated at the cell's
+  defaults. So the netlist, the editors, the symbol and simulating the cell
+  as top work unchanged.
+- `workspace::specialize(cell&, values, ports_only)` evaluates all of a
+  cell's expressions for the given values:
+  - port widths (1..max_width);
+  - bundle values (checked with `check_bundle_args`, the width taken from
+    the layout);
+  - instance parameters (must be an integer parameter of the instance's
+    cell, in range, stored with `set_param`).
+
+  It returns the problems, and anything that fails keeps its value.
+- `apply_param_defaults(cell&)` runs `specialize` with the defaults. The
+  schematic editor runs it every frame (`update_param_values`) for cells
+  that use parameters or expressions. That way undo, and changes to cells
+  that instances use, are followed. Only a real change marks the library
+  dirty. `load_workspace` runs it after loading too.
+- `interface_of` of an instance whose values aren't the defaults:
+  - uses `schematic_interface`, which specializes only the ports;
+  - keeps the cell's symbol (pins refer to port ids) or regenerates the
+    automatic box;
+  - is cached by cell id and `params_key`, and checked against the
+    cell's ports, symbol, parameters, name and the bundle revision.
+
+  `check_instance` reports that specialization's problems.
+- `simulator::specialize(cell, instance, where)` gives each child scope
+  the cell itself for the defaults. For other values it gives a copy,
+  specialized once per (cell id, values), owned by the simulator; its
+  problems are reported once with the instance path. Netlists are already
+  cached per cell pointer, so each copy gets its own. `scope::cell` points
+  to the copy, which has the cell's id.
+- JSON: the schematic gets `params`, ports get `width_expr` and
+  `bundle_arg_exprs`, and instances get `param_exprs`. All are optional,
+  and the format version stays 1.
+- Decisions, made with the user: generic schematics are part of this
+  feature; parameters are integers only; an open generic cell uses its
+  defaults (no preview values).
+- Rejected:
+  - Evaluating the expressions inside `interface_of` and the netlist each
+    time instead of keeping the default values stored: every consumer would
+    need the parent's scope, and simulating a generic cell as top would
+    need special handling.
+  - An "=" toggle per field: a single text input that takes a number or an
+    expression is simpler and works the same way in the bundle editor.
+
+### Testing
+
+- model_test `test_cell_params`:
+  - a cell with an `axis` port (`DATA_W = W`), a `W + 1` port and a
+    register with `width = W`;
+  - its defaults, and the interface of an instance with W=64 (port
+    widths, label `~axis<DATA_W=64>`, the same pins);
+  - the cache following a changed expression;
+  - the problems: an out-of-range bundle value, an unknown name, a
+    parameter the instance's cell doesn't have; what fails keeps its value;
+  - out-of-range widths for an instance's values, and a JSON save/load
+    round trip.
+- sim_test `test_cell_params`:
+  - a generic `inv` (W-bit NOT) at W=4 and inside `inv2` (N, `W = N * 2`)
+    at N=8, so 16 bits; both invert correctly;
+  - the scopes point to specialized copies with the cell's id; the cell
+    itself is unchanged;
+  - an expression that goes out of range for an instance's values is
+    reported with its path, and a failing port width shows on the instance
+    and as a width mismatch.
+- All 9 ctest suites pass. The web build compiles.
+- GUI, on VNC with a scratch workspace:
+  - `top` with `inv` at W=4 and W=16: no problems, bus widths right;
+  - F5: the outputs are 0xF and 0xFFFF; after setting a16 = 0x1234,
+    y16 = 0xEDCB;
+  - descending into U2 shows a 16-bit NOT gate, U1 a 4-bit one;
+  - in `inv`, the NOT's Bit width shows `W`; changing it to `W * 2` makes
+    the gate 2 bits with a width mismatch, and undo restores it;
+  - the port Width shows `W`; an unknown name turns it orange; the cell
+    properties show the Parameters table.
+
+### Recommended features
+
+- Boolean/choice parameters together with conditional parts (generate
+  if), e.g. an optional output register.
+- Preview values for an open generic cell, to look at it with other values
+  without placing it.
+- When a cell's parameter is renamed, rename the values and expressions
+  that use it.
+- Infer bundle values in "Find bundle ports" from the ports' widths.
+
+### Outstanding issues
+
+- Renaming or removing a parameter doesn't update the instances' values
+  and expressions that use it. They show as problems ("unknown name",
+  "the cell has no integer parameter of that name").
+- The symbol of a generic cell is the same for all values. A pin's stub
+  thickness (bit, bus, bundle) follows the defaults.
+- The cell properties' Parameters table is cramped in a narrow Properties
+  panel.
+- Only integer parameters can be expressions. A child's boolean or choice
+  parameters are set per instance as before.
+
+### Next steps
+
+- None planned. See the recommended features.

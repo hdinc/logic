@@ -1,6 +1,5 @@
 #include "model_editor.h"
 #include "../ui/theme.h"
-#include "../model/expr.h"
 #include "param_editor.h"
 #include "file_dialog.h"
 
@@ -439,28 +438,20 @@ bool model_editor::group_args(model::port_group& g, const model::param_values& d
         PushID(d.name.c_str());
         auto it = g.args.find(d.name);
         std::string text = it != g.args.end() ? it->second : std::string();
-        std::string error;
-        if (!text.empty()) model::eval_expr(text, defaults, error);
-
         AlignTextToFramePadding();
         TextUnformatted(d.name.c_str());
         SameLine();
-        if (!error.empty()) PushStyleColor(ImGuiCol_Text, ui::color(ui::color_id::warning));
         SetNextItemWidth(-1);
         auto hint = std::to_string(std::get<int64_t>(d.def));
-        if (input_string("##arg", text, 0, hint.c_str())) {
+        auto tip = "the value of " + d.name + ", an expression of the model's parameters (" + (names.empty() ? "it has none" : names) +
+            "). empty for its default";
+        if (edit_expr("##arg", text, defaults, hint.c_str(), tip)) {
             if (text.empty())
                 g.args.erase(d.name);
             else
                 g.args[d.name] = text;
             changed = true;
         }
-        if (!error.empty()) PopStyleColor();
-        if (!error.empty())
-            SetItemTooltip("%s", error.c_str());
-        else
-            SetItemTooltip("the value of %s, an expression of the model's parameters (%s). empty for its default", d.name.c_str(),
-                names.empty() ? "it has none" : names.c_str());
         PopID();
     }
     return changed;

@@ -628,6 +628,7 @@ interface_view workspace::interface_of(const instance& i) const
     static const std::vector<pull> no_pulls;
     static const std::vector<model_port> no_model_ports;
     if (!p) {
+        if (auto e = schematic_interface(*c, i)) return {&e->ports, &e->symbol, &no_links, &no_pulls, &no_model_ports};
         if (auto e = external_interface(*c, i)) return {&e->iface.ports, &e->iface.symbol, &no_links, &no_pulls, &e->iface.model_ports};
         if (c->auto_symbol()) return {&c->ports, &auto_symbol_of(*c), &no_links, &no_pulls, &no_model_ports};
         auto groups = c->port_groups();
@@ -658,6 +659,7 @@ std::vector<param_def> workspace::params_of(const instance& i) const
     if (!c) return {};
     if (auto p = primitive_of(*c)) return p->params();
     if (auto defs = c->external_params()) return *defs;
+    if (auto defs = c->schematic_params()) return *defs;
     return {};
 }
 
@@ -667,7 +669,118 @@ std::string workspace::check_instance(const instance& i) const
     if (!c) return {};
     if (auto p = primitive_of(*c)) return p->check(resolve_params(p->params(), i.params), build_context{this});
     if (auto e = external_interface(*c, i)) return e->error;
+    if (auto e = schematic_interface(*c, i)) {
+        std::string r;
+        for (auto& p : e->problems)
+            r += (r.empty() ? "" : "\n") + p;
+        return r;
+    }
     return {};
+}
+
+std::vector<std::string> workspace::specialize(cell& c, const param_values& values, bool ports_only) const
+{
+    std::vector<std::string> problems;
+    auto eval = [&](const std::string& what, const std::string& text) -> std::optional<int64_t> {
+        std::string error;
+        auto v = eval_expr(text, values, error);
+        if (!v) problems.push_back(what + ": " + error);
+        return v;
+    };
+
+    for (auto& p : c.ports) {
+        auto what = "port " + p.name;
+        if (p.bundle == no_id) {
+            if (p.width_expr.empty()) continue;
+            auto w = eval(what + ", width", p.width_expr);
+            if (!w) continue;
+            if (*w < 1 || *w > max_width)
+                problems.push_back(what + ": a width of " + std::to_string(*w));
+            else
+                p.width = (int)*w;
+            continue;
+        }
+        if (p.bundle_arg_exprs.empty()) continue;
+        param_values args;
+        bool ok = true;
+        for (auto& [name, text] : p.bundle_arg_exprs) {
+            auto v = eval(what + ", " + name, text);
+            if (v)
+                args[name] = *v;
+            else
+                ok = false;
+        }
+        if (!ok) continue;
+        if (auto problem = check_bundle_args(p.bundle, args); !problem.empty()) {
+            problems.push_back(what + ": " + problem);
+            continue;
+        }
+        p.bundle_args = bundle_args(p.bundle, args);
+        if (auto layout = layout_of(p.bundle, false, p.bundle_args)) p.width = std::max(layout.width, 1);
+    }
+
+    auto sch = c.get_schematic();
+    if (ports_only || !sch) return problems;
+    for (auto& i : sch->instances) {
+        if (i.param_exprs.empty()) continue;
+        auto defs = params_of(i);
+        for (auto& [name, text] : i.param_exprs) {
+            auto what = "instance " + i.name + ", " + name;
+            auto d = std::find_if(defs.begin(), defs.end(), [&](const param_def& d) { return d.name == name; });
+            if (d == defs.end() || d->type != param_def::integer) {
+                problems.push_back(what + ": the cell has no integer parameter of that name");
+                continue;
+            }
+            auto v = eval(what, text);
+            if (!v) continue;
+            if (*v < d->min || *v > d->max) {
+                problems.push_back(what + " = " + std::to_string(*v) + " is out of range " + std::to_string(d->min) + ".." + std::to_string(d->max));
+                continue;
+            }
+            set_param(i.params, *d, *v);
+        }
+    }
+    return problems;
+}
+
+std::vector<std::string> workspace::apply_param_defaults(cell& c) const
+{
+    auto defs = c.schematic_params();
+    if (!defs) return {};
+    return specialize(c, resolve_params(*defs, {}));
+}
+
+const workspace::schematic_entry* workspace::schematic_interface(const cell& c, const instance& i) const
+{
+    auto defs = c.schematic_params();
+    if (!defs || defs->empty()) return nullptr;
+    auto values = resolve_params(*defs, i.params);
+    if (values == resolve_params(*defs, {})) return nullptr;
+
+    auto key = std::to_string(c.id) + '\n' + params_key(values);
+    auto it = schematic_cache.find(key);
+    if (it != schematic_cache.end() && it->second.cell_ports == c.ports && it->second.cell_symbol == c.symbol && it->second.cell_params == *defs &&
+        it->second.cell_name == c.name && it->second.revision == m_bundle_revision)
+        return &it->second;
+
+    schematic_entry e;
+    e.cell_ports = c.ports;
+    e.cell_symbol = c.symbol;
+    e.cell_params = *defs;
+    e.cell_name = c.name;
+    e.revision = m_bundle_revision;
+    // only the ports matter outside
+    cell tmp;
+    tmp.ports = c.ports;
+    e.problems = specialize(tmp, values, true);
+    e.ports = std::move(tmp.ports);
+    if (c.auto_symbol()) {
+        id next = 1;
+        e.symbol = generated_symbol(e.ports, c.name, pin_order::position, [&] { return next++; });
+    } else {
+        e.symbol = c.symbol;
+    }
+    return &(schematic_cache[key] = std::move(e));
 }
 
 void workspace::add_provider(const external_provider& p)

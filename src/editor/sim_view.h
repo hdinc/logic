@@ -76,7 +76,9 @@ private:
     std::shared_ptr<sim_session> s;
     std::vector<int> path;
 
-    std::map<model::id, std::unique_ptr<schematic_editor>> editors;
+    // by cell: the scopes of instances with other parameters have their own
+    // copies of the cell, they live as long as the session
+    std::map<const model::cell*, std::unique_ptr<schematic_editor>> editors;
 
     // instance under the right click menu
     int menu_instance = -1;

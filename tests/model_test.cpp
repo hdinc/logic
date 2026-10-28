@@ -1420,6 +1420,90 @@ static void test_bundle_params(const std::filesystem::path& dir)
     std::filesystem::remove_all(dir);
 }
 
+static void test_cell_params(const std::filesystem::path& dir)
+{
+    using model::direction;
+    stream_fixture f;
+    auto& ws = f.ws;
+    ws.add_builtin_library(builtin::registry());
+
+    // a cell with a stream port whose data width is a parameter, and a
+    // register of that width inside
+    auto& c = ws.create_cell(*f.lib, "fifo");
+    auto& sch = *c.get_schematic();
+    sch.params = {model::int_param("W", "Width", 16, 8, 256, "data bits")};
+    auto& s = c.add_port(direction::input, {0, 0});
+    s.name = "s";
+    s.bundle = f.axis->id;
+    s.flipped = true;
+    s.bundle_arg_exprs = {{"DATA_W", "W"}};
+    auto& q = c.add_port(direction::output, {100, 0});
+    q.name = "q";
+    q.width_expr = "W + 1";
+    sch.instances.push_back({c.new_id(), model::builtin_cell_id("register"), "R", {50, 50}, {}, {}, {{"width", "W"}}});
+    CHECK(ws.apply_param_defaults(c).empty());
+    CHECK(c.ports[0].width == 1 + 1 + 16 + 2 && (c.ports[0].bundle_args == model::param_values{{"DATA_W", int64_t(16)}}));
+    CHECK(c.ports[1].width == 17);
+    CHECK((sch.instances[0].params == model::param_values{{"width", int64_t(16)}}));
+    auto instance = [&](model::param_values v) { return model::instance{1, c.id, "U1", {0, 0}, {}, std::move(v), {}}; };
+    CHECK(ws.params_of(instance({})) == sch.params);
+
+    // an instance with other values gets other ports, the same symbol
+    auto i = instance({{"W", int64_t(64)}});
+    auto iface = ws.interface_of(i);
+    CHECK(iface && (*iface.ports)[0].width == 1 + 1 + 64 + 8 && (*iface.ports)[1].width == 65);
+    CHECK(ws.bundle_label((*iface.ports)[0]) == "~axis<DATA_W=64>");
+    CHECK(iface.symbol->pins.size() == 2 && iface.symbol->pins == ws.interface_of(instance({})).symbol->pins);
+    CHECK(ws.check_instance(i).empty());
+    // the defaults use the cell's own ports
+    CHECK(ws.interface_of(instance({{"W", int64_t(16)}})).ports == &c.ports);
+
+    // the cache follows changes of the cell
+    c.ports[1].width_expr = "W * 2";
+    CHECK((*ws.interface_of(i).ports)[1].width == 128);
+    CHECK(ws.apply_param_defaults(c).empty() && c.ports[1].width == 32);
+
+    // problems: an unknown name, a width out of range, a parameter the
+    // instance's cell doesn't have
+    auto copy = c;
+    copy.ports[1].width_expr = "X";
+    copy.ports[0].bundle_arg_exprs["DATA_W"] = "W - 100";
+    copy.get_schematic()->instances[0].param_exprs["depth"] = "1";
+    auto problems = ws.apply_param_defaults(copy);
+    CHECK(problems.size() == 3);
+    CHECK(problems.size() == 3 && problems[0] == "port s: DATA_W = -84 is out of range 8..1024");
+    CHECK(problems.size() == 3 && problems[1] == "port q, width: unknown name 'X'");
+    CHECK(problems.size() == 3 && problems[2] == "instance R, depth: the cell has no integer parameter of that name");
+    // what fails keeps its value
+    CHECK(copy.ports[1].width == 32 && copy.ports[0].width == 20);
+    copy.ports[1].width_expr = "W - 16";
+    CHECK(ws.apply_param_defaults(copy).size() == 3);
+    CHECK(copy.ports[1].width == 32);
+    // values for an instance are checked on it
+    c.ports[1].width_expr = "W * 32";
+    CHECK(ws.apply_param_defaults(c).empty());
+    CHECK(ws.check_instance(i).empty());
+    i.params["W"] = int64_t(200);
+    CHECK(ws.check_instance(i) == "port q: a width of 6400");
+    c.ports[1].width_expr = "W * 2";
+    ws.apply_param_defaults(c);
+
+    // saved and loaded
+    std::filesystem::remove_all(dir);
+    io::save_library(*f.lib, dir);
+    model::workspace loaded;
+    loaded.add_builtin_library(builtin::registry());
+    CHECK(io::load_workspace(loaded, dir).empty());
+    auto lc = loaded.find_library("work") ? loaded.find_library("work")->find_cell("fifo") : nullptr;
+    CHECK(lc && io::to_json(*lc) == io::to_json(c) && lc->impl == c.impl && lc->ports == c.ports);
+    // loading evaluates the expressions again, e.g. after a cell they
+    // use changed
+    auto j = io::to_json(c);
+    j["ports"][1]["width"] = 3;
+    CHECK(io::cell_from_json(j).ports[1].width == 3);
+    std::filesystem::remove_all(dir);
+}
+
 int main(int argc, char** argv)
 {
     auto dir = std::filesystem::path(argc > 1 ? argv[1] : ".") / "model_test_workspace";
@@ -1446,6 +1530,7 @@ int main(int argc, char** argv)
     test_bundles_from_prefixes();
     test_expr();
     test_bundle_params(dir);
+    test_cell_params(dir);
     test_label_alignment();
     test_categories(dir);
     test_fill_outlines();

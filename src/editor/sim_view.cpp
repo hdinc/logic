@@ -60,7 +60,7 @@ std::string sim_view::title() const
 
 schematic_editor& sim_view::editor_of(const model::cell& c)
 {
-    auto& e = editors[c.id];
+    auto& e = editors[&c];
     if (!e) {
         // only used for drawing and hit testing, the cell is not changed
         auto& cell = const_cast<model::cell&>(c);

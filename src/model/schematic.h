@@ -3,6 +3,7 @@
 #include "param.h"
 #include "types.h"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -22,14 +23,24 @@ struct instance {
     std::string name;
     glm::ivec2 pos{0, 0};
     transform xf;
-    // configuration of primitives, only values that differ from the defaults
+    // configuration of primitives, external and parameterized cells, only
+    // values that differ from the defaults
     param_values params;
+    // integer parameters whose value is an expression of the parameters of
+    // the schematic the instance is in, e.g. WIDTH = "W * 2". params holds
+    // their values for the schematic's defaults, see
+    // workspace::apply_param_defaults.
+    std::map<std::string, std::string> param_exprs{};
     bool operator==(const instance&) const = default;
 };
 
 struct schematic {
     std::vector<wire> wires;
     std::vector<instance> instances;
+    // integer parameters of the cell, set per instance. port widths, bundle
+    // values and the parameters of instances inside can be expressions of
+    // them. the cell as stored is the one for the defaults.
+    std::vector<param_def> params;
 
     wire* find_wire(id i);
     instance* find_instance(id i);

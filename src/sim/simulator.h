@@ -273,6 +273,12 @@ private:
     const component_factory& factory;
 
     std::map<const model::cell*, std::unique_ptr<netlist::netlist>> netlists;
+    // copies of schematic cells with parameters for the values of their
+    // instances, by cell id and values. scopes point to them.
+    std::map<std::string, std::unique_ptr<model::cell>> specialized;
+    // the cell for the instance's parameter values: c itself for the
+    // defaults, a specialized copy otherwise
+    const model::cell& specialize(const model::cell& c, const model::instance& inst, const std::string& where);
     std::unique_ptr<scope> m_root;
     std::vector<model::id> m_cells;
     std::vector<std::string> m_problems;

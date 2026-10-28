@@ -158,6 +158,16 @@ public:
     // there is none
     std::string check_instance(const instance& i) const;
 
+    // evaluates the expressions of a schematic cell for the values of its
+    // parameters (one for each, see resolve_params): the widths and bundle
+    // values of its ports and, unless ports_only, the parameters of its
+    // instances. returns the problems, e.g. an unknown name or a width out
+    // of range; what fails keeps its value.
+    std::vector<std::string> specialize(cell& c, const param_values& values, bool ports_only = false) const;
+    // specialize for the defaults: call after changing the parameters or
+    // expressions of a schematic cell. returns the problems.
+    std::vector<std::string> apply_param_defaults(cell& c) const;
+
     // finds the interfaces of external cells, must outlive the workspace
     void add_provider(const external_provider& p);
     // null if no provider handles the cell
@@ -173,6 +183,23 @@ private:
     // built interfaces of primitives by kind and parameters. entries are never
     // removed, there are only a few configurations in use.
     mutable std::map<std::string, cell_interface> interface_cache;
+
+    // interfaces of schematic cells with other parameters, by cell and
+    // parameters. rebuilt when the cell's ports, symbol, name or parameters
+    // changed since.
+    struct schematic_entry {
+        std::vector<port> ports;
+        model::symbol symbol;
+        std::vector<std::string> problems;
+        std::vector<port> cell_ports;
+        model::symbol cell_symbol;
+        std::vector<param_def> cell_params;
+        std::string cell_name;
+        uint64_t revision = 0;
+    };
+    mutable std::map<std::string, schematic_entry> schematic_cache;
+    // null for cells without parameters and instances with the defaults
+    const schematic_entry* schematic_interface(const cell& c, const instance& i) const;
 
     // interfaces of external cells with other parameters, by cell and
     // parameters. rebuilt when the cell's ports or symbol changed since.

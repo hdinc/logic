@@ -474,6 +474,92 @@ static void test_nested_state()
     CHECK(s.net_value(s.net_of_wire(*other, loop)) == bit(true));
 }
 
+// inv: a W bit not gate between the ports a and y, W a parameter of the
+// cell. inv2: an inv of 2 * N bits.
+static model::cell& make_inv_cell(fixture& f)
+{
+    auto& c = f.new_cell("inv");
+    c.get_schematic()->params = {model::int_param("W", "W", 1, 1, 64)};
+    f.place("not", {0, 0});
+    c.get_schematic()->instances[0].param_exprs = {{"width", "W"}};
+    f.port(model::direction::input, {-20, 0});
+    f.port(model::direction::output, {20, 0});
+    c.ports[0].name = "a";
+    c.ports[1].name = "y";
+    c.ports[0].width_expr = c.ports[1].width_expr = "W";
+    CHECK(f.ws.apply_param_defaults(c).empty());
+    c.generate_symbol();
+    return c;
+}
+
+static void test_cell_params()
+{
+    fixture f;
+    auto& inv = make_inv_cell(f);
+
+    auto& inv2 = f.new_cell("inv2");
+    inv2.get_schematic()->params = {model::int_param("N", "N", 2, 1, 32)};
+    f.place_cell(inv.id, {0, 0});
+    inv2.get_schematic()->instances[0].param_exprs = {{"W", "N * 2"}};
+    CHECK(f.ws.apply_param_defaults(inv2).empty());
+    CHECK((inv2.get_schematic()->instances[0].params == model::param_values{{"W", int64_t(4)}}));
+    f.port(model::direction::input, pin_of(inv, "a", {0, 0}), 4);
+    f.port(model::direction::output, pin_of(inv, "y", {0, 0}), 4);
+    inv2.ports[0].name = "a";
+    inv2.ports[1].name = "y";
+    inv2.ports[0].width_expr = inv2.ports[1].width_expr = "N * 2";
+    inv2.generate_symbol();
+
+    // top: inv with W = 4 and inv2 with N = 8, 16 bits
+    auto& top = f.new_cell("top");
+    f.place_cell(inv.id, {0, 0}, {{"W", int64_t(4)}});
+    f.place_cell(inv2.id, {0, 200}, {{"N", int64_t(8)}});
+    int a4 = f.port(model::direction::input, pin_of(inv, "a", {0, 0}), 4);
+    int y4 = f.port(model::direction::output, pin_of(inv, "y", {0, 0}), 4);
+    int a16 = f.port(model::direction::input, pin_of(inv2, "a", {0, 200}), 16);
+    int y16 = f.port(model::direction::output, pin_of(inv2, "y", {0, 200}), 16);
+
+    auto iface = f.ws.interface_of(f.sch().instances[1]);
+    CHECK(iface && (*iface.ports)[0].width == 16 && (*iface.ports)[1].width == 16);
+    CHECK(netlist::extract(f.ws, top).problems.empty());
+
+    sim::simulator s(f.ws, top, builtin::factory());
+    for (auto& p : s.problems())
+        std::printf("  %s\n", p.c_str());
+    CHECK(s.problems().empty());
+    s.set_input(a4, sim::known(0x5, 4));
+    s.set_input(a16, sim::known(0x1234, 16));
+    CHECK(s.port_value(y4) == sim::known(0xA, 4));
+    CHECK(s.port_value(y16) == sim::known(0xEDCB, 16));
+
+    // each instance has its own copy of the cell for its values, with the
+    // same id. the defaults use the cell itself.
+    auto u1 = s.root().child(0);
+    auto u2 = s.root().child(1);
+    auto inner = u2 ? u2->child(0) : nullptr;
+    CHECK(u1 && u1->cell != &inv && u1->cell->id == inv.id && u1->cell->ports[0].width == 4);
+    CHECK(inner && inner->cell->id == inv.id && inner->cell->ports[0].width == 16);
+    CHECK(inner && (inner->cell->get_schematic()->instances[0].params == model::param_values{{"width", int64_t(16)}}));
+    CHECK(u2 && u2->cell->get_schematic()->instances[0].params.at("W") == model::param_value(int64_t(16)));
+    // the cell itself is unchanged
+    CHECK(inv.ports[0].width == 1 && inv.get_schematic()->instances[0].params.empty());
+
+    // a value that makes an expression fail is reported, and wiring the
+    // wrong width is a width error
+    f.sch().instances[0].params["W"] = int64_t(40);
+    inv.get_schematic()->instances[0].param_exprs["width"] = "W * 2 - 81";
+    CHECK(f.ws.check_instance(f.sch().instances[0]).empty());
+    sim::simulator bad(f.ws, top, builtin::factory());
+    bool reported = false;
+    for (auto& p : bad.problems())
+        reported |= p.find("instance U1: instance U1, width = -1 is out of range") != std::string::npos;
+    CHECK(reported);
+    inv.ports[0].width_expr = "W / (W - 40)";
+    CHECK(f.ws.check_instance(f.sch().instances[0]).find("port a, width: division by zero") != std::string::npos);
+    CHECK(!netlist::extract(f.ws, top).problems.empty());
+}
+
+
 static void test_shorted_ports()
 {
     // a cell that connects its input straight to its output
@@ -2567,6 +2653,7 @@ int main()
     test_counter();
     test_hierarchy();
     test_nested_state();
+    test_cell_params();
     test_shorted_ports();
     test_splitter();
     test_splitter_params();

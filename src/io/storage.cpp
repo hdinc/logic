@@ -100,9 +100,13 @@ std::vector<std::string> load_workspace(model::workspace& ws, const fs::path& ro
         std::sort(lib.cells.begin(), lib.cells.end(), [](auto& a, auto& b) { return a->name < b->name; });
     }
 
-    // the stored widths may be from before a type changed. loading doesn't
-    // count as a change.
+    // the stored widths may be from before a type changed, the values of
+    // expressions from before a cell they use changed. loading doesn't count
+    // as a change.
     ws.bundles_changed();
+    for (auto l : loaded)
+        for (auto& c : l->cells)
+            if (auto p = c->schematic_params(); p && !p->empty()) ws.apply_param_defaults(*c);
     for (auto l : loaded)
         l->dirty = false;
 

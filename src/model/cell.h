@@ -33,6 +33,13 @@ struct port {
     bool flipped = false;
     param_values bundle_args;
 
+    // in a schematic with parameters: the width and the bundle values as
+    // expressions of them. width and bundle_args hold the values for the
+    // defaults, see workspace::apply_param_defaults. an empty width_expr is
+    // a fixed width.
+    std::string width_expr;
+    std::map<std::string, std::string> bundle_arg_exprs{};
+
     // how its value is shown and entered while simulating
     number_format format;
 
@@ -202,6 +209,8 @@ struct cell {
     // parameters of a c model or hdl cell, null for other cells
     const std::vector<param_def>* external_params() const;
     std::vector<param_def>* external_params();
+    // parameters of a schematic cell, null for other cells
+    const std::vector<param_def>* schematic_params() const;
     // bundle ports made of the model's ports, null for cells that are not
     // external
     const std::vector<port_group>* port_groups() const;

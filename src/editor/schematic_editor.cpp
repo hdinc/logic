@@ -1,4 +1,5 @@
 #include "schematic_editor.h"
+#include "../model/expr.h"
 #include "../render/live.h"
 #include "../sim/numbers.h"
 #include "../ui/theme.h"
@@ -922,6 +923,33 @@ std::string schematic_editor::unique_instance_name() const
     }
 }
 
+void schematic_editor::update_param_values()
+{
+    param_problems.clear();
+    auto uses_exprs = [&] {
+        if (!sch.params.empty()) return true;
+        for (auto& p : ctx.cell.ports)
+            if (!p.width_expr.empty() || !p.bundle_arg_exprs.empty()) return true;
+        for (auto& i : sch.instances)
+            if (!i.param_exprs.empty()) return true;
+        return false;
+    };
+    if (!uses_exprs()) return;
+
+    // the values follow the expressions, also after an undo or when a cell
+    // an instance uses changed its parameters
+    auto ports = ctx.cell.ports;
+    std::vector<model::param_values> params;
+    for (auto& i : sch.instances)
+        params.push_back(i.params);
+    param_problems = ctx.ws.apply_param_defaults(ctx.cell);
+    if (ctx.lib.read_only) return;
+    bool changed = ports != ctx.cell.ports;
+    for (size_t k = 0; k < params.size() && !changed; k++)
+        changed = params[k] != sch.instances[k].params;
+    if (changed) ctx.modified();
+}
+
 void schematic_editor::draw()
 {
     auto& r = ctx.r;
@@ -934,6 +962,7 @@ void schematic_editor::draw()
     r.draw_origin();
 
     if (!sim) {
+        update_param_values();
         nets = netlist::extract(ctx.ws, ctx.cell);
         linked = netlist::linked_pins(ctx.cell, nets);
     }
@@ -1161,8 +1190,11 @@ void schematic_editor::selection_properties(const std::vector<handle>& elements)
         if (InputInt("Width", &w)) {
             w = glm::clamp(w, 1, model::max_width);
             // bundle ports have the width of their type
-            for (auto p : ports)
-                if (p->bundle == model::no_id) p->width = w;
+            for (auto p : ports) {
+                if (p->bundle != model::no_id) continue;
+                p->width = w;
+                p->width_expr.clear();
+            }
             ctx.modified();
         }
         if (!same_width) {
@@ -1216,7 +1248,10 @@ void schematic_editor::property_panel()
 
         if (auto defs = ctx.ws.params_of(*i); !defs.empty()) {
             SeparatorText("Parameters");
-            if (edit_params(defs, i->params, ctx.lib.dir, &ctx.ws)) {
+            // in a cell with parameters, integers can be expressions of them
+            auto scope = model::resolve_params(sch.params, {});
+            if (edit_params(defs, i->params, ctx.lib.dir, &ctx.ws, sch.params.empty() && i->param_exprs.empty() ? nullptr : &i->param_exprs, &scope)) {
+                update_param_values();
                 ctx.modified();
                 // pins may have moved or appeared
                 normalize();
@@ -1262,6 +1297,7 @@ void schematic_editor::property_panel()
                 p->bundle = model::no_id;
                 p->flipped = false;
                 p->bundle_args.clear();
+                p->bundle_arg_exprs.clear();
                 ctx.modified();
             }
             for (auto& l : ctx.ws.libraries) {
@@ -1272,6 +1308,8 @@ void schematic_editor::property_panel()
                     if (Selectable(b->name.c_str(), p->bundle == b->id) && p->bundle != b->id) {
                         p->bundle = b->id;
                         p->bundle_args.clear();
+                        p->bundle_arg_exprs.clear();
+                        p->width_expr.clear();
                         auto layout = ctx.ws.layout_of(b->id);
                         if (layout) p->width = std::max(layout.width, 1);
                         ctx.modified();
@@ -1287,19 +1325,62 @@ void schematic_editor::property_panel()
         if (p->bundle != model::no_id) {
             if (Checkbox("Flipped", &p->flipped)) ctx.modified();
             SetItemTooltip("the other view of the bundle, its inputs and outputs swapped");
-            if (auto t = ctx.ws.find_bundle(p->bundle); t && edit_bundle_args(*t, p->bundle_args)) {
+            auto t = ctx.ws.find_bundle(p->bundle);
+            if (t && !sch.params.empty()) {
+                // expressions of the cell's parameters
+                auto scope = model::resolve_params(sch.params, {});
+                for (auto& d : t->params) {
+                    PushID(d.name.c_str());
+                    auto it = p->bundle_arg_exprs.find(d.name);
+                    std::string text = it != p->bundle_arg_exprs.end() ? it->second : std::string();
+                    auto hint = std::to_string(std::get<int64_t>(d.def));
+                    if (edit_expr(d.name.c_str(), text, scope, hint.c_str(), "a number or an expression of the cell's parameters, empty for the default")) {
+                        if (text.empty())
+                            p->bundle_arg_exprs.erase(d.name);
+                        else
+                            p->bundle_arg_exprs[d.name] = text;
+                        // the values come from the expressions only
+                        p->bundle_args.clear();
+                        update_param_values();
+                        ctx.modified();
+                    }
+                    PopID();
+                }
+            } else if (t && edit_bundle_args(*t, p->bundle_args)) {
                 if (auto layout = ctx.ws.layout_of(p->bundle, false, p->bundle_args)) p->width = std::max(layout.width, 1);
                 ctx.modified();
             }
             TextDisabled("%d bits", p->width);
             bundle_fields_table(ctx.ws.layout_of(p->bundle, p->flipped, p->bundle_args));
+        } else if (!sch.params.empty()) {
+            // a number or an expression of the cell's parameters
+            auto text = p->width_expr.empty() ? std::to_string(p->width) : p->width_expr;
+            auto scope = model::resolve_params(sch.params, {});
+            if (edit_expr("Width", text, scope, nullptr, "a number or an expression of the cell's parameters")) {
+                std::string error;
+                auto number = model::is_literal(text) ? model::eval_expr(text, {}, error) : std::nullopt;
+                if (number) {
+                    p->width_expr.clear();
+                    p->width = (int)std::clamp<int64_t>(*number, 1, model::max_width);
+                } else if (!text.empty()) {
+                    p->width_expr = text;
+                }
+                update_param_values();
+                ctx.modified();
+            }
+            if (p->width > 1) {
+                if (edit_number_format("Format", p->format, p->width)) ctx.modified();
+                SetItemTooltip("how its value is shown and entered while simulating");
+            }
         } else {
             if (InputInt("Width", &p->width)) {
                 p->width = glm::clamp(p->width, 1, model::max_width);
                 ctx.modified();
             }
-            if (p->width > 1 && edit_number_format("Format", p->format, p->width)) ctx.modified();
-            SetItemTooltip("how its value is shown and entered while simulating");
+            if (p->width > 1) {
+                if (edit_number_format("Format", p->format, p->width)) ctx.modified();
+                SetItemTooltip("how its value is shown and entered while simulating");
+            }
         }
 
         TextUnformatted("Description");
@@ -1317,6 +1398,17 @@ void schematic_editor::property_panel()
     Text("%s / %s", ctx.lib.name.c_str(), ctx.cell.name.c_str());
     if (!ctx.lib.read_only && edit_category(ctx.lib, ctx.cell.category)) ctx.modified();
     Text("%zu wires, %zu instances, %zu ports", sch.wires.size(), sch.instances.size(), ctx.cell.ports.size());
+
+    SeparatorText("Parameters");
+    BeginDisabled(ctx.lib.read_only);
+    if (edit_int_params(sch.params, "none. Add one to set port widths, bundle values and the parameters of instances inside per instance of this cell.")) {
+        update_param_values();
+        ctx.modified();
+    }
+    EndDisabled();
+    if (!sch.params.empty()) TextDisabled("Shown and simulated with the defaults here.");
+    for (auto& p : param_problems)
+        TextColored(ui::color(ui::color_id::warning), "%s", p.c_str());
 
     if (!ctx.cell.ports.empty() && BeginTable("ports", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
         TableSetupColumn("Port");

@@ -1,4 +1,6 @@
 #include "param_editor.h"
+#include "../model/expr.h"
+#include "../ui/theme.h"
 #include "bundle_ui.h"
 #include "context.h"
 #include "file_dialog.h"
@@ -115,7 +117,116 @@ bool edit_category(const model::library& lib, std::string& category)
     return changed;
 }
 
-bool edit_params(const std::vector<model::param_def>& defs, model::param_values& values, const std::filesystem::path& base, const model::workspace* ws)
+bool edit_expr(const char* label, std::string& text, const model::param_values& scope, const char* hint, const std::string& tooltip)
+{
+    using namespace ImGui;
+    std::string error;
+    if (!text.empty()) model::eval_expr(text, scope, error);
+    if (!error.empty()) PushStyleColor(ImGuiCol_Text, ui::color(ui::color_id::warning));
+    bool edited = input_string(label, text, 0, hint);
+    if (!error.empty()) PopStyleColor();
+    if (!error.empty())
+        SetItemTooltip("%s", error.c_str());
+    else if (!tooltip.empty())
+        SetItemTooltip("%s", tooltip.c_str());
+    return edited;
+}
+
+bool edit_int_params(std::vector<model::param_def>& params, const char* none)
+{
+    using namespace ImGui;
+
+    if (params.empty()) {
+        PushTextWrapPos(0.0f);
+        TextDisabled("%s", none);
+        PopTextWrapPos();
+    }
+
+    bool edited = false;
+    int remove = -1, move_up = -1;
+    auto flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp;
+    if (!params.empty() && BeginTable("params", 6, flags)) {
+        TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        TableSetupColumn("Default", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+        TableSetupColumn("Min", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+        TableSetupColumn("Max", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+        TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        // two arrows and the remove button
+        auto& style = GetStyle();
+        float actions = 2 * GetFrameHeight() + CalcTextSize("x").x + 2 * style.FramePadding.x + 4;
+        TableSetupColumn("##actions", ImGuiTableColumnFlags_WidthFixed, actions);
+        TableHeadersRow();
+
+        for (int k = 0; k < (int)params.size(); k++) {
+            auto& d = params[k];
+            PushID(k);
+            TableNextRow();
+
+            TableNextColumn();
+            SetNextItemWidth(-FLT_MIN);
+            if (input_string("##name", d.name)) {
+                d.label = d.name;
+                edited = true;
+            }
+            if (!model::valid_param_name(d.name))
+                SetItemTooltip("start with a letter or '_', then letters, digits and '_'");
+            else
+                SetItemTooltip("values and expressions refer to it by this name, renaming breaks them");
+
+            auto value = [&](const char* id, int64_t& v) {
+                TableNextColumn();
+                SetNextItemWidth(-FLT_MIN);
+                if (InputScalar(id, ImGuiDataType_S64, &v)) edited = true;
+            };
+            auto def = std::get<int64_t>(d.def);
+            value("##default", def);
+            value("##min", d.min);
+            value("##max", d.max);
+            d.def = std::clamp(def, std::min(d.min, d.max), std::max(d.min, d.max));
+
+            TableNextColumn();
+            SetNextItemWidth(-FLT_MIN);
+            if (input_string("##description", d.description)) edited = true;
+
+            TableNextColumn();
+            BeginDisabled(k == 0);
+            if (ArrowButton("##up", ImGuiDir_Up)) move_up = k;
+            EndDisabled();
+            SameLine(0, 2);
+            BeginDisabled(k + 1 == (int)params.size());
+            if (ArrowButton("##down", ImGuiDir_Down)) move_up = k + 1;
+            EndDisabled();
+            SameLine(0, 2);
+            if (SmallButton("x")) remove = k;
+            SetItemTooltip("remove the parameter");
+
+            PopID();
+        }
+        EndTable();
+    }
+
+    if (move_up > 0) {
+        std::swap(params[move_up - 1], params[move_up]);
+        edited = true;
+    }
+    if (remove >= 0) {
+        params.erase(params.begin() + remove);
+        edited = true;
+    }
+    if (Button("Add parameter")) {
+        std::string name;
+        for (int n = 1;; n++) {
+            name = n == 1 ? "W" : "W" + std::to_string(n);
+            if (std::none_of(params.begin(), params.end(), [&](auto& d) { return d.name == name; })) break;
+        }
+        params.push_back(model::int_param(name, name, 8, 0, model::max_width));
+        edited = true;
+    }
+    return edited;
+}
+
+bool edit_params(const std::vector<model::param_def>& defs, model::param_values& values, const std::filesystem::path& base, const model::workspace* ws,
+    std::map<std::string, std::string>* exprs, const model::param_values* scope)
 {
     using namespace ImGui;
 
@@ -130,6 +241,31 @@ bool edit_params(const std::vector<model::param_def>& defs, model::param_values&
 
         switch (d.type) {
         case model::param_def::integer: {
+            if (exprs) {
+                // a number or an expression of the parameters in scope
+                auto it = exprs->find(d.name);
+                auto text = it != exprs->end() ? it->second : std::to_string(std::get<int64_t>(v));
+                static const model::param_values none;
+                auto tip = d.description.empty() ? std::string() : d.description + "\n";
+                tip += "a number or an expression of the cell's parameters";
+                if (edit_expr(d.label.c_str(), text, scope ? *scope : none, nullptr, tip)) {
+                    std::string error;
+                    auto number = model::is_literal(text) ? model::eval_expr(text, {}, error) : std::nullopt;
+                    if (number) {
+                        exprs->erase(d.name);
+                        v = std::clamp(*number, d.min, d.max);
+                        edited = true;
+                    } else if (text.empty()) {
+                        // back to the value
+                        exprs->erase(d.name);
+                        changed = true;
+                    } else {
+                        (*exprs)[d.name] = text;
+                        changed = true;
+                    }
+                }
+                break;
+            }
             auto x = std::get<int64_t>(v);
             int64_t step = 1;
             if (InputScalar(d.label.c_str(), ImGuiDataType_S64, &x, &step)) {
@@ -206,7 +342,7 @@ bool edit_params(const std::vector<model::param_def>& defs, model::param_values&
         } break;
         }
 
-        if (!d.description.empty()) SetItemTooltip("%s", d.description.c_str());
+        if (!d.description.empty() && !(exprs && d.type == model::param_def::integer)) SetItemTooltip("%s", d.description.c_str());
 
         if (edited) {
             model::set_param(values, d, v);

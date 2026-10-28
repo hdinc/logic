@@ -240,7 +240,9 @@ json port_to_json(const port& p)
         j["bundle"] = id_to_string(p.bundle);
         if (p.flipped) j["flipped"] = true;
         if (!p.bundle_args.empty()) j["bundle_args"] = values_to_json(p.bundle_args);
+        if (!p.bundle_arg_exprs.empty()) j["bundle_arg_exprs"] = p.bundle_arg_exprs;
     }
+    if (!p.width_expr.empty()) j["width_expr"] = p.width_expr;
     if (p.format != number_format{}) {
         j["format"] = {{"kind", kind_id(p.format.kind)}};
         if (p.format.frac) j["format"]["frac"] = p.format.frac;
@@ -263,7 +265,9 @@ port port_from_json(const json& j)
         r.bundle = id_from_string(j.at("bundle"));
         r.flipped = j.value("flipped", false);
         if (auto it = j.find("bundle_args"); it != j.end()) r.bundle_args = values_from_json(*it);
+        r.bundle_arg_exprs = texts_from_json(j.value("bundle_arg_exprs", json::object()));
     }
+    r.width_expr = j.value("width_expr", "");
     // an unknown kind (from a newer version) shows as hex
     if (auto it = j.find("format"); it != j.end() && it->is_object()) {
         r.format.kind = parse_number_kind(it->value("kind", "hex")).value_or(number_format::hex);
@@ -358,7 +362,9 @@ json to_json(const cell& c)
                 for (auto& [name, v] : i.params)
                     params[name] = param_value_json(v);
             }
+            if (!i.param_exprs.empty()) impl["instances"].back()["param_exprs"] = i.param_exprs;
         }
+        if (!s->params.empty()) impl["params"] = params_to_json(s->params);
     } else if (auto b = std::get_if<builtin_impl>(&c.impl)) {
         impl["type"] = "builtin";
         impl["kind"] = b->kind;
@@ -468,8 +474,10 @@ cell cell_from_json(const json& j)
                 for (auto& [name, v] : it->items())
                     if (auto x = param_value_from_json(v)) r.params[name] = *x;
             }
+            r.param_exprs = texts_from_json(i.value("param_exprs", json::object()));
             s.instances.push_back(std::move(r));
         }
+        s.params = params_from_json(impl.value("params", json::array()));
         c.impl = std::move(s);
     } else if (type == "builtin") {
         c.impl = builtin_impl{impl.at("kind")};
@@ -518,8 +526,10 @@ json to_json(const bundle_type& b)
         } else {
             jf["dir"] = to_string(f.dir);
             // a number unless it's an expression, older versions read numbers
-            if (is_literal(f.width))
-                jf["width"] = std::stoll(f.width);
+            std::string error;
+            auto number = is_literal(f.width) ? eval_expr(f.width, {}, error) : std::nullopt;
+            if (number)
+                jf["width"] = *number;
             else
                 jf["width"] = f.width;
         }

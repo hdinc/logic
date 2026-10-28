@@ -78,6 +78,23 @@ const netlist::netlist& simulator::netlist_of(const model::cell& c)
     return *nl;
 }
 
+const model::cell& simulator::specialize(const model::cell& c, const model::instance& inst, const std::string& where)
+{
+    auto defs = c.schematic_params();
+    if (!defs || defs->empty()) return c;
+    auto values = model::resolve_params(*defs, inst.params);
+    if (values == model::resolve_params(*defs, {})) return c;
+
+    auto& copy = specialized[std::to_string(c.id) + '\n' + model::params_key(values)];
+    if (!copy) {
+        copy = std::make_unique<model::cell>(c);
+        // reported once per set of values, not for every instance
+        for (auto& p : ws.specialize(*copy, values))
+            m_problems.push_back(where + ": " + p);
+    }
+    return *copy;
+}
+
 void simulator::elaborate(scope& s, const model::cell& c, const std::vector<int>& port_nets, int depth)
 {
     s.cell = &c;
@@ -185,8 +202,9 @@ void simulator::elaborate(scope& s, const model::cell& c, const std::vector<int>
             child->name = inst.name;
             child->path = s.path.empty() ? inst.name : s.path + "/" + inst.name;
             child->parent = &s;
-            // the interface ports of a schematic cell are its own ports
-            elaborate(*child, *cell, pins, depth + 1);
+            // the interface ports of a schematic cell are its own ports,
+            // for the instance's parameters
+            elaborate(*child, specialize(*cell, inst, where(inst)), pins, depth + 1);
             s.child_index[i] = (int)s.children.size();
             s.children.push_back(std::move(child));
         } else {
