@@ -2,18 +2,23 @@
 // see tests/riscv/build.sh) on a hart with a flat memory. no test framework,
 // a failing check prints the location and the test exits with 1.
 
+#include "../src/builtin/builtin.h"
 #include "../src/io/firmware.h"
+#include "../src/netlist/netlist.h"
 #include "../src/riscv/decode.h"
 #include "../src/riscv/hart.h"
+#include "../src/sim/simulator.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
 
 using namespace logic;
+using sim::value;
 
 static int failures = 0;
 
@@ -101,6 +106,191 @@ static void test_isa(const std::filesystem::path& dir)
     CHECK(passed >= 80);
 }
 
+// a schematic with the builtins: parts are placed and connected by their
+// pins with L-shaped routes in columns of their own
+struct bench {
+    model::workspace ws;
+    model::cell* top;
+    int column = 3000;
+
+    bench()
+    {
+        ws.add_builtin_library(builtin::registry());
+        top = &ws.create_cell(ws.add_library("work"), "top");
+    }
+
+    model::schematic& sch() { return *top->get_schematic(); }
+
+    int place(const std::string& kind, glm::ivec2 pos, model::param_values params = {})
+    {
+        model::instance i;
+        i.id = top->new_id();
+        i.cell = model::builtin_cell_id(kind);
+        i.name = "U" + std::to_string(sch().instances.size() + 1);
+        i.pos = pos;
+        i.params = std::move(params);
+        sch().instances.push_back(i);
+        return (int)sch().instances.size() - 1;
+    }
+
+    // the pin of an instance's port, by name
+    glm::ivec2 pin(int instance, const std::string& port)
+    {
+        auto& inst = sch().instances[instance];
+        auto iface = ws.interface_of(inst);
+        for (auto& p : *iface.ports)
+            if (p.name == port) return model::pin_position(inst, *iface.symbol->find_pin_of_port(p.id));
+        std::printf("  no port %s\n", port.c_str());
+        failures++;
+        return {};
+    }
+
+    void wire(glm::ivec2 a, glm::ivec2 b) { sch().wires.push_back({top->new_id(), a, b}); }
+
+    void connect(int a, const std::string& pa, int b, const std::string& pb)
+    {
+        auto from = pin(a, pa), to = pin(b, pb);
+        column += 10;
+        wire(from, {column, from.y});
+        wire({column, from.y}, {column, to.y});
+        wire({column, to.y}, to);
+    }
+};
+
+// a word of a part's first debug memory, none if it can't be read
+static value ram_word(sim::simulator& s, int ram, uint64_t at)
+{
+    uint8_t b[4] = {};
+    auto c = s.component_of(s.root(), ram);
+    if (!c || !c->debug() || !c->debug()->read_memory(0, at, b)) return {};
+    return sim::known(uint64_t(b[0]) | uint64_t(b[1]) << 8 | uint64_t(b[2]) << 16 | uint64_t(b[3]) << 24, 32);
+}
+
+// a cpu and a ram with the test, on a 100 MHz clock, or with a crossbar
+// between them
+struct cpu_bench : bench {
+    int clock, cpu, ram, xbar = -1;
+
+    cpu_bench(const std::filesystem::path& elf, model::param_values cpu_params = {}, bool crossbar = false)
+    {
+        model::param_values ram_params{{"size", int64_t(16)}, {"file", elf.string()}};
+        if (cpu_params.count("DATA_W")) ram_params["DATA_W"] = cpu_params["DATA_W"];
+        clock = place("clock", {0, 400}, {{"frequency", int64_t(100000000)}});
+        cpu = place("rv32_cpu", {0, 0}, std::move(cpu_params));
+        ram = place("axi_ram", {1600, 0}, ram_params);
+        if (crossbar) {
+            xbar = place("axi_crossbar", {800, 0}, {{"masters", int64_t(1)}, {"slaves", int64_t(1)}, {"map", std::string("0x80000000/64K")}});
+            connect(cpu, "m", xbar, "s0");
+            connect(xbar, "m0", ram, "s");
+            connect(clock, "clk", xbar, "aclk");
+        } else {
+            connect(cpu, "m", ram, "s");
+        }
+        connect(clock, "clk", cpu, "aclk");
+        connect(clock, "clk", ram, "aclk");
+    }
+};
+
+// the isa tests through the cpu part, its caches and axi
+static void test_cpu_isa(const std::filesystem::path& dir, const char* label, model::param_values params, std::vector<std::string> skipped = {})
+{
+    skipped.push_back("rv32mi-p-pmpaddr");
+    std::vector<std::filesystem::path> files;
+    for (auto& e : std::filesystem::directory_iterator(dir))
+        if (std::find(skipped.begin(), skipped.end(), e.path().filename().string()) == skipped.end()) files.push_back(e.path());
+    // RISCV_TEST_ONLY=rv32si-p-dirty runs one test, for debugging
+    if (auto* only = std::getenv("RISCV_TEST_ONLY")) std::erase_if(files, [&](auto& f) { return f.filename() != only; });
+    std::sort(files.begin(), files.end());
+    int passed = 0;
+    uint64_t instructions = 0;
+    for (auto& file : files) {
+        io::firmware f;
+        std::string error;
+        if (!io::load_firmware(file, f, error)) {
+            std::printf("%s: %s\n", file.c_str(), error.c_str());
+            failures++;
+            continue;
+        }
+        uint64_t tohost = 0;
+        for (auto& [address, name] : f.symbols)
+            if (name == "tohost") tohost = address;
+        cpu_bench b(file, params);
+        sim::simulator s(b.ws, *b.top, builtin::factory());
+        for (auto& p : s.problems())
+            std::printf("  %s\n", p.c_str());
+        if (!s.problems().empty()) {
+            failures++;
+            return;
+        }
+        value r;
+        for (int k = 0; k < 200; k++) {
+            s.run_until(s.now() + 10 * sim::us);
+            // the d-cache has it if the test wrote it there
+            r = ram_word(s, b.cpu, tohost);
+            if (!r.width()) r = ram_word(s, b.ram, tohost % 65536);
+            if (r.width() && r.to_u64()) break;
+        }
+        uint64_t v = r.width() ? r.to_u64() : 0;
+        for (auto& item : s.inspect(s.root(), b.cpu))
+            if (item.name == "instret") instructions += item.v.to_u64();
+        if (v == 1) {
+            passed++;
+        } else {
+            std::printf("%s (%s): %s\n", file.filename().c_str(), label, v ? ("test case " + std::to_string(v >> 1) + " failed").c_str() : "timeout");
+            if (std::getenv("RISCV_TEST_DUMP"))
+                for (auto& item : s.inspect(s.root(), b.cpu))
+                    std::printf("  %s = %s\n", item.name.c_str(), item.v.width() ? sim::to_string(item.v).c_str() : item.text.c_str());
+            failures++;
+        }
+    }
+    std::printf("isa tests through the cpu part (%s): %d passed, %llu instructions\n", label, passed, (unsigned long long)instructions);
+    CHECK(passed == (int)files.size());
+}
+
+static uint64_t item_u64(sim::simulator& s, int instance, const std::string& name)
+{
+    for (auto& item : s.inspect(s.root(), instance))
+        if (item.name == name) return item.v.to_u64();
+    std::printf("  no item %s\n", name.c_str());
+    failures++;
+    return 0;
+}
+
+// a test through a crossbar, and what goes over the bus
+static void test_cpu_bus(const std::filesystem::path& dir)
+{
+    auto file = dir / "rv32ui-p-add";
+    io::firmware f;
+    std::string error;
+    CHECK(io::load_firmware(file, f, error));
+    uint64_t tohost = 0;
+    for (auto& [address, name] : f.symbols)
+        if (name == "tohost") tohost = address;
+
+    cpu_bench b(file, {}, true);
+    CHECK(netlist::extract(b.ws, *b.top).problems.empty());
+    sim::simulator s(b.ws, *b.top, builtin::factory());
+    CHECK(s.problems().empty());
+    // nothing runs before aclk rose twice, the first fetch is a line fill
+    s.run_until(5 * sim::ns);
+    CHECK(item_u64(s, b.cpu, "instret") == 0);
+    value r;
+    for (int k = 0; k < 100 && !(r.width() && r.to_u64()); k++) {
+        s.run_until(s.now() + 10 * sim::us);
+        r = ram_word(s, b.cpu, tohost);
+    }
+    CHECK(r == sim::known(1, 32));
+    // the code is a few lines, each a burst: far fewer transactions than
+    // instructions
+    uint64_t transactions = item_u64(s, b.cpu, "bus transactions"), instret = item_u64(s, b.cpu, "instret");
+    CHECK(transactions > 5 && transactions < 40);
+    CHECK(instret > 400);
+    // the core ran at 8 instructions per aclk cycle while it hit the
+    // caches: the cycles are the instructions plus the waits
+    uint64_t cycles = item_u64(s, b.cpu, "cycle");
+    CHECK(cycles >= instret);
+}
+
 static void test_disassemble()
 {
     CHECK(riscv::disassemble(0x00150513, 0) == "addi a0, a0, 1");
@@ -117,6 +307,14 @@ int main(int argc, char** argv)
     std::filesystem::path dir = argc > 1 ? argv[1] : "tests/riscv/isa";
     test_disassemble();
     test_isa(dir);
+    test_cpu_bus(dir);
+    test_cpu_isa(dir, "caches", {});
+    // tiny direct mapped caches with short lines: many misses and write backs
+    test_cpu_isa(dir, "small caches", {{"icache", int64_t(1)}, {"dcache", int64_t(1)}, {"ways", int64_t(1)}, {"line", int64_t(16)}});
+    // misaligned accesses are exceptions on uncached memory, ma_data has no
+    // handler for them
+    test_cpu_isa(dir, "uncached", {{"icache", int64_t(0)}, {"dcache", int64_t(0)}}, {"rv32ui-p-ma_data"});
+    test_cpu_isa(dir, "64 bit bus", {{"DATA_W", int64_t(64)}});
     if (failures) std::printf("%d failures\n", failures);
     return failures ? 1 : 0;
 }

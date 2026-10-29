@@ -71,15 +71,18 @@ void hart::reset(uint32_t start)
     mscratch = mepc = mcause = mtval = 0;
     stvec = scounteren = sscratch = sepc = scause = stval = satp = 0;
     tdata2 = 0;
+    tlb_misses = 0;
+    flush_tlb();
     m_mip = 0;
     m_reserved = false;
+    m_retry = false;
 }
 
 step_result hart::step()
 {
     m_skip_cycle = m_skip_instret = false;
     status s;
-    if (take_interrupt()) {
+    if (!m_retry && take_interrupt()) {
         s = status::trap;
     } else if (waiting) {
         return step_result::waiting;
@@ -87,7 +90,8 @@ step_result hart::step()
         uint32_t inst = 0;
         s = fetch(inst);
         if (s == status::ok) s = execute(decode(inst));
-        if (s == status::stall) return step_result::stalled;
+        m_retry = s == status::stall;
+        if (m_retry) return step_result::stalled;
         x[0] = 0;
     }
     if (!(mcountinhibit & 1) && !m_skip_cycle) cycle++;
@@ -153,7 +157,40 @@ hart::status hart::translate(uint32_t va, access kind, uint32_t& pa)
         pa = va;
         return status::ok;
     }
+    auto& e = m_tlb[(va >> 12) % tlb_size];
+    if (e.vpn == va >> 12 && (kind != access::write || (e.pte & 0x80))) {
+        auto s = check_leaf(e.pte, e.level, va, kind, p);
+        if (s != status::ok) return s;
+        pa = e.level == 1 ? ((e.pte >> 20) << 22) | (va & 0x3FFFFF) : ((e.pte >> 10) << 12) | (va & 0xFFF);
+        return status::ok;
+    }
+    tlb_misses++;
     return walk(va, kind, p, pa);
+}
+
+void hart::flush_tlb()
+{
+    for (auto& e : m_tlb) e = {};
+}
+
+std::optional<uint32_t> hart::debug_translate(uint32_t va) const
+{
+    if (priv == 3 || !(satp >> 31)) return va;
+    auto& e = m_tlb[(va >> 12) % tlb_size];
+    if (e.vpn != va >> 12) return std::nullopt;
+    return e.level == 1 ? ((e.pte >> 20) << 22) | (va & 0x3FFFFF) : ((e.pte >> 10) << 12) | (va & 0xFFF);
+}
+
+hart::status hart::check_leaf(uint32_t pte, int level, uint32_t va, access kind, uint32_t p)
+{
+    bool user = pte & 0x10;
+    if (p == 1 && user && (kind == access::execute || !(mstatus & ms::sum))) return raise(page_fault(kind), va);
+    if (p == 0 && !user) return raise(page_fault(kind), va);
+    bool allowed = kind == access::execute ? (pte & 8) : kind == access::write ? (pte & 4) : ((pte & 2) || ((mstatus & ms::mxr) && (pte & 8)));
+    if (!allowed) return raise(page_fault(kind), va);
+    // a misaligned superpage
+    if (level == 1 && ((pte >> 10) & 0x3FF)) return raise(page_fault(kind), va);
+    return status::ok;
 }
 
 hart::status hart::walk(uint32_t va, access kind, uint32_t p, uint32_t& pa)
@@ -176,13 +213,8 @@ hart::status hart::walk(uint32_t va, access kind, uint32_t p, uint32_t& pa)
             table = uint64_t(pte >> 10) << 12;
             continue;
         }
-        bool user = pte & 0x10;
-        if (p == 1 && user && (kind == access::execute || !(mstatus & ms::sum))) return raise(page_fault(kind), va);
-        if (p == 0 && !user) return raise(page_fault(kind), va);
-        bool allowed = kind == access::execute ? (pte & 8) : kind == access::write ? (pte & 4) : ((pte & 2) || ((mstatus & ms::mxr) && (pte & 8)));
-        if (!allowed) return raise(page_fault(kind), va);
-        // a misaligned superpage
-        if (level == 1 && ((pte >> 10) & 0x3FF)) return raise(page_fault(kind), va);
+        auto s = check_leaf(pte, level, va, kind, p);
+        if (s != status::ok) return s;
         // the accessed and dirty bits are set by the hardware. the single
         // master needs no atomic update
         uint32_t updated = pte | 0x40 | (kind == access::write ? 0x80 : 0);
@@ -195,6 +227,9 @@ hart::status hart::walk(uint32_t va, access kind, uint32_t p, uint32_t& pa)
         }
         uint64_t physical = level == 1 ? (uint64_t(pte >> 20) << 22) | (va & 0x3FFFFF) : (uint64_t(pte >> 10) << 12) | (va & 0xFFF);
         if (physical >> 32) return raise(access_fault(kind), va);
+        // later accesses to the page don't walk, so retrying an instruction
+        // that stalls on its data needs only the data's cache line
+        m_tlb[(va >> 12) % tlb_size] = {va >> 12, updated, level};
         pa = uint32_t(physical);
         return status::ok;
     }
@@ -409,6 +444,7 @@ hart::status hart::execute(const decoded& d)
         return status::ok;
     case op::sfence_vma:
         if (priv == 0 || (priv == 1 && (mstatus & ms::tvm))) return raise(cause::illegal, d.raw);
+        flush_tlb();
         pc = next;
         return status::ok;
     case op::csrrw:
@@ -574,7 +610,10 @@ bool hart::csr_write(uint32_t csr, uint32_t v)
     case 0x143: stval = v; return true;
     case 0x144: m_mip = (m_mip & ~(mideleg & ip::ssip)) | (v & mideleg & ip::ssip); return true;
     // no asids, and physical addresses stay below 4 GiB
-    case 0x180: satp = v & 0x800FFFFFu; return true;
+    case 0x180:
+        satp = v & 0x800FFFFFu;
+        flush_tlb();
+        return true;
     case 0x300:
         mstatus = (mstatus & ~ms::writable) | (v & ms::writable);
         // there is no hypervisor mode

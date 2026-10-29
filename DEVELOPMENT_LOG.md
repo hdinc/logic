@@ -5961,3 +5961,122 @@ parts, 4 terminal window, 5 Linux example, 6 performance, 7 later extras.
   fills, uncached ranges (`cacheable` parameter), the core/bus clock ratio and
   run-ahead, debugger and inspect views; the ISA tests through
   `axi_crossbar` + `axi_ram`.
+
+## 2026-10-29 22:10 +0300
+
+RISC-V phase 2 of 7: the `rv32_cpu` part, with caches, an AXI4 master and a
+core that runs ahead of the simulation.
+
+### Features implemented
+
+- **`rv32_cpu`** (component bar category "RISC-V"):
+  - Ports: `aclk`, `aresetn`, `msip`, `mtip`, `meip`, `seip` and the AXI4
+    master `m`.
+  - Parameters:
+    - the AXI widths;
+    - reset pc (0x80000000), hart id (also a0 at reset), a1 at reset
+      (0x87000000, the device tree);
+    - core clock ratio (8 core cycles per aclk cycle);
+    - run ahead (1000 ns);
+    - timebase (10 MHz, the time CSR);
+    - I-cache and D-cache size in KiB (16 each, 0 for none), ways (4), line
+      bytes (64);
+    - cacheable ranges (`0x80000000/2G`).
+  - Debugger:
+    - pc, disassembly, breakpoints and single step;
+    - a memory view of what the caches hold (physical addresses).
+  - Properties:
+    - state (running, waiting for the bus, wfi, reset), pc, mode, instret,
+      cycle;
+    - x1–x31 with ABI names, the trap CSRs and satp;
+    - cache hit rates, TLB misses, bus transactions.
+- `axi_ram` puts a file's contents where it sees their addresses, which wrap at
+  its size: an ELF linked at 0x80000000 starts at offset 0 (before, everything
+  above the RAM's size was dropped).
+- The hart has a 64-entry TLB, flushed by `sfence.vma` and satp writes.
+
+### How it works
+
+- **Memory system** (`memory_system`, the hart's `riscv::bus`):
+  - Accesses in a cacheable range go to the I-cache (fetches) or the D-cache.
+    The D-cache is write-back and write-allocate.
+  - On a miss it records a request and answers `stall`:
+    - a line fill, or first a write-back of a dirty victim;
+    - an uncached access, for addresses outside the ranges.
+  - Uncached accesses must be naturally aligned (otherwise `misaligned`, which
+    OpenSBI emulates). They go out one at a time in program order.
+- **Retry protocol.** A stalled instruction runs again once the bus is done.
+  - Uncached results (and failed fills) are kept as "completed" transactions
+    of the instruction, so a retry doesn't read a UART register twice.
+  - They are matched by kind, address and size, not by position: a retry may
+    skip accesses, e.g. a page walk once the TLB has the page. That bug made
+    rv32si-p-dirty hang uncached; matching by position was rejected.
+  - No interrupt is taken while an instruction is under way
+    (`hart::in_progress`), or a completed MMIO read would be lost.
+- **Coherence.**
+  - An I-cache miss takes the line from the D-cache if it has it, so code that
+    was just written is fetched correctly.
+  - `fence.i` invalidates the I-cache.
+  - The CPU is the only master, so nothing else is needed.
+- **TLB.** It keeps leaf PTEs and checks permissions on every use; a store to a
+  page that isn't dirty walks again. Without it, a retried instruction would
+  walk again, and the walk's lines could evict the data line it waits for
+  (a livelock with few ways).
+- **Bus unit.** One transaction at a time:
+  - INCR bursts of a line, with `cache` 0b1111;
+  - single narrow beats on the right byte lanes with strobes for uncached
+    accesses, `cache` 0b0000;
+  - `prot` privileged and instruction bits set.
+
+  AW and W go out together, and the handshakes are taken at rising aclk edges
+  as the signals were before the edge, like the other AXI parts. The bundle
+  value is rebuilt only when the bus state changes.
+- **Timing.**
+  - The core period is the measured aclk period / ratio; the core starts after
+    aclk rose twice.
+  - The core keeps its own time and runs instructions until it is `run_ahead`
+    ahead of the simulation.
+  - An access that stalls is issued when the simulation reaches the core's
+    time (wake_at), so bus traffic happens at the right times. The core goes
+    on from the time the transaction ended, and the wait is added to `cycle`.
+  - Interrupt lines are sampled at every eval; they're seen at most run_ahead
+    late.
+  - WFI waits until an input changes.
+  - `time` = core time × timebase.
+  - Breakpoints pause and pass once on resume; nothing runs again at the time
+    of the pause.
+- Shared AXI helpers (drive, fifo, clocked, field access, port helpers) moved
+  from axi.cpp into `src/builtin/axi_parts.h`. `parse_number` and a new
+  `parse_ranges` (any number of base/size ranges) are public in axi.h; the
+  crossbar map uses `parse_ranges`.
+
+### Testing
+
+- `riscv_test` runs the 81 ISA tests through the simulator with `rv32_cpu` and
+  `axi_ram` (64 KiB) on a 100 MHz clock, in four configurations:
+  - default caches;
+  - 1 KiB direct-mapped caches with 16-byte lines (many write-backs);
+  - no caches (ma_data skipped: misaligned accesses trap without a handler);
+  - a 64-bit bus.
+
+  All pass, in 0.6 s for the four runs.
+- A test through a 1×1 `axi_crossbar`:
+  - nothing runs before aclk rose twice;
+  - the test passes;
+  - fewer than 40 bus transactions for over 400 instructions (line bursts);
+  - cycle ≥ instret.
+- The rv32_cpu icon. All 11 ctest suites pass. Not checked in the GUI yet
+  (planned with the Linux example).
+
+### Outstanding issues
+
+- The debugger's memory and disassembly see only what the caches hold, and
+  disassembly under Sv32 needs the page in the TLB.
+- The RAM's debugger view doesn't show dirty D-cache lines until they're
+  written back.
+- One transaction at a time: a dirty miss writes back, then fills.
+
+### Next steps
+
+- Phase 3: `riscv_clint`, `riscv_plic`, `uart16550` with AXI slave ports and
+  interrupt outputs; bare-metal firmware tests for the timer, PLIC and UART.

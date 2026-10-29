@@ -78,9 +78,16 @@ public:
     // interrupts that are pending and enabled in mie, whether or not they
     // can be taken now: they end a wfi
     bool interrupt_pending() const { return (mip() & mie) != 0; }
+    // the last step stalled: the instruction is under way and the next step
+    // retries it, no interrupt is taken before it's done
+    bool in_progress() const { return m_retry; }
 
     // csr read for debugging views, no side effects or privilege checks
     std::optional<uint32_t> read_csr(uint32_t csr) const;
+    // the physical address of a virtual one as fetches see it now, from the
+    // tlb only: nullopt if the page isn't in it. for debugging views.
+    std::optional<uint32_t> debug_translate(uint32_t va) const;
+    void flush_tlb();
     uint32_t mip() const { return m_mip | m_lines; }
 
     uint32_t x[32] = {};
@@ -116,6 +123,8 @@ public:
     uint32_t satp = 0;
     uint32_t tdata2 = 0;
 
+    uint64_t tlb_misses = 0;
+
 private:
     enum class status {
         ok,
@@ -130,6 +139,8 @@ private:
 
     status translate(uint32_t va, access kind, uint32_t& pa);
     status walk(uint32_t va, access kind, uint32_t level_priv, uint32_t& pa);
+    // the permission checks of a leaf pte, ok or a page fault
+    status check_leaf(uint32_t pte, int level, uint32_t va, access kind, uint32_t p);
     status read(uint32_t va, int size, uint32_t& value, access kind);
     status write(uint32_t va, int size, uint32_t value);
     status fetch(uint32_t& inst);
@@ -140,6 +151,16 @@ private:
     bool csr_write(uint32_t csr, uint32_t value);
 
     bus& m_bus;
+    // the leaf ptes of recent translations by virtual page, direct mapped.
+    // their permissions are checked on every use, a store to a page that
+    // isn't dirty yet walks again to set d.
+    struct tlb_entry {
+        uint32_t vpn = ~0u;
+        uint32_t pte = 0;
+        int level = 0;
+    };
+    static constexpr int tlb_size = 64;
+    tlb_entry m_tlb[tlb_size];
     // the software writable bits of mip: ssip, stip and seip
     uint32_t m_mip = 0;
     uint32_t m_lines = 0;
@@ -148,6 +169,7 @@ private:
     // set by an instruction that wrote the counter
     bool m_skip_cycle = false;
     bool m_skip_instret = false;
+    bool m_retry = false;
 };
 
 }

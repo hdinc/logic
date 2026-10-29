@@ -105,6 +105,7 @@ add_library(logic_core STATIC
     src/builtin/plexers.cpp
     src/builtin/icons.cpp
     src/builtin/random.cpp
+    src/builtin/riscv.cpp
     src/riscv/decode.cpp
     src/riscv/hart.cpp
     src/netlist/netlist.cpp

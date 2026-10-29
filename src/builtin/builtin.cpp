@@ -30,6 +30,7 @@ const model::primitive_registry& registry()
         add_io(r);
         add_random(r);
         add_axi(r);
+        add_riscv(r);
         return r;
     }();
     return r;

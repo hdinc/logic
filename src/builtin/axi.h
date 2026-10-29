@@ -120,5 +120,12 @@ struct range {
 // power of two slices. nullopt with an error if the count doesn't match,
 // ranges overlap or don't fit in addr_bits.
 std::optional<std::vector<range>> parse_map(const std::string& text, int slaves, int addr_bits, std::string& error);
+// "0x8000_0000/2G, 0x1000/4K": any number of base/size ranges, empty text
+// is none. nullopt with an error if one doesn't fit or two overlap; name
+// prefixes the ranges' indexes in the error ("m" gives "m0 and m1").
+// overlaps false doesn't check them.
+std::optional<std::vector<range>> parse_ranges(const std::string& text, int addr_bits, std::string& error, const char* name = "", bool overlaps = true);
+// a number with '_' between digits, hex with 0x, and a K/M/G/T suffix
+std::optional<uint64_t> parse_number(std::string s);
 
 }

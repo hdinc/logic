@@ -103,6 +103,7 @@ const std::map<std::string, icon_fn>& icons()
         {"ram", [](builder& b) { chip(b, "RW"); }},
         {"axi_ram", [](builder& b) { chip(b, "M"); b.line({-10, -10}, {-10, 10}, model::bundle_stroke); }},
         {"axi_master", [](builder& b) { chip(b, "TM"); b.line({10, -10}, {10, 10}, model::bundle_stroke); }},
+        {"rv32_cpu", [](builder& b) { chip(b, "RV"); b.line({10, -10}, {10, 10}, model::bundle_stroke); }},
         {"axi_crossbar",
             [](builder& b) {
                 b.rect({-6, -10}, {6, 10});
