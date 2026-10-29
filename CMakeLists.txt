@@ -105,6 +105,8 @@ add_library(logic_core STATIC
     src/builtin/plexers.cpp
     src/builtin/icons.cpp
     src/builtin/random.cpp
+    src/riscv/decode.cpp
+    src/riscv/hart.cpp
     src/netlist/netlist.cpp
     src/netlist/port_setup.cpp
     src/sim/simulator.cpp
@@ -300,6 +302,11 @@ add_executable(sim_test tests/sim_test.cpp)
 target_link_libraries(sim_test logic_core)
 target_compile_options(sim_test PRIVATE ${LOGIC_WARNINGS})
 add_test(NAME sim_test COMMAND sim_test)
+
+add_executable(riscv_test tests/riscv_test.cpp)
+target_link_libraries(riscv_test logic_core)
+target_compile_options(riscv_test PRIVATE ${LOGIC_WARNINGS})
+add_test(NAME riscv_test COMMAND riscv_test ${CMAKE_SOURCE_DIR}/tests/riscv/isa)
 
 add_executable(vcd_test tests/vcd_test.cpp)
 target_link_libraries(vcd_test logic_wave)

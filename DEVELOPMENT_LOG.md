@@ -5880,3 +5880,84 @@ the bottom, like Questa's zoom/unzoom.
 ### Recommended features
 
 - A key to zoom the focused window, if one is wanted later.
+
+## 2026-10-29 20:36 +0300
+
+RISC-V phase 1 of 7: the hart and the ISA tests. The plan, agreed with the user:
+an RV32IMA CPU, CLINT, PLIC and 16550 UART as builtin parts on the AXI4 bundles,
+ported from the `smode` branch of github.com/uwrk9amtdn/riscv-simulator (a fork of
+hdinc/riscv-simulator with S mode and Sv32). The goal is to boot OpenSBI, Linux
+and busybox in a schematic, with the UART in a VT100 terminal window. Phases:
+1 hart + ISA tests, 2 CPU part with AXI, caches and run-ahead, 3 CLINT/PLIC/UART
+parts, 4 terminal window, 5 Linux example, 6 performance, 7 later extras.
+
+### Features implemented
+
+- `src/riscv/` (in logic_core, no UI dependencies):
+  - `hart`: RV32IMA + Zicsr + Zifencei, M/S/U modes, Sv32 paging, trap
+    delegation, the counters (cycle, time, instret and their machine
+    versions; hardware performance counters read as zero), mcounteren and
+    scounteren, mcountinhibit, mstatus TVM/TW/TSR, MPRV/MXR/SUM, LR/SC and the
+    AMOs, WFI.
+  - `decode`: instructions decoded into a struct (op, rd, rs1, rs2, imm), a
+    disassembler with ABI register and CSR names.
+- New ctest `riscv_test`: the riscv-tests rv32ui/um/ua/mi/si `-p` suites on a
+  hart with a flat memory. 81 pass. rv32mi-p-pmpaddr is skipped because there
+  are no PMP entries.
+- `tests/riscv/build.sh <riscv-tests checkout>` builds the suites with
+  `riscv32-unknown-linux-gnu-gcc` (`module load riscv-toolchain`). The
+  binaries (82 files, 1.1 MB, BSD licensed) are committed in tests/riscv/isa,
+  so the tests don't need the toolchain.
+
+### How it works
+
+- Memory is a `riscv::bus` (load/store of 1–4 bytes at any alignment) that
+  answers ok, fault, stall or misaligned. Stall means "not done yet, e.g. a
+  cache miss": the hart returns `step_result::stalled` without having changed
+  anything and runs the same instruction again later. Every instruction makes
+  its architectural changes only after its last memory access, and the page
+  walk's A/D updates are idempotent, so retrying is safe. The phase 2 CPU part
+  builds its caches and AXI bus unit on this.
+- Traps are return values (`status::trap`), taken at once by `raise()`. The
+  port used C++ exceptions, which are slow for Linux's frequent page faults
+  and ecalls, and one of them threw a plain `u32`, so a bad branch funct3
+  called std::terminate.
+- Accesses that cross a page are split and each part is translated; the bus
+  decides whether it can do the misaligned part (`misaligned` becomes an
+  address-misaligned exception, which OpenSBI emulates).
+- Interrupt lines (`set_lines`: msip, mtip, meip, seip) are or'ed into mip.
+  The software-writable mip bits (SSIP, STIP, SEIP) are kept apart from the
+  lines, as in the port. Interrupts are taken in the spec's order, machine
+  level first; a pending interrupt ends WFI even if it can't be taken.
+- `time` is a field the owner keeps up to date; in the CPU part it comes from
+  the simulation time, so Linux and OpenSBI can read the time CSR directly
+  instead of trapping to have it emulated.
+- Decisions:
+  - Ported the architecture (CSR masks, delegation, the PTW, xRET) but wrote
+    the code anew in this repo's style, as one `execute()` switch over decoded
+    instructions, so phase 6 can cache decoded instructions per I-cache line.
+  - No PMP entries (the CSRs read as zero, writes are ignored), which the spec
+    allows and OpenSBI detects. Storing PMP values without enforcing them was
+    rejected: software would believe it is protected.
+  - No triggers: tselect stays 0 and tdata1 reads 0, so the breakpoint test
+    sees the trigger type isn't supported.
+  - No ASIDs (satp's ASID field reads 0) and physical addresses stay below
+    4 GiB, as in the port.
+
+### Testing
+
+- `riscv_test`: the 81 ISA tests pass. The disassembler is checked for a few
+  instructions.
+
+### Outstanding issues
+
+- No TLB yet; every access under Sv32 walks the page table (phase 6).
+- The `cycle` counter counts one per instruction; stall cycles are added by
+  the CPU part (phase 2).
+
+### Next steps
+
+- Phase 2: the `rv32_cpu` part: AXI4 master, I- and D-caches with burst line
+  fills, uncached ranges (`cacheable` parameter), the core/bus clock ratio and
+  run-ahead, debugger and inspect views; the ISA tests through
+  `axi_crossbar` + `axi_ram`.
