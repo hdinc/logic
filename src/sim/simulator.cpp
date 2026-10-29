@@ -596,6 +596,7 @@ void simulator::reset()
         s.wake = never;
         s.woken = false;
         s.ignored.assign(s.ports.size(), 0);
+        s.notify_listen = false;
         schedule(i);
     }
 
@@ -612,6 +613,33 @@ void simulator::schedule(int instance)
     if (queued[instance]) return;
     queued[instance] = true;
     queue.push_back(instance);
+}
+
+bool simulator::port_listened(int instance, int port) const
+{
+    int n = instances[instance].nets[port];
+    if (n < 0) return false;
+    for (auto& sl : nets[n].slices)
+        for (auto& r : nodes[sl.node].readers)
+            if (r.instance != instance && !instances[r.instance].ignored[r.port]) return true;
+    // the top cell's ports and recorded nets are looked at
+    for (int k = 0; k < (int)top_ports.size(); k++)
+        if (net_of_port(*m_root, k) == n) return true;
+    return waveforms.contains(n);
+}
+
+void simulator::wake_listen_drivers(int n)
+{
+    for (auto& sl : nets[n].slices)
+        for (auto& d : nodes[sl.node].drivers)
+            if (d.instance >= 0 && instances[d.instance].notify_listen) schedule(d.instance);
+}
+
+void simulator::listen_changed(int net)
+{
+    if (net < 0 || net >= (int)nets.size()) return;
+    wake_listen_drivers(net);
+    settle();
 }
 
 void simulator::update_net(int n)
@@ -662,8 +690,9 @@ void simulator::settle()
 {
     cur.oscillating = false;
 
-    std::vector<int> batch;
-    std::vector<int> changed;
+    // kept between calls, so they don't allocate
+    auto& batch = settle_batch;
+    auto& changed = settle_changed;
 
     for (int step = 0; !queue.empty(); step++) {
         if (step == max_steps) {
@@ -693,16 +722,26 @@ void simulator::settle()
                     s.ports[p] = floating(s.widths[p]);
                 else if (nets[n].width_error)
                     s.ports[p] = unknown(s.widths[p]);
+                else if (nets[n].slices.size() == 1)
+                    // a whole node, copied once
+                    s.ports[p] = cur.nodes[nets[n].slices[0].node];
                 else
                     s.ports[p] = net_value(n);
             }
 
-            context ctx(cur.now, s.woken, s.wake, [](const void* self, time now) { return ((const simulator*)self)->event_after(now); }, this);
+            context ctx(
+                cur.now, s.woken, s.wake, [](const void* self, time now) { return ((const simulator*)self)->event_after(now); }, this,
+                [](const void* self, int instance, int port) { return ((const simulator*)self)->port_listened(instance, port); }, i);
             s.woken = false;
             s.c->eval(s.ports, ctx);
             if (ctx.wake() != s.wake) set_wake(i, ctx.wake());
-            for (auto [port, on] : ctx.sensitivity_requests())
-                if (port >= 0 && port < (int)s.ignored.size()) s.ignored[port] = !on;
+            for (auto [port, on] : ctx.sensitivity_requests()) {
+                if (port < 0 || port >= (int)s.ignored.size()) continue;
+                bool was_ignored = s.ignored[port];
+                s.ignored[port] = !on;
+                if (on && was_ignored && s.nets[port] >= 0) wake_listen_drivers(s.nets[port]);
+            }
+            if (ctx.notify_request() >= 0) s.notify_listen = ctx.notify_request() != 0;
             if (!ctx.pause_request().empty()) cur.paused = s.path + ": " + ctx.pause_request();
 
             for (size_t p = 0; p < s.ports.size(); p++) {

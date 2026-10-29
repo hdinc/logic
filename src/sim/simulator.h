@@ -165,6 +165,9 @@ public:
     bool interact(const scope& s, int instance, const std::string& action, int64_t value);
     // the same by flat component index
     bool interact(int component, const std::string& action, int64_t value);
+    // the net started being recorded: drivers that stopped because nobody
+    // listened (e.g. an idle clock) go on
+    void listen_changed(int net);
     // the reason a component paused the simulation, see state::paused
     const std::string& paused() const { return cur.paused; }
     // forgets the pause, so that running loops that stop at a pause go on.
@@ -195,6 +198,9 @@ private:
         std::string path;
         // ports whose changes don't call eval, see context::set_sensitive
         std::vector<uint8_t> ignored;
+        // eval is called when a reader of its nets listens again, see
+        // context::notify_on_listen
+        bool notify_listen = false;
     };
 
     // bits [net_bit, net_bit + width) of a net are bits [node_bit, ...) of
@@ -276,6 +282,10 @@ private:
     void add_driver(int net, int instance, int port, int lo, int width);
 
     void schedule(int instance);
+    // see context::listened
+    bool port_listened(int instance, int port) const;
+    // schedules the drivers of the net that asked to be notified
+    void wake_listen_drivers(int net);
     void set_wake(int instance, time t);
     // drops stale events from the front of the queue
     void clean_events();
@@ -285,6 +295,7 @@ private:
     void update_node(int node);
     // runs the scheduled instances until nothing changes, at the current time
     void settle();
+    std::vector<int> settle_batch, settle_changed;
     // run_until without setting the target
     bool run(time t, int max_events);
 

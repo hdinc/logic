@@ -458,7 +458,11 @@ void sim_view::record_signal(int net, const std::string& name, int node)
     }
 
     // only the recorder changes, real time running goes on undisturbed
-    s->run.query([net, label, lo, width, fields](sim::simulator& sim) { sim.waveforms.add(sim, net, label, lo, width, fields); });
+    s->run.query([net, label, lo, width, fields](sim::simulator& sim) { 
+        sim.waveforms.add(sim, net, label, lo, width, fields);
+        // e.g. a stopped clock goes on, it's recorded now
+        sim.listen_changed(net);
+    });
     s->waveforms_visible = true;
 }
 

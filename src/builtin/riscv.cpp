@@ -432,6 +432,9 @@ public:
         if (want_clock != listening) {
             listening = want_clock;
             ctx.set_sensitive(p_clk, listening);
+            // the period is measured between rising edges seen one after
+            // the other, not across the time the clock was ignored
+            last_rise = sim::never;
         }
     }
 

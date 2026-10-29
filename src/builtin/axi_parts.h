@@ -72,10 +72,13 @@ struct drive {
     // a channel's payload and valid, zeros while there's no beat
     void source(const channel& c, const value* beat)
     {
-        if (c.w) v.insert(c.off, beat ? *beat : zeros(c.w));
-        v.insert(c.valid, sim::known(beat != nullptr, 1));
+        if (beat)
+            v.insert(c.off, *beat);
+        else
+            v.fill(c.off, c.w, sim::bit_state::zero);
+        v.set(c.valid, beat ? sim::bit_state::one : sim::bit_state::zero);
     }
-    void sink(const channel& c, bool ready) { v.insert(c.ready, sim::known(ready, 1)); }
+    void sink(const channel& c, bool ready) { v.set(c.ready, ready ? sim::bit_state::one : sim::bit_state::zero); }
 };
 
 // a skid buffer of two beats: ready while it has room, valid while it

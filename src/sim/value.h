@@ -56,6 +56,8 @@ public:
     // replaces bits [lo, lo + v.width()) with v, the part beyond the width
     // is dropped
     void insert(int lo, const value& v);
+    // sets bits [lo, lo + width) to b, the part beyond the width is dropped
+    void fill(int lo, int width, bit_state b);
 
     bool operator==(const value& o) const;
 

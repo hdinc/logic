@@ -455,6 +455,13 @@ static void test_linux_boot()
     std::printf("\nlinux: %s after %.1f s, %.3f s simulated, %llu instructions, %.2f MIPS\n", booted ? "prompt" : "no prompt", elapsed,
         double(s.now()) / double(sim::seconds), (unsigned long long)instret, double(instret) / elapsed / 1e6);
     CHECK(booted);
+    // idle: linux waits in wfi for the next key, the simulation runs on
+    sim::time idle_from = s.now();
+    auto idle_start = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - idle_start < std::chrono::seconds(3))
+        s.run_until(s.now() + sim::ms);
+    double idle_wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - idle_start).count();
+    std::printf("linux idle: %.3f x real time\n", double(s.now() - idle_from) / double(sim::seconds) / idle_wall);
 }
 
 // a few instructions at 0x80000000 on a flat memory

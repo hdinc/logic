@@ -46,25 +46,22 @@ bit_state value::get(int i) const
 {
     if (i < 0 || i >= m_width) return bit_state::z;
     uint64_t b = uint64_t(1) << (i % 64);
-    int w = i / 64;
-    if (x(w) & b) return bit_state::x;
-    if (z(w) & b) return bit_state::z;
-    return (bits(w) & b) ? bit_state::one : bit_state::zero;
+    int w = i / 64, n = words();
+    auto d = data();
+    if (d[n + w] & b) return bit_state::x;
+    if (d[2 * n + w] & b) return bit_state::z;
+    return (d[w] & b) ? bit_state::one : bit_state::zero;
 }
 
 void value::set(int i, bit_state s)
 {
     if (i < 0 || i >= m_width) return;
     uint64_t b = uint64_t(1) << (i % 64);
-    int w = i / 64;
-    uint64_t bt = bits(w) & ~b, xt = x(w) & ~b, zt = z(w) & ~b;
-    switch (s) {
-    case bit_state::zero: break;
-    case bit_state::one: bt |= b; break;
-    case bit_state::x: xt |= b; break;
-    case bit_state::z: zt |= b; break;
-    }
-    set_word(w, bt, xt, zt);
+    int w = i / 64, n = words();
+    auto d = data();
+    d[w] = s == bit_state::one ? d[w] | b : d[w] & ~b;
+    d[n + w] = s == bit_state::x ? d[n + w] | b : d[n + w] & ~b;
+    d[2 * n + w] = s == bit_state::z ? d[2 * n + w] | b : d[2 * n + w] & ~b;
 }
 
 bool value::fully_known() const
@@ -170,6 +167,20 @@ void value::insert(int lo, const value& v)
         int w = at / 64, off = at % 64;
         put(w, m << off, b << off, x << off, z << off);
         if (off) put(w + 1, m >> (64 - off), b >> (64 - off), x >> (64 - off), z >> (64 - off));
+    }
+}
+
+void value::fill(int lo, int width, bit_state b)
+{
+    int from = std::max(lo, 0), to = std::min(lo + width, m_width);
+    int n = words();
+    auto d = data();
+    for (int w = from / 64; from < to && w <= (to - 1) / 64; w++) {
+        int a = std::max(from, 64 * w) - 64 * w, e = std::min(to, 64 * w + 64) - 64 * w;
+        uint64_t m = mask(e - a) << a;
+        d[w] = b == bit_state::one ? d[w] | m : d[w] & ~m;
+        d[n + w] = b == bit_state::x ? d[n + w] | m : d[n + w] & ~m;
+        d[2 * n + w] = b == bit_state::z ? d[2 * n + w] | m : d[2 * n + w] & ~m;
     }
 }
 

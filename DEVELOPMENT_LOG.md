@@ -6384,3 +6384,97 @@ time went, and two hart bugs that only Linux found.
 
 - Phase 6 (the rest): the decoded-instruction cache per I-cache line and
   allocation-free settle(); then phase 7 extras.
+
+## 2026-10-30 00:45 +0300
+
+RISC-V phase 6 of 7: performance, the rest. The Linux example boots in 7.9 s
+(was 11.6 s), and an idle Linux runs at 53× real time (was 0.17×). At 1× the
+terminal now answers in real time.
+
+### Changes made
+
+- **A clock pauses while nobody listens** (`clock` builtin):
+  - after a falling edge, if no reader of its net is sensitive (every part on
+    it is idle and ignores it), the net isn't recorded and isn't a port of the
+    top cell, it stops at 0 and asks for no wakes;
+  - when a reader turns sensitive again (or the net starts being recorded),
+    it is evaluated and goes on at its next rising edge, `low + k·period`, on
+    its original grid.
+  - Since it stops at 0, the first change after resuming is a real rising
+    edge: no rising edge is lost or made up, only falling edges are skipped.
+    That matters because the clocked parts and the cpu act on rising edges
+    only. Resuming with the current value at once was rejected: listeners
+    that took the stale 0 would see a false rising edge in mid-cycle.
+- **Engine support**:
+  - `context::listened(port)`: whether changes of an output's net call
+    anyone's eval or are recorded;
+  - `context::notify_on_listen(on)`: eval is called when a reader of its nets
+    turns sensitive again;
+  - `simulator::listen_changed(net)`: called after a net is added to the
+    waveforms, so a stopped clock goes on (sim_view does it).
+- **The cpu** measures the clock period only between rising edges it saw one
+  after the other: `last_rise` is reset when it stops listening. Before, the
+  first edge after an idle stretch gave a huge period, which was then
+  corrected before the core used it; the old measurement was wrong anyway.
+- **Faster value operations**:
+  - `value::fill(lo, width, bit_state)` sets a range word by word;
+  - `axi::drive::source`/`sink` use it and `value::set` instead of inserting
+    temporary values (70M calls on a boot);
+  - `get`/`set` work on the words directly.
+- **Faster `settle()`**:
+  - ports whose net is one whole node are copied once (no temporary from
+    `net_value`);
+  - the batch and changed lists are kept between calls.
+- `riscv_test`'s Linux boot also measures 3 s of idle simulation.
+
+### How it works
+
+- `simulator::port_listened(instance, port)`: any reader of the net's nodes,
+  other than the instance itself, that doesn't ignore its port; else true for
+  a port net of the top cell or a recorded net.
+- `wake_listen_drivers(net)`: schedules the drivers of the net's nodes that
+  asked to be notified. It's called when a sensitivity request turns a port
+  back on.
+- Measured on the boot:
+
+  | Change | Boot | Idle |
+  |---|---|---|
+  | before | 11.6 s | 0.17× |
+  | the clock pauses | 10.9 s | 44× |
+  | fill/set in drive | 9.5 s | 48× |
+  | get/set, one copy in settle | 7.9 s | 53× |
+
+- Decisions:
+  - **No decoded-instruction cache**: `decode` is 1.6% of the profile after
+    these changes, so caching decoded instructions per line isn't worth its
+    invalidation rules.
+  - The profile is now spread over the generic engine (`settle` 22% itself,
+    the rest 1–6% each); more would need restructuring the simulator core.
+
+### Testing
+
+- New `sim_test` `test_idle_clock`:
+  - with only an idle master and a RAM the clock stops (no next event);
+  - a write makes it go on, with the next event on the clock's grid
+    (500 ns + k µs), and the write completes;
+  - idle again, it stops;
+  - recording its net and `listen_changed` start it again and it keeps
+    running.
+- `value::fill` across words in `test_values`.
+- All 12 ctest suites pass; the Linux boot test passes (7.9 s, idle 53×).
+- GUI on VNC: booted at Max, then switched to 1×. The simulation keeps up
+  (0.92× shown), and `uname -a` and `ls -l /bin | head -4` answered within a
+  second and a half.
+
+### Outstanding issues
+
+- A stopped clock shows 0 on the canvas while it's stopped; in the waveforms
+  it runs, because recording it counts as listening.
+- At Max an idle Linux races ahead in simulated time (200 s of simulated time
+  after a minute).
+
+### Next steps
+
+- Phase 7: a device tree generated from the crossbar map and the parts'
+  parameters, more than one hart, the C extension, tx/rx pins on the UART, a
+  host pty bridge.

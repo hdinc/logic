@@ -47,13 +47,32 @@ public:
     {
     }
 
+    // rising edges are at low + k (high + low). when nothing listens (every
+    // reader ignores the clock, e.g. idle axi parts) the clock stops after a
+    // falling edge, at 0, and goes on at the next rising edge once something
+    // listens: no rising edge is lost or made up, only falling ones are
+    // skipped.
     void eval(std::span<sim::value> ports, sim::context& ctx) override
     {
-        if (ctx.woken()) level = !level;
-        // the first eval after reset starts the clock
-        if (ctx.woken() || !started) {
+        auto now = ctx.now();
+        if (!started) {
             started = true;
-            ctx.wake_after(level ? high : low);
+            ctx.notify_on_listen(true);
+            ctx.wake_at(now + low);
+        } else if (stopped) {
+            if (ctx.listened(0)) {
+                stopped = false;
+                sim::time period = high + low;
+                ctx.wake_at(now < low ? low : low + ((now - low) / period + 1) * period);
+            }
+        } else if (ctx.woken()) {
+            level = !level;
+            if (!level && !ctx.listened(0)) {
+                stopped = true;
+                ctx.wake_at(sim::never);
+            } else {
+                ctx.wake_after(level ? high : low);
+            }
         }
         ports[0] = sim::known(level, 1);
     }
@@ -62,21 +81,23 @@ public:
     {
         level = false;
         started = false;
+        stopped = false;
     }
 
     void inspect(std::vector<sim::inspect_item>& out) const override { out.push_back({"level", sim::known(level, 1), {}}); }
 
     bool save_state(std::vector<uint8_t>& out) const override
     {
-        out = {uint8_t(level), uint8_t(started)};
+        out = {uint8_t(level), uint8_t(started), uint8_t(stopped)};
         return true;
     }
 
     bool load_state(std::span<const uint8_t> in) override
     {
-        if (in.size() != 2) return false;
+        if (in.size() != 3) return false;
         level = in[0];
         started = in[1];
+        stopped = in[2];
         return true;
     }
 
@@ -84,6 +105,8 @@ private:
     sim::time high, low;
     bool level = false;
     bool started = false;
+    // nothing listened at the last falling edge
+    bool stopped = false;
 };
 
 class constant : public primitive {

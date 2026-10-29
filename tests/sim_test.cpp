@@ -96,6 +96,18 @@ static void test_values()
     CHECK(r.z() == 0b0100);
 
     CHECK(sim::resolve({}, 3) == sim::floating(3));
+
+    // fill across words
+    auto w = sim::floating(200);
+    w.fill(60, 10, sim::bit_state::one);
+    w.fill(62, 2, sim::bit_state::zero);
+    CHECK(w.get(59) == sim::bit_state::z && w.get(60) == sim::bit_state::one && w.get(62) == sim::bit_state::zero && w.get(64) == sim::bit_state::one &&
+        w.get(69) == sim::bit_state::one && w.get(70) == sim::bit_state::z);
+    w.fill(190, 20, sim::bit_state::x);
+    CHECK(w.get(199) == sim::bit_state::x && w.get(189) == sim::bit_state::z);
+    auto c = w;
+    c.normalize();
+    CHECK(c == w);
 }
 
 // and gate at the origin: inputs at (-30, 10) and (-30, -10), output (30, 0)
@@ -2739,6 +2751,41 @@ static std::vector<uint8_t> ram_bytes(sim::simulator& s, int ram, uint64_t at, s
     return r;
 }
 
+// the clock stops while every part on it is idle, after a falling edge, and
+// goes on at its next rising edge when one listens again
+static void test_idle_clock()
+{
+    axi_bench b(1, 1, "", false, false);
+    sim::simulator s(b.ws, *b.top, builtin::factory());
+    CHECK(s.problems().empty());
+    s.run_until(5 * sim::us);
+    // a 1 MHz clock: nothing to do, nothing due
+    CHECK(s.next_event() == sim::never);
+    // a write: the master listens again, the clock goes on, the write ends
+    axi_start(s, b.masters[0], "write", 0x20, 0x12345678);
+    CHECK(s.next_event() != sim::never);
+    // the next rising edge is on the clock's grid: low + k * period
+    CHECK((s.next_event() - 500 * sim::ns) % sim::us == 0);
+    CHECK(axi_wait(s, b));
+    CHECK((ram_bytes(s, b.rams[0], 0x20, 4) == std::vector<uint8_t>{0x78, 0x56, 0x34, 0x12}));
+    // idle again: stopped
+    s.run_until(s.now() + 10 * sim::us);
+    CHECK(s.next_event() == sim::never);
+    // recording a net of the clock lets it run
+    int clock_net = -1;
+    for (auto& w : b.sch().wires) {
+        int n = s.net_of_wire(s.root(), w.id);
+        if (n >= 0 && s.net_value(n).width() == 1) clock_net = n;
+    }
+    CHECK(clock_net >= 0);
+    s.waveforms.add(s, clock_net, "clk");
+    s.listen_changed(clock_net);
+    CHECK(s.next_event() != sim::never);
+    auto t = s.now();
+    s.run_until(t + 3 * sim::us);
+    CHECK(s.next_event() != sim::never);
+}
+
 static void test_axi()
 {
     // two masters, two rams of 4 KiB at 0 and 0x1000
@@ -2898,6 +2945,7 @@ int main()
     test_framebuffer();
     test_random();
     test_axi();
+    test_idle_clock();
     test_seg7_view();
     test_rom_ram();
 

@@ -38,13 +38,17 @@ class context {
 public:
     // horizon(owner, now) finds the next event after now, see horizon()
     using horizon_fn = time (*)(const void* owner, time now);
+    // listened(owner, instance, port), see listened()
+    using listened_fn = bool (*)(const void* owner, int instance, int port);
 
-    explicit context(time now, bool woken, time wake, horizon_fn h = nullptr, const void* owner = nullptr)
+    explicit context(time now, bool woken, time wake, horizon_fn h = nullptr, const void* owner = nullptr, listened_fn l = nullptr, int instance = -1)
         : m_now(now)
         , m_woken(woken)
         , m_wake(wake)
         , m_horizon(h)
         , m_owner(owner)
+        , m_listened(l)
+        , m_instance(instance)
     {
     }
 
@@ -80,14 +84,27 @@ public:
     void set_sensitive(int port, bool on) { m_sensitivity.push_back({port, on}); }
     const std::vector<std::pair<int, bool>>& sensitivity_requests() const { return m_sensitivity; }
 
+    // whether changes of an output's net call anyone's eval or are
+    // recorded: false if every reader ignores it (see set_sensitive), e.g.
+    // a clock whose parts are idle may stop then. true without a simulator.
+    bool listened(int port) const { return !m_listened || m_listened(m_owner, m_instance, port); }
+    // eval is called when a reader of one of the outputs' nets becomes
+    // sensitive again, or the net starts being recorded
+    void notify_on_listen(bool on) { m_notify = on ? 1 : 0; }
+    int notify_request() const { return m_notify; }
+
 private:
     time m_now;
     bool m_woken;
     time m_wake;
     horizon_fn m_horizon;
     const void* m_owner;
+    listened_fn m_listened;
+    int m_instance;
     std::string m_pause;
     std::vector<std::pair<int, bool>> m_sensitivity;
+    // -1 unchanged
+    int m_notify = -1;
 };
 
 // a named part of a component's state, shown by debugging views: a value,
