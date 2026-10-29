@@ -291,7 +291,9 @@ void sim_session::terminal_gui(terminal_window& w)
     TextDisabled("%d x %d", vt.cols(), vt.rows());
 
     BeginChild("screen", {0, 0}, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_HorizontalScrollbar);
-    ui::mono_scope mono;
+    // popped before EndChild
+    std::optional<ui::mono_scope> mono;
+    mono.emplace();
     if (w.fit) {
         auto avail = GetContentRegionAvail();
         vt.resize(std::max(2, int(avail.x / char_w)), std::max(2, int(avail.y / line_h)));
@@ -351,7 +353,8 @@ void sim_session::terminal_gui(terminal_window& w)
     Dummy({width, line_h * float(lines)});
     auto* dl = GetWindowDrawList();
     ImU32 default_fg = GetColorU32(ImGuiCol_Text);
-    ImU32 default_bg = GetColorU32(ImGuiCol_FrameBg);
+    // opaque, the window's background may be translucent
+    ImU32 default_bg = GetColorU32(ImGuiCol_WindowBg) | IM_COL32_A_MASK;
     ImU32 selection = GetColorU32(ImGuiCol_TextSelectedBg);
     auto sel_a = w.sel_from, sel_b = w.sel_to;
     if (sel_a && sel_b && *sel_b < *sel_a) std::swap(sel_a, sel_b);
@@ -429,6 +432,7 @@ void sim_session::terminal_gui(terminal_window& w)
     if (GetIO().MouseWheel != 0 && IsWindowHovered()) w.follow = false;
     if (GetScrollY() >= GetScrollMaxY() - 1) w.follow = true;
     if (w.follow) SetScrollY(GetScrollMaxY());
+    mono.reset();
     EndChild();
     ui::zoom::end();
 }

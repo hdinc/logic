@@ -20,7 +20,7 @@ enum class bit_state : uint8_t {
 // a value of any width, each bit 0, 1, x or z. stored as three masks of 64
 // bit words: bits, x and z. a bit is set in at most one of x and z, bits is
 // 1 only for known 1s, bits above the width are 0 in all masks. values up
-// to 64 bits don't allocate.
+// to 320 bits (e.g. an axi4 bundle with 64 data bits) don't allocate.
 class value {
 public:
     value() = default;
@@ -61,15 +61,17 @@ public:
 
     // the words of the masks: words() bits words, then the x words, then the
     // z words, e.g. for c models. call normalize() after writing them.
-    uint64_t* data() { return m_width <= 64 ? m_small : m_big.data(); }
-    const uint64_t* data() const { return m_width <= 64 ? m_small : m_big.data(); }
+    uint64_t* data() { return m_width <= inline_bits ? m_small : m_big.data(); }
+    const uint64_t* data() const { return m_width <= inline_bits ? m_small : m_big.data(); }
     // restores the rules above after writing through data()
     void normalize();
 
+    static constexpr int inline_bits = 320;
+
 private:
     int m_width = 0;
-    // bits, x, z for up to 64 bits
-    uint64_t m_small[3] = {};
+    // the masks for up to inline_bits bits, laid out like m_big
+    uint64_t m_small[3 * inline_bits / 64] = {};
     // all bits words, then all x words, then all z words
     std::vector<uint64_t> m_big;
 };

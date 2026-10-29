@@ -84,6 +84,7 @@ struct fifo {
     std::deque<value> q;
     bool ready() const { return q.size() < 2; }
     const value* head() const { return q.empty() ? nullptr : &q.front(); }
+    bool empty() const { return q.empty(); }
     value pop()
     {
         auto v = std::move(q.front());
@@ -101,10 +102,12 @@ public:
     {
     }
 
-    void eval(std::span<value> ports, sim::context&) override
+    void eval(std::span<value> ports, sim::context& ctx) override
     {
         auto clk = ports[clk_port].get(0);
-        bool rising = prev_clk == sim::bit_state::zero && clk == sim::bit_state::one;
+        // while the clock was ignored its edges weren't seen: the value is
+        // only taken up, an edge at this time came before what woke the part
+        bool rising = listening && prev_clk == sim::bit_state::zero && clk == sim::bit_state::one;
         prev_clk = clk;
         if (rising) {
             // not connected is not in reset
@@ -112,27 +115,62 @@ public:
                 clear();
             else
                 edge(ports);
+            dirty = true;
         }
-        outputs(ports);
+        // a part with nothing to do and nothing offered ignores its clock
+        // until a handshake or reset input changes. before outputs, which
+        // overwrite the inouts' values.
+        bool idle_now = ports[rst_port].get(0) != sim::bit_state::zero && idle(ports);
+        // the outputs come from the state only, they're made again when it
+        // may have changed
+        if (dirty || cache.size() != ports.size()) {
+            outputs(ports);
+            cache.assign(ports.begin(), ports.end());
+            dirty = false;
+        } else {
+            std::copy(cache.begin(), cache.end(), ports.begin());
+        }
+        if (idle_now == listening) {
+            listening = !idle_now;
+            ctx.set_sensitive(clk_port, listening);
+        }
     }
 
     void reset() override
     {
         prev_clk = sim::bit_state::z;
+        listening = true;
+        dirty = true;
         clear();
     }
 
 protected:
+    // the state changed other than at an edge, e.g. from interact: the
+    // outputs are made again
+    void changed() { dirty = true; }
+
     // the state after reset
     virtual void clear() = 0;
     // the handshakes seen at a rising edge of aclk
     virtual void edge(std::span<const value> ports) = 0;
     // from the state only, there are no combinational paths
     virtual void outputs(std::span<value> ports) = 0;
+    // nothing to do at the next edge: no state that moves and no valid
+    // offered to the part, with the ports as they are now
+    virtual bool idle(std::span<const value> ports) const
+    {
+        (void)ports;
+        return false;
+    }
 
 private:
     int clk_port, rst_port;
     sim::bit_state prev_clk = sim::bit_state::z;
+    // the clock is sensitive
+    bool listening = true;
+    bool dirty = true;
+    // the ports as outputs left them
+    std::vector<value> cache;
 };
 
 inline const char* resp_name(int r)
@@ -203,3 +241,4 @@ inline builder::box_pin reset_pin()
 }
 
 }
+

@@ -81,6 +81,7 @@ struct cache {
     std::vector<uint8_t> data;
     uint64_t clock = 0;
     uint64_t hits = 0, misses = 0;
+    int line_shift = 0, set_shift = 0;
 
     cache(int bytes, int ways, int line_bytes)
         : line_bytes(line_bytes)
@@ -88,12 +89,15 @@ struct cache {
         , ways(ways)
         , lines(size_t(sets) * ways)
         , data(size_t(bytes))
+        , line_shift(log2_of(line_bytes))
+        , set_shift(log2_of(sets))
     {
     }
 
     bool enabled() const { return sets > 0; }
-    uint32_t set_of(uint32_t addr) const { return (addr / line_bytes) % sets; }
-    uint32_t tag_of(uint32_t addr) const { return addr / line_bytes / sets; }
+    // sizes are powers of two
+    uint32_t set_of(uint32_t addr) const { return (addr >> line_shift) & uint32_t(sets - 1); }
+    uint32_t tag_of(uint32_t addr) const { return addr >> line_shift >> set_shift; }
 
     // the line holding addr, -1 if none
     int find(uint32_t addr) const
@@ -186,6 +190,13 @@ public:
     riscv::result load(uint32_t addr, int size, uint32_t& value, riscv::access kind) override
     {
         bool fetch = kind == riscv::access::execute;
+        // most fetches are from the line of the last one
+        if (fetch && last_fetch && (addr & ~uint32_t(ic.line_bytes - 1)) == last_fetch_line) {
+            std::memcpy(&value, last_fetch + (addr & uint32_t(ic.line_bytes - 1)), 4);
+            ic.touch(last_fetch_index);
+            ic.hits++;
+            return riscv::result::ok;
+        }
         auto& c = fetch ? ic : dc;
         if (c.enabled() && is_cacheable(addr)) {
             uint8_t buf[4] = {};
@@ -193,6 +204,12 @@ public:
             if (r != riscv::result::ok) return r;
             value = 0;
             std::memcpy(&value, buf, size);
+            if (fetch && (addr & uint32_t(ic.line_bytes - 1)) <= uint32_t(ic.line_bytes - 4)) {
+                int k = ic.find(addr);
+                last_fetch_line = addr & ~uint32_t(ic.line_bytes - 1);
+                last_fetch = ic.bytes(k);
+                last_fetch_index = k;
+            }
             return r;
         }
         if (!natural(addr, size)) return riscv::result::misaligned;
@@ -210,7 +227,11 @@ public:
         return uncached(request::kind::write, addr, size, value);
     }
 
-    void fence_i() override { ic.invalidate(); }
+    void fence_i() override
+    {
+        ic.invalidate();
+        last_fetch = nullptr;
+    }
 
     bool is_cacheable(uint32_t addr) const
     {
@@ -234,11 +255,16 @@ public:
     {
         ic.invalidate();
         dc.invalidate();
+        last_fetch = nullptr;
         want = {};
         done.clear();
     }
 
     cache ic, dc;
+    // the i-cache line of the last fetch, null after the i-cache changed
+    const uint8_t* last_fetch = nullptr;
+    uint32_t last_fetch_line = 0;
+    int last_fetch_index = 0;
     std::vector<axi::range> cacheable;
     // set by the access that stalled, taken by the bus unit
     request want;
@@ -314,6 +340,7 @@ private:
         if (k < 0) return -1;
         int v = ic.victim(line_addr);
         ic.install(v, line_addr, dc.bytes(k));
+        last_fetch = nullptr;
         ic.misses++;
         return v;
     }
@@ -363,6 +390,7 @@ public:
     void reset() override
     {
         prev_clk = sim::bit_state::z;
+        listening = true;
         last_rise = sim::never;
         core_period = 0;
         restart();
@@ -372,7 +400,9 @@ public:
     {
         auto now = ctx.now();
         auto clk = ports[p_clk].get(0);
-        bool rising = prev_clk == sim::bit_state::zero && clk == sim::bit_state::one;
+        // while the clock is ignored its value is only taken up, see
+        // axi::clocked
+        bool rising = listening && prev_clk == sim::bit_state::zero && clk == sim::bit_state::one;
         prev_clk = clk;
         if (rising) {
             if (last_rise != sim::never && now > last_rise) core_period = std::max<sim::time>(1, (now - last_rise) / sim::time(cfg.ratio));
@@ -392,9 +422,17 @@ public:
         if (ports[p_meip].get(0) == sim::bit_state::one) lines |= riscv::ip::meip;
         if (ports[p_seip].get(0) == sim::bit_state::one) lines |= riscv::ip::seip;
         h.set_lines(lines);
-        if (!in_reset && paused_at != now) run(now, ctx);
+        if (!in_reset && paused_at != now) run(now, ctx, rising);
         if (out_dirty) update_outputs();
         ports[p_m] = out;
+        // the clock matters to measure it, in reset, for a transaction and
+        // for one that is due. else the core runs on its own wakes.
+        bool want_clock = core_period == 0 || in_reset || ports[p_rst].get(0) == sim::bit_state::zero || xfer.active ||
+            (mem.want.k != request::kind::none && now >= issue_at);
+        if (want_clock != listening) {
+            listening = want_clock;
+            ctx.set_sensitive(p_clk, listening);
+        }
     }
 
     void inspect(std::vector<sim::inspect_item>& out_items) const override
@@ -505,16 +543,18 @@ private:
         return uint64_t(wide(t) * cfg.timebase / sim::seconds);
     }
 
-    void run(sim::time now, sim::context& ctx)
+    // a transaction goes on the bus right after a rising edge of aclk, like
+    // from a register: the slaves see it at the next edge, also those that
+    // ignored their clock while they were idle
+    void run(sim::time now, sim::context& ctx, bool rising)
     {
         ctx.wake_at(sim::never);
         if (xfer.active) return;
         if (mem.want.k != request::kind::none) {
-            if (now < issue_at) {
+            if (now < issue_at)
                 ctx.wake_at(issue_at);
-                return;
-            }
-            start(now);
+            else if (rising)
+                start(now);
             return;
         }
         if (core_period == 0) return;
@@ -534,9 +574,9 @@ private:
             auto r = h.step();
             if (r == riscv::step_result::stalled) {
                 issue_at = t_core;
-                if (now >= issue_at)
+                if (now >= issue_at && rising)
                     start(now);
-                else
+                else if (now < issue_at)
                     ctx.wake_at(issue_at);
                 return;
             }
@@ -646,6 +686,7 @@ private:
             } else {
                 c.install(r.line, r.addr, xfer.buf.data());
                 c.misses++;
+                mem.last_fetch = nullptr;
             }
             break;
         }
@@ -727,6 +768,8 @@ private:
     riscv::hart h;
 
     sim::bit_state prev_clk = sim::bit_state::z;
+    // the clock is sensitive
+    bool listening = true;
     sim::time last_rise = sim::never;
     // the time of one instruction, aclk's period / ratio, 0 until aclk
     // rose twice
@@ -852,6 +895,13 @@ protected:
         device_outputs(ports);
     }
 
+    bool idle(std::span<const value> ports) const override
+    {
+        auto& p = ports[s_port];
+        return aw.empty() && w.empty() && ar.empty() && b.empty() && r.empty() && !wr.active && !rd.active && !high(p, l.awvalid) && !high(p, l.wvalid) &&
+            !high(p, l.arvalid);
+    }
+
     layout l;
 
 private:
@@ -902,6 +952,8 @@ public:
     void eval(std::span<value> ports, sim::context& ctx) override
     {
         now = ctx.now();
+        // mtip follows the time
+        changed();
         axi_regs::eval(ports, ctx);
         // the next time a timer goes off
         sim::time next = sim::never;
@@ -1031,6 +1083,7 @@ public:
         uint32_t lines = 0;
         for (int k = 1; k <= sources; k++)
             if (ports[2 + k].get(0) == sim::bit_state::one) lines |= 1u << k;
+        if (lines != signal) changed();
         signal = lines;
         axi_regs::eval(ports, ctx);
     }
@@ -1169,6 +1222,8 @@ public:
         // the character timeout: data below the trigger level, 4 characters
         // without anything happening
         if (!rx.empty() && !timeout && last_rx_activity != sim::never && now >= last_rx_activity + 4 * char_time()) timeout = true;
+        // the interrupt follows the fifo and the timeout
+        changed();
         axi_regs::eval(ports, ctx);
         sim::time wake = typed.empty() ? sim::never : std::max(next_rx, now + 1);
         if (!rx.empty() && !timeout && last_rx_activity != sim::never) wake = std::min(wake, last_rx_activity + 4 * char_time());
@@ -1559,3 +1614,4 @@ void add_riscv(model::primitive_registry& r)
 }
 
 }
+

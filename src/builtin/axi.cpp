@@ -284,6 +284,23 @@ private:
 
     int port_s(int i) const { return i; }
     int port_m(int j) const { return 2 + (int)ms.size() + j; }
+
+    bool idle(std::span<const value> ports) const override
+    {
+        for (int i = 0; i < (int)ms.size(); i++) {
+            auto& m = ms[i];
+            auto& p = ports[port_s(i)];
+            if (!m.aw.empty() || !m.w.empty() || !m.ar.empty() || !m.b.empty() || !m.r.empty() || m.busy_w || m.busy_r || m.err_b || m.err_r) return false;
+            if (high(p, l.awvalid) || high(p, l.wvalid) || high(p, l.arvalid)) return false;
+        }
+        for (int j = 0; j < (int)ss.size(); j++) {
+            auto& sl = ss[j];
+            auto& p = ports[port_m(j)];
+            if (!sl.aw.empty() || !sl.w.empty() || !sl.ar.empty() || !sl.b.empty() || !sl.r.empty() || sl.w_owner >= 0 || sl.r_owner >= 0) return false;
+            if (high(p, l.bvalid) || high(p, l.rvalid)) return false;
+        }
+        return true;
+    }
     bool lite() const { return l.proto == protocol::lite; }
 
     void clear() override
@@ -518,8 +535,8 @@ public:
     }
 
     std::vector<uint8_t> bytes;
-    // from the file, empty if there is none
-    std::vector<uint8_t> initial;
+    // from the files at offsets in bytes, put there at reset
+    std::vector<io::firmware::segment> initial;
 };
 
 // ports: s, aclk, aresetn. one write and one read at a time, a beat per
@@ -557,10 +574,9 @@ private:
     {
         aw = {}, w = {}, ar = {}, b = {}, r = {};
         wr = {}, rd = {};
-        if (mem.initial.empty())
-            std::fill(mem.bytes.begin(), mem.bytes.end(), 0);
-        else
-            mem.bytes = mem.initial;
+        std::fill(mem.bytes.begin(), mem.bytes.end(), 0);
+        for (auto& seg : mem.initial)
+            std::copy(seg.bytes.begin(), seg.bytes.end(), mem.bytes.begin() + ptrdiff_t(seg.address));
     }
 
     // a burst from an AW or AR beat
@@ -649,6 +665,13 @@ private:
         ports[0] = std::move(d.v);
     }
 
+    bool idle(std::span<const value> ports) const override
+    {
+        auto& p = ports[0];
+        return aw.empty() && w.empty() && ar.empty() && b.empty() && r.empty() && !wr.active && !rd.active && !high(p, l.awvalid) && !high(p, l.wvalid) &&
+            !high(p, l.arvalid);
+    }
+
     layout l;
     ram_bytes mem;
     fifo aw, w, ar, b, r;
@@ -680,6 +703,7 @@ public:
             st = action == "write" ? state::aw : state::ar;
             beat = 0;
             beats = 0;
+            changed();
             return true;
         }
         return false;
@@ -801,6 +825,8 @@ private:
         ports[2] = std::move(d.v);
     }
 
+    bool idle(std::span<const value>) const override { return st == state::idle; }
+
     layout l;
     int full_size = 0;
     // set with interact
@@ -887,6 +913,35 @@ public:
     }
 };
 
+// "fw.bin@0x80000000, Image@0x80400000": files and the addresses binaries
+// go at, 0 without one
+bool parse_images(const std::string& text, std::vector<std::pair<std::string, uint64_t>>& out, std::string& error)
+{
+    for (auto& part : model::split_fields(text)) {
+        auto at = part.rfind('@');
+        std::string name = part.substr(0, at);
+        while (!name.empty() && std::isspace((unsigned char)name.back()))
+            name.pop_back();
+        uint64_t base = 0;
+        if (at != std::string::npos) {
+            std::string num = part.substr(at + 1);
+            std::erase_if(num, [](char ch) { return std::isspace((unsigned char)ch); });
+            auto n = parse_number(num);
+            if (!n) {
+                error = "'" + part + "' isn't file@address";
+                return false;
+            }
+            base = *n;
+        }
+        if (name.empty()) {
+            error = "'" + part + "' has no file";
+            return false;
+        }
+        out.push_back({name, base});
+    }
+    return true;
+}
+
 class ram : public primitive {
 public:
     std::string kind() const override { return "axi_ram"; }
@@ -897,8 +952,10 @@ public:
     std::vector<model::param_def> params() const override
     {
         auto r = axi::params();
-        r.push_back(model::int_param("size", "Size bits", 12, 4, 24, "the memory has 2^size bytes, e.g. 12 for 4 KiB"));
+        r.push_back(model::int_param("size", "Size bits", 12, 4, 28, "the memory has 2^size bytes, e.g. 12 for 4 KiB, 27 for 128 MiB"));
         r.push_back(model::file_param("file", "Contents", "intel hex, s-records, elf or binary, relative to the library folder. addresses wrap at the size"));
+        r.push_back(model::text_param("images", "Images", "",
+            "more files, \"file@address\" separated by commas: binaries go at the address, elf and hex files where they say. addresses wrap at the size"));
         return r;
     }
 
@@ -914,7 +971,14 @@ public:
         return finish_ports(b, proto, w, {{"s", true}});
     }
 
-    std::string check(const model::param_values& v) const override { return check_widths(protocol_of(v), widths_of(v)); }
+    std::string check(const model::param_values& v) const override
+    {
+        if (auto e = check_widths(protocol_of(v), widths_of(v)); !e.empty()) return e;
+        std::vector<std::pair<std::string, uint64_t>> images;
+        std::string error;
+        if (!parse_images(model::get_string(v, "images"), images, error)) return error;
+        return {};
+    }
 
     std::unique_ptr<sim::component> create(const model::param_values&) const override { return nullptr; }
 
@@ -923,20 +987,35 @@ public:
         auto& v = info.params;
         auto proto = protocol_of(v);
         auto c = std::make_unique<ram_component>(make_layout(proto, usable(proto, widths_of(v))), size_t(1) << model::get_int(v, "size"));
-        auto file = model::get_string(v, "file");
-        if (!file.empty()) {
-            std::filesystem::path p = file;
+        // the contents go where the ram sees their addresses, which wrap
+        // at its size: an elf linked at 0x80000000 starts at 0
+        auto load = [&](const std::string& name, uint64_t base) {
+            std::filesystem::path p = name;
             if (p.is_relative()) p = info.dir / p;
             io::firmware f;
-            if (!io::load_firmware(p, f, error)) return nullptr;
-            // the contents go where the ram sees their addresses, which
-            // wrap at its size: an elf linked at 0x80000000 starts at 0
-            uint64_t size = c->memory().bytes.size(), lowest = ~uint64_t(0);
-            for (auto& seg : f.segments)
-                lowest = std::min(lowest, seg.address);
-            c->memory().initial = f.flatten(f.segments.empty() ? 0 : lowest / size * size, size, 0);
-            c->reset();
-        }
+            if (!io::load_firmware(p, f, error, base)) return false;
+            uint64_t size = c->memory().bytes.size();
+            for (auto& seg : f.segments) {
+                uint64_t at = seg.address % size;
+                if (seg.bytes.size() > size - at) {
+                    error = name + " doesn't fit in the ram at 0x" + [&] {
+                        char buf[24];
+                        std::snprintf(buf, sizeof(buf), "%llX", (unsigned long long)seg.address);
+                        return std::string(buf);
+                    }();
+                    return false;
+                }
+                c->memory().initial.push_back({at, std::move(seg.bytes)});
+            }
+            return true;
+        };
+        auto file = model::get_string(v, "file");
+        if (!file.empty() && !load(file, 0)) return nullptr;
+        std::vector<std::pair<std::string, uint64_t>> images;
+        if (!parse_images(model::get_string(v, "images"), images, error)) return nullptr;
+        for (auto& [name, base] : images)
+            if (!load(name, base)) return nullptr;
+        c->reset();
         return c;
     }
 };
@@ -985,3 +1064,4 @@ void add_axi(model::primitive_registry& r)
 }
 
 }
+

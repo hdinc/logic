@@ -193,6 +193,8 @@ private:
         bool woken = false;
         // instance names from the top, for messages
         std::string path;
+        // ports whose changes don't call eval, see context::set_sensitive
+        std::vector<uint8_t> ignored;
     };
 
     // bits [net_bit, net_bit + width) of a net are bits [node_bit, ...) of
@@ -241,7 +243,12 @@ private:
         bool pull_up = false;
         bool pull_down = false;
         std::vector<driver> drivers;
-        std::vector<int> readers;
+        // the instances and their ports that read the node
+        struct reader {
+            int instance;
+            int port;
+        };
+        std::vector<reader> readers;
     };
 
     // a pending wake in the event queue. stale when the instance's wake

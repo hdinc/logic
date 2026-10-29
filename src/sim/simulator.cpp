@@ -55,10 +55,8 @@ simulator::simulator(const model::workspace& w, const model::cell& top, const co
             if (n < 0) continue;
             if (s.kinds[p] != port_kind::in) add_driver(n, i, p);
             if (s.kinds[p] == port_kind::out) continue;
-            for (auto& sl : nets[n].slices) {
-                auto& readers = nodes[sl.node].readers;
-                if (std::find(readers.begin(), readers.end(), i) == readers.end()) readers.push_back(i);
-            }
+            for (auto& sl : nets[n].slices)
+                nodes[sl.node].readers.push_back({i, p});
         }
     }
 
@@ -228,6 +226,7 @@ void simulator::add_instance(scope& s, int index, std::unique_ptr<component> c, 
                 : port.dir == model::direction::output    ? port_kind::out
                                                           : port_kind::inout);
     }
+    x.ignored.assign(ports.size(), 0);
     s.components[index] = (int)instances.size();
     if (x.c->has_view()) viewers.push_back((int)instances.size());
     if (auto px = x.c->pixels()) m_displays.push_back({(int)instances.size(), x.path, std::move(px)});
@@ -596,6 +595,7 @@ void simulator::reset()
         }
         s.wake = never;
         s.woken = false;
+        s.ignored.assign(s.ports.size(), 0);
         schedule(i);
     }
 
@@ -654,8 +654,8 @@ void simulator::update_node(int n)
 
     if (v == cur.nodes[n]) return;
     cur.nodes[n] = std::move(v);
-    for (int r : nd.readers)
-        schedule(r);
+    for (auto& r : nd.readers)
+        if (!instances[r.instance].ignored[r.port]) schedule(r.instance);
 }
 
 void simulator::settle()
@@ -701,6 +701,8 @@ void simulator::settle()
             s.woken = false;
             s.c->eval(s.ports, ctx);
             if (ctx.wake() != s.wake) set_wake(i, ctx.wake());
+            for (auto [port, on] : ctx.sensitivity_requests())
+                if (port >= 0 && port < (int)s.ignored.size()) s.ignored[port] = !on;
             if (!ctx.pause_request().empty()) cur.paused = s.path + ": " + ctx.pause_request();
 
             for (size_t p = 0; p < s.ports.size(); p++) {

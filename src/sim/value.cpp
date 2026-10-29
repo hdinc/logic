@@ -18,7 +18,7 @@ uint64_t word_mask(int width, int w)
 value::value(int width, uint64_t bits, uint64_t x, uint64_t z)
     : m_width(std::max(width, 0))
 {
-    if (m_width > 64) m_big.assign(3 * size_t(words()), 0);
+    if (m_width > inline_bits) m_big.assign(3 * size_t(words()), 0);
     if (m_width > 0) set_word(0, bits, x, z);
 }
 
@@ -145,15 +145,31 @@ void value::insert(int lo, const value& v)
         *this = v;
         return;
     }
-    for (int w = 0; w < words(); w++) {
-        int start = 64 * w;
-        // bits of this word that v covers
-        int from = std::max(start, lo), to = std::min(start + 64, std::min(lo + v.width(), m_width));
-        if (from >= to) continue;
-        uint64_t m = mask(to - from) << (from - start);
-        uint64_t b, x, z;
-        read64(v, start - lo, b, x, z);
-        set_word(w, (bits(w) & ~m) | (b & m), (this->x(w) & ~m) | (x & m), (this->z(w) & ~m) | (z & m));
+    if (lo < 0) {
+        // the part below bit 0 is dropped
+        if (lo + v.width() <= 0) return;
+        insert(0, v.slice(-lo, v.width() + lo));
+        return;
+    }
+    // a word of v at a time into one or two words of this. v's masks follow
+    // the rules, so they're copied as they are.
+    int n = words();
+    auto d = data();
+    auto put = [&](int w, uint64_t m, uint64_t b, uint64_t x, uint64_t z) {
+        if (w >= n) return;
+        m &= word_mask(m_width, w);
+        d[w] = (d[w] & ~m) | (b & m);
+        d[n + w] = (d[n + w] & ~m) | (x & m);
+        d[2 * n + w] = (d[2 * n + w] & ~m) | (z & m);
+    };
+    for (int sw = 0; sw < v.words(); sw++) {
+        int at = lo + 64 * sw;
+        if (at >= m_width) break;
+        uint64_t m = word_mask(v.width(), sw);
+        uint64_t b = v.bits(sw), x = v.x(sw), z = v.z(sw);
+        int w = at / 64, off = at % 64;
+        put(w, m << off, b << off, x << off, z << off);
+        if (off) put(w + 1, m >> (64 - off), b >> (64 - off), x >> (64 - off), z >> (64 - off));
     }
 }
 

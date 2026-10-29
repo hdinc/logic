@@ -48,8 +48,10 @@ vt100::vt100(int cols, int rows, size_t history_lines)
 
 vt100::color vt100::palette(int i)
 {
-    static const uint32_t base[16] = {0x000000, 0xCD0000, 0x00CD00, 0xCDCD00, 0x0000EE, 0xCD00CD, 0x00CDCD, 0xE5E5E5, 0x7F7F7F, 0xFF0000, 0x00FF00, 0xFFFF00,
-        0x5C5CFF, 0xFF00FF, 0x00FFFF, 0xFFFFFF};
+    // the 16 colors of vs code's dark terminal, readable on a dark
+    // background (xterm's blue isn't)
+    static const uint32_t base[16] = {0x000000, 0xCD3131, 0x0DBC79, 0xE5E510, 0x2472C8, 0xBC3FBC, 0x11A8CD, 0xE5E5E5, 0x666666, 0xF14C4C, 0x23D18B, 0xF5F543,
+        0x3B8EEA, 0xD670D6, 0x29B8DB, 0xFFFFFF};
     uint32_t rgb = 0;
     i = std::clamp(i, 0, 255);
     if (i < 16) {

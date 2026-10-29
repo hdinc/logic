@@ -4,16 +4,20 @@
 
 #include "../src/builtin/builtin.h"
 #include "../src/io/firmware.h"
+#include "../src/io/storage.h"
+#include "../src/model/bundle.h"
 #include "../src/netlist/netlist.h"
 #include "../src/riscv/decode.h"
 #include "../src/riscv/hart.h"
 #include "../src/sim/simulator.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -324,17 +328,20 @@ struct uart_output {
 struct soc_bench : bench {
     int clock, cpu, xbar, uart, clint, plic, ram;
 
-    explicit soc_bench(const std::filesystem::path& elf, int ram_bits = 16)
+    explicit soc_bench(const std::filesystem::path& elf, int ram_bits = 16, std::string images = {}, model::param_values cpu_params = {}, int data_bits = 32,
+        int64_t clock_hz = 100000000)
     {
-        clock = place("clock", {0, 600}, {{"frequency", int64_t(100000000)}});
-        cpu = place("rv32_cpu", {0, 0});
+        clock = place("clock", {0, 600}, {{"frequency", clock_hz}});
+        model::param_values bus{{"DATA_W", int64_t(data_bits)}};
+        cpu_params["DATA_W"] = int64_t(data_bits);
+        cpu = place("rv32_cpu", {0, 0}, cpu_params);
         char map[128];
         std::snprintf(map, sizeof(map), "0x01000000/4K, 0x02000000/64K, 0x03000000/64M, 0x80000000/%d", 1 << ram_bits);
-        xbar = place("axi_crossbar", {800, 0}, {{"masters", int64_t(1)}, {"slaves", int64_t(4)}, {"map", std::string(map)}});
-        uart = place("uart16550", {1600, 0});
-        clint = place("riscv_clint", {1600, -400});
-        plic = place("riscv_plic", {1600, -800});
-        ram = place("axi_ram", {1600, -1400}, {{"size", int64_t(ram_bits)}, {"file", elf.string()}});
+        xbar = place("axi_crossbar", {800, 0}, {{"masters", int64_t(1)}, {"slaves", int64_t(4)}, {"map", std::string(map)}, {"DATA_W", int64_t(data_bits)}});
+        uart = place("uart16550", {1600, 0}, bus);
+        clint = place("riscv_clint", {1600, -400}, bus);
+        plic = place("riscv_plic", {1600, -800}, bus);
+        ram = place("axi_ram", {1600, -1400}, {{"size", int64_t(ram_bits)}, {"file", elf.string()}, {"images", images}, {"DATA_W", int64_t(data_bits)}});
         connect(cpu, "m", xbar, "s0");
         connect(xbar, "m0", uart, "s");
         connect(xbar, "m1", clint, "s");
@@ -397,6 +404,120 @@ static void test_devices(const std::filesystem::path& firmware)
     CHECK(item_text(s, b.cpu, "state") == "wfi");
 }
 
+// boots workspace/examples/riscv_linux until the shell's prompt, printing the
+// console and the speed. only with LOGIC_RISCV_LINUX=<workspace folder>, it
+// takes about 15 s.
+static void test_linux_boot()
+{
+    auto* dir = std::getenv("LOGIC_RISCV_LINUX");
+    if (!dir) return;
+    model::workspace ws;
+    ws.add_builtin_library(builtin::registry());
+    for (auto& m : io::load_workspace(ws, dir))
+        std::printf("  %s\n", m.c_str());
+    model::cell* top = nullptr;
+    if (auto* lib = ws.find_library("examples"))
+        for (auto& c : lib->cells)
+            if (c->name == "riscv_linux") top = c.get();
+    CHECK(top);
+    if (!top) return;
+    sim::simulator s(ws, *top, builtin::factory());
+    for (auto& p : s.problems())
+        std::printf("  %s\n", p.c_str());
+    CHECK(s.problems().empty());
+    CHECK(s.terminals().size() == 1);
+    if (s.terminals().empty()) return;
+    auto stream = s.terminals()[0].stream;
+    int cpu = -1;
+    auto& sch = *top->get_schematic();
+    for (int i = 0; i < (int)sch.instances.size(); i++)
+        if (sch.instances[i].name == "CPU") cpu = i;
+
+    std::string text;
+    auto start = std::chrono::steady_clock::now();
+    double limit = std::getenv("LOGIC_RISCV_LINUX_SECONDS") ? std::atof(std::getenv("LOGIC_RISCV_LINUX_SECONDS")) : 120;
+    bool booted = false;
+    double elapsed = 0;
+    while (elapsed < limit && !booted) {
+        s.run_until(s.now() + sim::ms);
+        std::string bytes;
+        {
+            std::lock_guard lk(stream->m);
+            bytes.swap(stream->bytes);
+        }
+        std::fwrite(bytes.data(), 1, bytes.size(), stdout);
+        std::fflush(stdout);
+        text += bytes;
+        elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        booted = text.size() >= 2 && text.compare(text.size() - 2, 2, "# ") == 0;
+    }
+    uint64_t instret = item_u64(s, cpu, "instret");
+    std::printf("\nlinux: %s after %.1f s, %.3f s simulated, %llu instructions, %.2f MIPS\n", booted ? "prompt" : "no prompt", elapsed,
+        double(s.now()) / double(sim::seconds), (unsigned long long)instret, double(instret) / elapsed / 1e6);
+    CHECK(booted);
+}
+
+// a few instructions at 0x80000000 on a flat memory
+static riscv::hart run_program(flat_memory& m, std::initializer_list<uint32_t> program, int steps)
+{
+    uint32_t at = 0;
+    for (uint32_t inst : program) {
+        std::memcpy(&m.bytes[at], &inst, 4);
+        at += 4;
+    }
+    riscv::hart h(m);
+    h.reset(m.base);
+    for (int k = 0; k < steps; k++)
+        h.step();
+    return h;
+}
+
+static void test_lr_sc()
+{
+    // a0 = 0x80001000, a1 = 0x80001004: lr a0, sc to a1 fails and ends the
+    // reservation, so the sc to a0 fails too
+    flat_memory m;
+    auto h = run_program(m,
+        {
+            0x80001537, // lui a0, 0x80001
+            0x00450593, // addi a1, a0, 4
+            0x100522af, // lr.w t0, (a0)
+            0x18b5a32f, // sc.w t1, a1, (a1)
+            0x18a523af, // sc.w t2, a0, (a0)
+        },
+        5);
+    CHECK(h.x[6] == 1 && h.x[7] == 1);
+    // without the failing sc in between the sc succeeds
+    flat_memory m2;
+    auto h2 = run_program(m2, {0x80001537, 0x00450593, 0x100522af, 0x18a523af}, 4);
+    CHECK(h2.x[7] == 0);
+}
+
+static void test_mip_seip()
+{
+    // csrs mip, t0 (stip) while the plic's seip line is high doesn't set the
+    // software seip bit: after the line drops mip has stip only
+    flat_memory m;
+    auto program = {
+        0x02000293u, // li t0, 0x20
+        0x3442a073u, // csrs mip, t0
+        0x34402373u, // csrr t1, mip
+    };
+    uint32_t at = 0;
+    for (uint32_t inst : program) {
+        std::memcpy(&m.bytes[at], &inst, 4);
+        at += 4;
+    }
+    riscv::hart h(m);
+    h.reset(m.base);
+    h.set_lines(riscv::ip::seip);
+    h.step();
+    h.step();
+    h.set_lines(0);
+    h.step();
+    CHECK(h.x[6] == riscv::ip::stip);
+}
+
 static void test_disassemble()
 {
     CHECK(riscv::disassemble(0x00150513, 0) == "addi a0, a0, 1");
@@ -413,9 +534,12 @@ int main(int argc, char** argv)
     std::filesystem::path dir = argc > 1 ? argv[1] : "tests/riscv/isa";
     std::filesystem::path firmware = argc > 2 ? argv[2] : "tests/riscv/firmware";
     test_disassemble();
+    test_lr_sc();
+    test_mip_seip();
     test_isa(dir);
     test_cpu_bus(dir);
     test_devices(firmware);
+    test_linux_boot();
     test_cpu_isa(dir, "caches", {});
     // tiny direct mapped caches with short lines: many misses and write backs
     test_cpu_isa(dir, "small caches", {{"icache", int64_t(1)}, {"dcache", int64_t(1)}, {"ways", int64_t(1)}, {"line", int64_t(16)}});

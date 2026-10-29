@@ -11,6 +11,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace logic::model {
@@ -72,6 +73,13 @@ public:
     void request_pause(std::string reason) { m_pause = std::move(reason); }
     const std::string& pause_request() const { return m_pause; }
 
+    // off: changes of the input or inout port don't call eval any more, e.g.
+    // the clock of a part that has nothing to do. eval still sees the port's
+    // current value when it's called for other reasons. on again with true.
+    // all ports are on after reset.
+    void set_sensitive(int port, bool on) { m_sensitivity.push_back({port, on}); }
+    const std::vector<std::pair<int, bool>>& sensitivity_requests() const { return m_sensitivity; }
+
 private:
     time m_now;
     bool m_woken;
@@ -79,6 +87,7 @@ private:
     horizon_fn m_horizon;
     const void* m_owner;
     std::string m_pause;
+    std::vector<std::pair<int, bool>> m_sensitivity;
 };
 
 // a named part of a component's state, shown by debugging views: a value,

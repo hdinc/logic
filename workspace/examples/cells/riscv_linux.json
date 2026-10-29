@@ -1,0 +1,715 @@
+{
+  "category": "RISC-V",
+  "format": 1,
+  "id": "3b9a94d719247392",
+  "impl": {
+    "instances": [
+      {
+        "cell": "d721ebe4e0f179b5",
+        "id": 1,
+        "mirror": false,
+        "name": "CLK",
+        "params": {
+          "frequency": 50000000
+        },
+        "pos": [
+          -300,
+          120
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "11def3377b50217d",
+        "id": 2,
+        "mirror": false,
+        "name": "CPU",
+        "params": {
+          "DATA_W": 64,
+          "dcache": 64,
+          "icache": 64,
+          "ratio": 4
+        },
+        "pos": [
+          -160,
+          0
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "d29e9cd64add9255",
+        "id": 3,
+        "mirror": false,
+        "name": "XBAR",
+        "params": {
+          "DATA_W": 64,
+          "map": "0x01000000/4K, 0x02000000/64K, 0x03000000/4M, 0x80000000/128M",
+          "masters": 1,
+          "slaves": 4
+        },
+        "pos": [
+          60,
+          0
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "241a37441ec7eb6c",
+        "id": 4,
+        "mirror": false,
+        "name": "UART",
+        "params": {
+          "DATA_W": 64
+        },
+        "pos": [
+          300,
+          110
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "b2cc8473d01b12af",
+        "id": 5,
+        "mirror": false,
+        "name": "CLINT",
+        "params": {
+          "DATA_W": 64
+        },
+        "pos": [
+          300,
+          40
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "fc70ee84886c788d",
+        "id": 6,
+        "mirror": false,
+        "name": "PLIC",
+        "params": {
+          "DATA_W": 64
+        },
+        "pos": [
+          300,
+          -80
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "eaa0e76bfcd36600",
+        "id": 7,
+        "mirror": false,
+        "name": "RAM",
+        "params": {
+          "DATA_W": 64,
+          "images": "riscv_linux/fw_jump.bin@0x80000000, riscv_linux/Image@0x80400000, riscv_linux/rootfs.cpio@0x86000000, riscv_linux/soc.dtb@0x87000000",
+          "size": 27
+        },
+        "pos": [
+          300,
+          -210
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 23,
+        "mirror": false,
+        "name": "T8",
+        "params": {
+          "name": "aclk"
+        },
+        "pos": [
+          -260,
+          120
+        ],
+        "rotation": 2
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 25,
+        "mirror": false,
+        "name": "T9",
+        "params": {
+          "name": "aclk"
+        },
+        "pos": [
+          -230,
+          20
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 27,
+        "mirror": false,
+        "name": "T10",
+        "params": {
+          "name": "aclk"
+        },
+        "pos": [
+          0,
+          0
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 29,
+        "mirror": false,
+        "name": "T11",
+        "params": {
+          "name": "aclk"
+        },
+        "pos": [
+          240,
+          110
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 31,
+        "mirror": false,
+        "name": "T12",
+        "params": {
+          "name": "aclk"
+        },
+        "pos": [
+          240,
+          40
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 33,
+        "mirror": false,
+        "name": "T13",
+        "params": {
+          "name": "aclk"
+        },
+        "pos": [
+          240,
+          -40
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 35,
+        "mirror": false,
+        "name": "T14",
+        "params": {
+          "name": "aclk"
+        },
+        "pos": [
+          240,
+          -210
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 37,
+        "mirror": false,
+        "name": "T15",
+        "params": {
+          "name": "msip"
+        },
+        "pos": [
+          -230,
+          0
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 39,
+        "mirror": false,
+        "name": "T16",
+        "params": {
+          "name": "mtip"
+        },
+        "pos": [
+          -230,
+          -10
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 41,
+        "mirror": false,
+        "name": "T17",
+        "params": {
+          "name": "meip"
+        },
+        "pos": [
+          -230,
+          -20
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 43,
+        "mirror": false,
+        "name": "T18",
+        "params": {
+          "name": "seip"
+        },
+        "pos": [
+          -230,
+          -30
+        ],
+        "rotation": 0
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 45,
+        "mirror": false,
+        "name": "T19",
+        "params": {
+          "name": "msip"
+        },
+        "pos": [
+          370,
+          50
+        ],
+        "rotation": 2
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 47,
+        "mirror": false,
+        "name": "T20",
+        "params": {
+          "name": "mtip"
+        },
+        "pos": [
+          370,
+          40
+        ],
+        "rotation": 2
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 49,
+        "mirror": false,
+        "name": "T21",
+        "params": {
+          "name": "meip"
+        },
+        "pos": [
+          370,
+          -30
+        ],
+        "rotation": 2
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 51,
+        "mirror": false,
+        "name": "T22",
+        "params": {
+          "name": "seip"
+        },
+        "pos": [
+          370,
+          -40
+        ],
+        "rotation": 2
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 53,
+        "mirror": false,
+        "name": "T23",
+        "params": {
+          "name": "uart_irq"
+        },
+        "pos": [
+          370,
+          120
+        ],
+        "rotation": 2
+      },
+      {
+        "cell": "825666b286db305f",
+        "id": 55,
+        "mirror": false,
+        "name": "T24",
+        "params": {
+          "name": "uart_irq"
+        },
+        "pos": [
+          240,
+          -60
+        ],
+        "rotation": 0
+      }
+    ],
+    "type": "schematic",
+    "wires": [
+      {
+        "a": [
+          -110,
+          20
+        ],
+        "b": [
+          -40,
+          20
+        ],
+        "id": 8
+      },
+      {
+        "a": [
+          -40,
+          20
+        ],
+        "b": [
+          -40,
+          10
+        ],
+        "id": 9
+      },
+      {
+        "a": [
+          -40,
+          10
+        ],
+        "b": [
+          20,
+          10
+        ],
+        "id": 10
+      },
+      {
+        "a": [
+          100,
+          10
+        ],
+        "b": [
+          190,
+          10
+        ],
+        "id": 11
+      },
+      {
+        "a": [
+          190,
+          10
+        ],
+        "b": [
+          190,
+          120
+        ],
+        "id": 12
+      },
+      {
+        "a": [
+          190,
+          120
+        ],
+        "b": [
+          260,
+          120
+        ],
+        "id": 13
+      },
+      {
+        "a": [
+          100,
+          0
+        ],
+        "b": [
+          180,
+          0
+        ],
+        "id": 14
+      },
+      {
+        "a": [
+          180,
+          0
+        ],
+        "b": [
+          180,
+          50
+        ],
+        "id": 15
+      },
+      {
+        "a": [
+          180,
+          50
+        ],
+        "b": [
+          260,
+          50
+        ],
+        "id": 16
+      },
+      {
+        "a": [
+          100,
+          -10
+        ],
+        "b": [
+          170,
+          -10
+        ],
+        "id": 17
+      },
+      {
+        "a": [
+          170,
+          -10
+        ],
+        "b": [
+          170,
+          -30
+        ],
+        "id": 18
+      },
+      {
+        "a": [
+          170,
+          -30
+        ],
+        "b": [
+          260,
+          -30
+        ],
+        "id": 19
+      },
+      {
+        "a": [
+          100,
+          -20
+        ],
+        "b": [
+          160,
+          -20
+        ],
+        "id": 20
+      },
+      {
+        "a": [
+          160,
+          -20
+        ],
+        "b": [
+          160,
+          -200
+        ],
+        "id": 21
+      },
+      {
+        "a": [
+          160,
+          -200
+        ],
+        "b": [
+          260,
+          -200
+        ],
+        "id": 22
+      },
+      {
+        "a": [
+          -290,
+          120
+        ],
+        "b": [
+          -260,
+          120
+        ],
+        "id": 24
+      },
+      {
+        "a": [
+          -210,
+          20
+        ],
+        "b": [
+          -230,
+          20
+        ],
+        "id": 26
+      },
+      {
+        "a": [
+          20,
+          0
+        ],
+        "b": [
+          0,
+          0
+        ],
+        "id": 28
+      },
+      {
+        "a": [
+          260,
+          110
+        ],
+        "b": [
+          240,
+          110
+        ],
+        "id": 30
+      },
+      {
+        "a": [
+          260,
+          40
+        ],
+        "b": [
+          240,
+          40
+        ],
+        "id": 32
+      },
+      {
+        "a": [
+          260,
+          -40
+        ],
+        "b": [
+          240,
+          -40
+        ],
+        "id": 34
+      },
+      {
+        "a": [
+          260,
+          -210
+        ],
+        "b": [
+          240,
+          -210
+        ],
+        "id": 36
+      },
+      {
+        "a": [
+          -210,
+          0
+        ],
+        "b": [
+          -230,
+          0
+        ],
+        "id": 38
+      },
+      {
+        "a": [
+          -210,
+          -10
+        ],
+        "b": [
+          -230,
+          -10
+        ],
+        "id": 40
+      },
+      {
+        "a": [
+          -210,
+          -20
+        ],
+        "b": [
+          -230,
+          -20
+        ],
+        "id": 42
+      },
+      {
+        "a": [
+          -210,
+          -30
+        ],
+        "b": [
+          -230,
+          -30
+        ],
+        "id": 44
+      },
+      {
+        "a": [
+          340,
+          50
+        ],
+        "b": [
+          370,
+          50
+        ],
+        "id": 46
+      },
+      {
+        "a": [
+          340,
+          40
+        ],
+        "b": [
+          370,
+          40
+        ],
+        "id": 48
+      },
+      {
+        "a": [
+          340,
+          -30
+        ],
+        "b": [
+          370,
+          -30
+        ],
+        "id": 50
+      },
+      {
+        "a": [
+          340,
+          -40
+        ],
+        "b": [
+          370,
+          -40
+        ],
+        "id": 52
+      },
+      {
+        "a": [
+          340,
+          120
+        ],
+        "b": [
+          370,
+          120
+        ],
+        "id": 54
+      },
+      {
+        "a": [
+          260,
+          -60
+        ],
+        "b": [
+          240,
+          -60
+        ],
+        "id": 56
+      }
+    ]
+  },
+  "name": "riscv_linux",
+  "next_id": 57,
+  "ports": [],
+  "symbol": {
+    "pins": [],
+    "shapes": []
+  }
+}

@@ -474,7 +474,12 @@ hart::status hart::execute(const decoded& d)
         uint32_t pa = 0;
         auto s = translate(a, access::write, pa);
         if (s != status::ok) return s;
-        if (!m_reserved || m_reservation != pa) return result_rd(1);
+        // every sc ends the reservation, also one that fails: linux's
+        // exception return does a dummy sc to drop the interrupted code's
+        if (!m_reserved || m_reservation != pa) {
+            m_reserved = false;
+            return result_rd(1);
+        }
         switch (m_bus.store(pa, 4, b)) {
         case result::ok: break;
         case result::stall: return status::stall;
@@ -517,7 +522,11 @@ hart::status hart::csr_op(const decoded& d)
     uint32_t old = 0;
     if (!csr_read(csr, old)) return raise(cause::illegal, d.raw);
     if (writes) {
-        uint32_t v = swap ? src : d.o == op::csrrs || d.o == op::csrrsi ? old | src : old & ~src;
+        // csrrs and csrrc on mip see the software seip bit only, not or'ed
+        // with the plic's line: else setting stip would latch a pending
+        // external interrupt into it for good
+        uint32_t base = csr == 0x344 ? (old & ~ip::seip) | (m_mip & ip::seip) : old;
+        uint32_t v = swap ? src : d.o == op::csrrs || d.o == op::csrrsi ? base | src : base & ~src;
         if (!csr_write(csr, v)) return raise(cause::illegal, d.raw);
     }
     x[d.rd] = old;
