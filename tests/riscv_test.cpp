@@ -291,6 +291,90 @@ static void test_cpu_bus(const std::filesystem::path& dir)
     CHECK(cycles >= instret);
 }
 
+static std::string item_text(sim::simulator& s, int instance, const std::string& name)
+{
+    for (auto& item : s.inspect(s.root(), instance))
+        if (item.name == name) return item.text;
+    return {};
+}
+
+// the parts of the linux example's memory map: uart 0x01000000 (plic source
+// 1), clint 0x02000000, plic 0x03000000, ram 0x80000000
+struct soc_bench : bench {
+    int clock, cpu, xbar, uart, clint, plic, ram;
+
+    explicit soc_bench(const std::filesystem::path& elf, int ram_bits = 16)
+    {
+        clock = place("clock", {0, 600}, {{"frequency", int64_t(100000000)}});
+        cpu = place("rv32_cpu", {0, 0});
+        char map[128];
+        std::snprintf(map, sizeof(map), "0x01000000/4K, 0x02000000/64K, 0x03000000/64M, 0x80000000/%d", 1 << ram_bits);
+        xbar = place("axi_crossbar", {800, 0}, {{"masters", int64_t(1)}, {"slaves", int64_t(4)}, {"map", std::string(map)}});
+        uart = place("uart16550", {1600, 0});
+        clint = place("riscv_clint", {1600, -400});
+        plic = place("riscv_plic", {1600, -800});
+        ram = place("axi_ram", {1600, -1400}, {{"size", int64_t(ram_bits)}, {"file", elf.string()}});
+        connect(cpu, "m", xbar, "s0");
+        connect(xbar, "m0", uart, "s");
+        connect(xbar, "m1", clint, "s");
+        connect(xbar, "m2", plic, "s");
+        connect(xbar, "m3", ram, "s");
+        connect(clint, "msip", cpu, "msip");
+        connect(clint, "mtip", cpu, "mtip");
+        connect(uart, "irq", plic, "irq1");
+        connect(plic, "meip", cpu, "meip");
+        connect(plic, "seip", cpu, "seip");
+        for (int i : {cpu, xbar, uart, clint, plic, ram})
+            connect(clock, "clk", i, "aclk");
+    }
+};
+
+// the devices with interrupts, from tests/riscv/src/devices.c
+static void test_devices(const std::filesystem::path& firmware)
+{
+    auto file = firmware / "devices.elf";
+    io::firmware f;
+    std::string error;
+    CHECK(io::load_firmware(file, f, error));
+    uint64_t tohost = 0;
+    for (auto& [address, name] : f.symbols)
+        if (name == "tohost") tohost = address;
+    CHECK(tohost);
+
+    soc_bench b(file);
+    CHECK(netlist::extract(b.ws, *b.top).problems.empty());
+    sim::simulator s(b.ws, *b.top, builtin::factory());
+    for (auto& p : s.problems())
+        std::printf("  %s\n", p.c_str());
+    CHECK(s.problems().empty());
+    auto run_until_screen = [&](const std::string& text) {
+        for (int k = 0; k < 200; k++) {
+            if (item_text(s, b.uart, "screen").find(text) != std::string::npos) return true;
+            s.run_until(s.now() + 10 * sim::us);
+        }
+        std::printf("  screen: '%s'\n", item_text(s, b.uart, "screen").c_str());
+        return false;
+    };
+    CHECK(run_until_screen("hello\ntimer\nsoft\nready\n"));
+    // the timer interrupt came after its 100 us
+    CHECK(s.now() >= 100 * sim::us);
+    for (char c : std::string("abc\n"))
+        s.interact(s.root(), b.uart, "key", c);
+    CHECK(run_until_screen("ready\nABC\nbye\n"));
+    if (std::getenv("RISCV_TEST_DUMP"))
+        for (int i : {b.uart, b.plic, b.cpu})
+            for (auto& item : s.inspect(s.root(), i))
+                if (item.name != "screen") std::printf("  %s = %s\n", item.name.c_str(), item.v.width() ? sim::to_string(item.v).c_str() : item.text.c_str());
+    value r;
+    for (int k = 0; k < 10 && !(r.width() && r.to_u64()); k++) {
+        s.run_until(s.now() + 10 * sim::us);
+        r = ram_word(s, b.cpu, tohost);
+    }
+    CHECK(r == sim::known(1, 32));
+    // the cpu slept in wfi most of the time
+    CHECK(item_text(s, b.cpu, "state") == "wfi");
+}
+
 static void test_disassemble()
 {
     CHECK(riscv::disassemble(0x00150513, 0) == "addi a0, a0, 1");
@@ -305,9 +389,11 @@ static void test_disassemble()
 int main(int argc, char** argv)
 {
     std::filesystem::path dir = argc > 1 ? argv[1] : "tests/riscv/isa";
+    std::filesystem::path firmware = argc > 2 ? argv[2] : "tests/riscv/firmware";
     test_disassemble();
     test_isa(dir);
     test_cpu_bus(dir);
+    test_devices(firmware);
     test_cpu_isa(dir, "caches", {});
     // tiny direct mapped caches with short lines: many misses and write backs
     test_cpu_isa(dir, "small caches", {{"icache", int64_t(1)}, {"dcache", int64_t(1)}, {"ways", int64_t(1)}, {"line", int64_t(16)}});

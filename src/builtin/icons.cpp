@@ -104,6 +104,9 @@ const std::map<std::string, icon_fn>& icons()
         {"axi_ram", [](builder& b) { chip(b, "M"); b.line({-10, -10}, {-10, 10}, model::bundle_stroke); }},
         {"axi_master", [](builder& b) { chip(b, "TM"); b.line({10, -10}, {10, 10}, model::bundle_stroke); }},
         {"rv32_cpu", [](builder& b) { chip(b, "RV"); b.line({10, -10}, {10, 10}, model::bundle_stroke); }},
+        {"riscv_clint", [](builder& b) { chip(b, "CL"); b.line({-10, -10}, {-10, 10}, model::bundle_stroke); }},
+        {"riscv_plic", [](builder& b) { chip(b, "PL"); b.line({-10, -10}, {-10, 10}, model::bundle_stroke); }},
+        {"uart16550", [](builder& b) { chip(b, "U"); b.line({-10, -10}, {-10, 10}, model::bundle_stroke); }},
         {"axi_crossbar",
             [](builder& b) {
                 b.rect({-6, -10}, {6, 10});

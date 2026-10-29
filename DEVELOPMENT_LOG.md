@@ -6080,3 +6080,92 @@ core that runs ahead of the simulation.
 
 - Phase 3: `riscv_clint`, `riscv_plic`, `uart16550` with AXI slave ports and
   interrupt outputs; bare-metal firmware tests for the timer, PLIC and UART.
+
+## 2026-10-29 23:05 +0300
+
+RISC-V phase 3 of 7: the CLINT, PLIC and 16550 UART parts.
+
+### Features implemented
+
+- **`riscv_clint`**:
+  - AXI slave `s` (AXI4 or AXI4-Lite) and a `msip`/`mtip` output pair per
+    hart (`harts` 1–8; numbered msip0.. when more than one).
+  - `timebase` (10 MHz).
+  - Registers as riscv,clint0: msip at 0x0, mtimecmp at 0x4000, mtime at
+    0xBFF8, 32 or 64 bit accesses.
+  - 64 KiB window.
+- **`riscv_plic`**:
+  - AXI slave, inputs `irq1`..`irqN` (`sources` 1–31, default 8), outputs
+    `meip` and `seip`.
+  - Registers as riscv,plic0 with a machine and a supervisor context:
+    priorities (0–7), pending, enables, threshold, claim/complete.
+  - Level triggered: a claimed source stays out until completed.
+  - 4 MiB window.
+- **`uart16550`**:
+  - AXI slave and an `irq` output; `clock` (10 MHz, the device tree's
+    clock-frequency) for the baud rate.
+  - ns16550a registers: RBR/THR, IER, IIR/FCR, LCR, MCR (loop mode), LSR,
+    MSR, SCR, the divisor latch.
+  - 16-byte receive FIFO with trigger levels and the character timeout.
+  - Sending takes no time. What's sent is shown in the Properties panel's
+    terminal (the same "screen" as the terminal builtin), and typed
+    characters arrive one character time apart at the set baud rate.
+- Icons for the four RISC-V parts.
+
+### How it works
+
+- `axi_regs` (riscv.cpp) is the slave base on `axi::clocked`, with the same
+  skid buffers and handshake rules as `axi_ram`:
+  - A beat at a time; bursts are split into beats.
+  - A write's strobes give the bytes (first to last strobe).
+  - A read's size comes from arsize, or for AXI4-Lite from the device's
+    register size, so a UART read never pops RBR for a neighbouring byte.
+  - The device sees the address modulo its window, so bases must be aligned
+    to it. The PLIC window is 4 MiB rather than the device tree's 64 MiB,
+    because the example puts the PLIC at 0x03000000, which isn't 64 MiB
+    aligned.
+  - Register errors answer SLVERR (an access fault in the cpu).
+- CLINT:
+  - mtime is computed from the simulation time (plus an offset that writes
+    to mtime change), not counted per tick.
+  - It wakes itself at the time mtime reaches the nearest mtimecmp, so timers
+    cost no events.
+  - mtimecmp resets to all ones.
+- UART:
+  - The THRE interrupt follows the 16550: raised when THR empties (at once
+    after a write) or when ETBEI is enabled while empty, cleared by reading
+    IIR while it's the reported interrupt.
+  - The port took the THRE interrupt as a plain level.
+  - The character timeout fires after 4 character times without FIFO
+    activity, so single keys reach Linux, which uses trigger level 8.
+  - Fixed from the port: FCR with the FIFO disabled clears it, there is no
+    host terminal and no polling thread.
+
+### Testing
+
+- New bare-metal firmware `tests/riscv/src/devices.c` (+ start.S, link.ld),
+  built by `tests/riscv/build.sh` into `tests/riscv/firmware/devices.elf`
+  (committed).
+  - On the Linux example's map: UART 0x01000000 (PLIC source 1), CLINT
+    0x02000000, PLIC 0x03000000, RAM 0x80000000.
+  - It checks a timer interrupt 100 µs ahead, a software interrupt through
+    msip, and UART receive interrupts through the PLIC with FIFO trigger
+    level 14 (so they come from the character timeout). It echoes typed
+    characters in upper case.
+- `riscv_test` `test_devices`:
+  - cpu + 1×4 crossbar + UART + CLINT + PLIC + RAM on 100 MHz;
+  - the screen shows hello/timer/soft/ready;
+  - "abc\n" typed through interact comes back as "ABC";
+  - tohost is 1 and the cpu ends in WFI.
+- All 11 ctest suites pass.
+
+### Outstanding issues
+
+- The cpu's `time` CSR is computed from its own time and timebase, so a write
+  to the CLINT's mtime isn't seen by it. OpenSBI and Linux don't write mtime.
+- No baud pacing for sending (output is immediate).
+
+### Next steps
+
+- Phase 4: a VT100 terminal window per UART (`ui/vt100`), with keys sent as
+  escape sequences.

@@ -1,7 +1,8 @@
 #!/bin/bash
 # builds the rv32 isa tests of riscv-tests (github.com/riscv-software-src/riscv-tests,
-# BSD license) into isa/ next to this script. the binaries are committed, so the
-# tests don't need a toolchain. usage: build.sh <riscv-tests checkout>
+# BSD license) into isa/ next to this script, and the firmware in src/ into
+# firmware/. the binaries are committed, so the tests don't need a toolchain.
+# usage: build.sh <riscv-tests checkout>
 # needs riscv32-unknown-linux-gnu-gcc, e.g. from "module load riscv-toolchain".
 set -e
 src=$(realpath "$1")
@@ -18,4 +19,13 @@ for suite in rv32ui rv32um rv32ua rv32mi rv32si; do
             "$src/isa/$suite/$t.S" -o "$out/$suite-p-$t"
         "$strip" --strip-debug "$out/$suite-p-$t"
     done
+done
+
+here=$(dirname "$(realpath "$0")")
+mkdir -p "$here/firmware"
+for f in "$here"/src/*.c; do
+    name=$(basename "$f" .c)
+    "$cc" -march=rv32ima_zicsr_zifencei -mabi=ilp32 -O2 -static -nostdlib -ffreestanding -fno-pic -mcmodel=medany -Wl,--no-relax -Wl,--no-warn-rwx-segments \
+        -T"$here/src/link.ld" "$here/src/start.S" "$f" -o "$here/firmware/$name.elf"
+    "$strip" --strip-debug "$here/firmware/$name.elf"
 done

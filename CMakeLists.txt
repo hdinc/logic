@@ -307,7 +307,7 @@ add_test(NAME sim_test COMMAND sim_test)
 add_executable(riscv_test tests/riscv_test.cpp)
 target_link_libraries(riscv_test logic_core)
 target_compile_options(riscv_test PRIVATE ${LOGIC_WARNINGS})
-add_test(NAME riscv_test COMMAND riscv_test ${CMAKE_SOURCE_DIR}/tests/riscv/isa)
+add_test(NAME riscv_test COMMAND riscv_test ${CMAKE_SOURCE_DIR}/tests/riscv/isa ${CMAKE_SOURCE_DIR}/tests/riscv/firmware)
 
 add_executable(vcd_test tests/vcd_test.cpp)
 target_link_libraries(vcd_test logic_wave)

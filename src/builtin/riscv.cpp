@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <set>
 
 namespace logic::builtin {
@@ -752,6 +753,725 @@ private:
     bool out_dirty = true;
 };
 
+// an axi slave of registers: a beat at a time, bursts beat by beat. the
+// device sees accesses of 1 to 8 bytes at an offset in its window: the
+// address modulo the window's size, so the base must be aligned to it.
+class axi_regs : public axi::clocked {
+public:
+    axi_regs(const layout& l, uint64_t window, int s, int clk, int rst)
+        : clocked(clk, rst)
+        , l(l)
+        , window(window)
+        , s_port(s)
+    {
+    }
+
+protected:
+    // false answers SLVERR
+    virtual bool reg_read(uint64_t offset, int bytes, uint64_t& value) = 0;
+    virtual bool reg_write(uint64_t offset, int bytes, uint64_t value) = 0;
+    // the size of an AXI4-Lite read, which has no size of its own
+    virtual int reg_bytes() const { return 4; }
+    virtual void device_clear() = 0;
+    // the device's other outputs, e.g. interrupts
+    virtual void device_outputs(std::span<value> ports) = 0;
+
+    void clear() override
+    {
+        aw = {}, w = {}, ar = {}, b = {}, r = {};
+        wr = {}, rd = {};
+        device_clear();
+    }
+
+    void edge(std::span<const value> ports) override
+    {
+        auto& p = ports[s_port];
+        bool aw_ready = aw.ready(), w_ready = w.ready(), ar_ready = ar.ready();
+        if (b.head() && high(p, l.bready)) b.pop();
+        if (r.head() && high(p, l.rready)) r.pop();
+        int bus = l.wdata.w / 8;
+
+        if (!wr.active && aw.head()) wr = start(aw.pop(), l.aw, l.awid, l.awaddr, l.awlen, l.awsize, l.awburst);
+        if (wr.active && w.head() && b.ready()) {
+            auto beat = w.pop();
+            auto a = axi::beat_address(wr.addr, wr.size, wr.kind, wr.len, wr.beat) & ~uint64_t(bus - 1);
+            // the bytes with strobes, from the first to the last
+            int first = -1, last = -1;
+            for (int k = 0; k < bus; k++)
+                if (high(beat, l.wstrb.off - l.w.off + k)) {
+                    if (first < 0) first = k;
+                    last = k;
+                }
+            if (first >= 0 && last - first < 8) {
+                uint64_t v = field(beat, l.wdata.off - l.w.off + 8 * first, 8 * (last - first + 1));
+                if (!reg_write((a + uint64_t(first)) % window, last - first + 1, v)) wr.error = true;
+            }
+            bool done = l.proto == protocol::lite || field(beat, l.w, l.wlast) || wr.beat >= wr.len;
+            wr.beat++;
+            if (done) {
+                auto resp = zeros(l.b.w);
+                set(resp, l.b, l.bid, wr.id);
+                set(resp, l.b, l.bresp, wr.error ? 2 : axi::okay);
+                b.q.push_back(std::move(resp));
+                wr.active = false;
+            }
+        }
+
+        if (!rd.active && ar.head()) rd = start(ar.pop(), l.ar, l.arid, l.araddr, l.arlen, l.arsize, l.arburst);
+        if (rd.active && r.ready()) {
+            uint64_t a = l.proto == protocol::lite ? rd.addr : axi::beat_address(rd.addr, rd.size, rd.kind, rd.len, rd.beat);
+            int bytes = l.proto == protocol::lite ? reg_bytes() : std::min(1 << rd.size, 8);
+            uint64_t v = 0;
+            bool ok = reg_read(a % window, bytes, v);
+            auto beat = zeros(l.r.w);
+            value data = zeros(l.rdata.w);
+            int lane = int(a % uint64_t(bus));
+            if (lane + bytes <= bus) data.insert(8 * lane, sim::known(v & sim::mask(8 * bytes), 8 * bytes));
+            set(beat, l.r, l.rid, rd.id);
+            set(beat, l.r, l.rdata, data);
+            set(beat, l.r, l.rresp, ok ? axi::okay : 2);
+            set(beat, l.r, l.rlast, rd.beat >= rd.len);
+            r.q.push_back(std::move(beat));
+            if (rd.beat++ >= rd.len) rd.active = false;
+        }
+
+        if (aw_ready && high(p, l.awvalid)) aw.q.push_back(p.slice(l.aw.off, l.aw.w));
+        if (w_ready && high(p, l.wvalid)) w.q.push_back(p.slice(l.w.off, l.w.w));
+        if (ar_ready && high(p, l.arvalid)) ar.q.push_back(p.slice(l.ar.off, l.ar.w));
+    }
+
+    void outputs(std::span<value> ports) override
+    {
+        axi::drive d(l.total);
+        d.sink(l.aw, aw.ready());
+        d.sink(l.w, w.ready());
+        d.sink(l.ar, ar.ready());
+        d.source(l.b, b.head());
+        d.source(l.r, r.head());
+        ports[s_port] = std::move(d.v);
+        device_outputs(ports);
+    }
+
+    layout l;
+
+private:
+    struct burst {
+        bool active = false;
+        uint64_t addr = 0;
+        int size = 0, kind = 1, len = 0, beat = 0;
+        bool error = false;
+        value id;
+    };
+
+    burst start(const value& beat, const channel& c, const axi::sig& id, const axi::sig& addr, const axi::sig& len, const axi::sig& size, const axi::sig& kind) const
+    {
+        burst t;
+        t.active = true;
+        t.addr = field(beat, c, addr);
+        t.id = id.w ? beat.slice(id.off - c.off, id.w) : value();
+        if (l.proto == protocol::lite) {
+            t.size = log2_of(l.wdata.w / 8);
+            return t;
+        }
+        t.len = (int)field(beat, c, len);
+        t.size = (int)field(beat, c, size);
+        t.kind = (int)field(beat, c, kind);
+        return t;
+    }
+
+    uint64_t window;
+    int s_port;
+    axi::fifo aw, w, ar, b, r;
+    burst wr, rd;
+};
+
+value level(bool on) { return sim::known(on ? 1 : 0, 1); }
+
+// the core local interruptor: mtime from the simulation time, a mtimecmp and
+// msip per hart. ports: s, aclk, aresetn, then msip and mtip per hart.
+class clint_component : public axi_regs {
+public:
+    clint_component(const layout& l, int harts, uint64_t timebase)
+        : axi_regs(l, 0x10000, 0, 1, 2)
+        , harts(harts)
+        , timebase(timebase)
+    {
+        reset();
+    }
+
+    void eval(std::span<value> ports, sim::context& ctx) override
+    {
+        now = ctx.now();
+        axi_regs::eval(ports, ctx);
+        // the next time a timer goes off
+        sim::time next = sim::never;
+        for (int k = 0; k < harts; k++)
+            if (mtimecmp[k] > mtime()) next = std::min(next, time_of(mtimecmp[k]));
+        ctx.wake_at(next);
+    }
+
+    void inspect(std::vector<sim::inspect_item>& out) const override
+    {
+        out.push_back({"mtime", sim::known(mtime(), 64), {}});
+        for (int k = 0; k < harts; k++) {
+            auto n = harts > 1 ? std::to_string(k) : std::string();
+            out.push_back({"mtimecmp" + n, sim::known(mtimecmp[k], 64), {}});
+            out.push_back({"msip" + n, sim::known(msip[k], 1), {}});
+        }
+    }
+
+private:
+    uint64_t mtime() const
+    {
+        __extension__ typedef unsigned __int128 wide;
+        return uint64_t(wide(now) * timebase / sim::seconds) + offset;
+    }
+    // the simulation time at which mtime reaches v
+    sim::time time_of(uint64_t v) const
+    {
+        __extension__ typedef unsigned __int128 wide;
+        wide ticks = v - offset;
+        wide t = (ticks * sim::seconds + timebase - 1) / timebase;
+        return t > wide(sim::never - 1) ? sim::never : sim::time(t);
+    }
+
+    void device_clear() override
+    {
+        msip.assign(size_t(harts), 0);
+        mtimecmp.assign(size_t(harts), ~uint64_t(0));
+        offset = 0;
+    }
+
+    // a 64 bit register, read or written in halves or whole
+    static bool part(uint64_t offset_in, int bytes, int& shift)
+    {
+        if (bytes == 8 && offset_in % 8 == 0) shift = 0;
+        else if (bytes == 4 && offset_in % 4 == 0) shift = int(offset_in % 8) * 8;
+        else return false;
+        return true;
+    }
+
+    bool reg_read(uint64_t a, int bytes, uint64_t& v) override
+    {
+        int shift = 0;
+        if (a < 0x4000) {
+            if (bytes != 4 || a % 4) return false;
+            v = a / 4 < uint64_t(harts) ? msip[a / 4] : 0;
+            return true;
+        }
+        if (a >= 0xBFF8) {
+            if (!part(a, bytes, shift)) return false;
+            v = mtime() >> shift;
+            return true;
+        }
+        if (!part(a, bytes, shift)) return false;
+        uint64_t k = (a - 0x4000) / 8;
+        v = k < uint64_t(harts) ? mtimecmp[k] >> shift : 0;
+        return true;
+    }
+
+    static uint64_t merge(uint64_t old, uint64_t v, int bytes, int shift)
+    {
+        if (bytes == 8) return v;
+        uint64_t m = 0xFFFFFFFFull << shift;
+        return (old & ~m) | ((v << shift) & m);
+    }
+
+    bool reg_write(uint64_t a, int bytes, uint64_t v) override
+    {
+        int shift = 0;
+        if (a < 0x4000) {
+            if (bytes != 4 || a % 4) return false;
+            if (a / 4 < uint64_t(harts)) msip[a / 4] = v & 1;
+            return true;
+        }
+        if (a >= 0xBFF8) {
+            if (!part(a, bytes, shift)) return false;
+            offset += merge(mtime(), v, bytes, shift) - mtime();
+            return true;
+        }
+        if (!part(a, bytes, shift)) return false;
+        uint64_t k = (a - 0x4000) / 8;
+        if (k < uint64_t(harts)) mtimecmp[k] = merge(mtimecmp[k], v, bytes, shift);
+        return true;
+    }
+
+    void device_outputs(std::span<value> ports) override
+    {
+        uint64_t t = mtime();
+        for (int k = 0; k < harts; k++) {
+            ports[3 + 2 * k] = level(msip[k]);
+            ports[4 + 2 * k] = level(t >= mtimecmp[k]);
+        }
+    }
+
+    int harts;
+    uint64_t timebase;
+    sim::time now = 0;
+    // mtime minus the time base's count, changed by writes to mtime
+    uint64_t offset = 0;
+    std::vector<uint32_t> msip;
+    std::vector<uint64_t> mtimecmp;
+};
+
+// the platform level interrupt controller with a machine and a supervisor
+// context: level triggered sources 1..n, priorities 0..7, claim/complete.
+// ports: s, aclk, aresetn, irq1..irqn, meip, seip.
+class plic_component : public axi_regs {
+public:
+    plic_component(const layout& l, int sources)
+        : axi_regs(l, 0x400000, 0, 1, 2)
+        , sources(sources)
+    {
+        reset();
+    }
+
+    void eval(std::span<value> ports, sim::context& ctx) override
+    {
+        uint32_t lines = 0;
+        for (int k = 1; k <= sources; k++)
+            if (ports[2 + k].get(0) == sim::bit_state::one) lines |= 1u << k;
+        signal = lines;
+        axi_regs::eval(ports, ctx);
+    }
+
+    void inspect(std::vector<sim::inspect_item>& out) const override
+    {
+        out.push_back({"pending", sim::known(pending(), 32), {}});
+        out.push_back({"claimed", sim::known(claimed, 32), {}});
+        for (int c = 0; c < 2; c++) {
+            auto n = std::string(c ? "s " : "m ");
+            out.push_back({n + "enable", sim::known(enable[c], 32), {}});
+            out.push_back({n + "threshold", sim::known(threshold[c], 3), {}});
+        }
+    }
+
+private:
+    static constexpr int contexts = 2;
+
+    uint32_t pending() const { return signal & ~claimed & ~1u; }
+
+    // the pending and enabled source with the highest priority above 0, the
+    // lowest id first, 0 if none
+    uint32_t best(int c) const
+    {
+        uint32_t id = 0, pri = 0;
+        for (int k = 1; k <= sources; k++)
+            if ((pending() & enable[c] & (1u << k)) && priority[k] > pri) {
+                pri = priority[k];
+                id = uint32_t(k);
+            }
+        return id;
+    }
+
+    bool asserted(int c) const
+    {
+        auto id = best(c);
+        return id && priority[id] > threshold[c];
+    }
+
+    void device_clear() override
+    {
+        priority.assign(32, 0);
+        enable[0] = enable[1] = 0;
+        threshold[0] = threshold[1] = 0;
+        claimed = 0;
+    }
+
+    bool reg_read(uint64_t a, int bytes, uint64_t& v) override
+    {
+        if (bytes != 4 || a % 4) return false;
+        v = 0;
+        if (a < 0x1000) {
+            if (a / 4 < 32) v = priority[a / 4];
+        } else if (a == 0x1000) {
+            v = pending();
+        } else if (a >= 0x2000 && a < 0x200000) {
+            uint64_t c = (a - 0x2000) / 0x80;
+            if (c < contexts && (a - 0x2000) % 0x80 == 0) v = enable[c];
+        } else if (a >= 0x200000) {
+            uint64_t c = (a - 0x200000) / 0x1000, r = (a - 0x200000) % 0x1000;
+            if (c < contexts && r == 0) v = threshold[c];
+            if (c < contexts && r == 4) {
+                // claim: the source stays out until it's completed
+                auto id = best(int(c));
+                if (id) claimed |= 1u << id;
+                v = id;
+            }
+        }
+        return true;
+    }
+
+    bool reg_write(uint64_t a, int bytes, uint64_t v) override
+    {
+        if (bytes != 4 || a % 4) return false;
+        uint32_t m = sources >= 31 ? ~1u : ((2u << sources) - 1) & ~1u;
+        if (a < 0x1000) {
+            if (a / 4 >= 1 && a / 4 <= uint64_t(sources)) priority[a / 4] = uint32_t(v & 7);
+        } else if (a >= 0x2000 && a < 0x200000) {
+            uint64_t c = (a - 0x2000) / 0x80;
+            if (c < contexts && (a - 0x2000) % 0x80 == 0) enable[c] = uint32_t(v) & m;
+        } else if (a >= 0x200000) {
+            uint64_t c = (a - 0x200000) / 0x1000, r = (a - 0x200000) % 0x1000;
+            if (c < contexts && r == 0) threshold[c] = uint32_t(v & 7);
+            // complete: ignored for sources the context doesn't enable
+            if (c < contexts && r == 4 && v >= 1 && v <= uint64_t(sources) && (enable[c] & (1u << v))) claimed &= ~(1u << v);
+        }
+        return true;
+    }
+
+    void device_outputs(std::span<value> ports) override
+    {
+        ports[3 + sources] = level(asserted(0));
+        ports[4 + sources] = level(asserted(1));
+    }
+
+    int sources;
+    uint32_t signal = 0;
+    std::vector<uint32_t> priority;
+    uint32_t enable[contexts] = {};
+    uint32_t threshold[contexts] = {};
+    // sources that are claimed and not completed yet
+    uint32_t claimed = 0;
+};
+
+// an ns16550a: 8 byte registers, a 16 byte receive fifo. sending takes no
+// time, received bytes come from the simulation's terminal at the baud rate
+// set by the divisor. ports: s, aclk, aresetn, irq.
+class uart_component : public axi_regs {
+public:
+    uart_component(const layout& l, uint64_t clock_hz)
+        : axi_regs(l, 8, 0, 1, 2)
+        , clock_hz(clock_hz)
+    {
+        reset();
+    }
+
+    void reset() override
+    {
+        axi_regs::reset();
+        screen.clear();
+        typed.clear();
+    }
+
+    void eval(std::span<value> ports, sim::context& ctx) override
+    {
+        now = ctx.now();
+        // typed bytes enter the fifo a character time apart
+        while (!typed.empty() && now >= next_rx) {
+            receive(typed.front());
+            typed.pop_front();
+            next_rx = now + char_time();
+            last_rx_activity = now;
+        }
+        // the character timeout: data below the trigger level, 4 characters
+        // without anything happening
+        if (!rx.empty() && !timeout && last_rx_activity != sim::never && now >= last_rx_activity + 4 * char_time()) timeout = true;
+        axi_regs::eval(ports, ctx);
+        sim::time wake = typed.empty() ? sim::never : std::max(next_rx, now + 1);
+        if (!rx.empty() && !timeout && last_rx_activity != sim::never) wake = std::min(wake, last_rx_activity + 4 * char_time());
+        ctx.wake_at(wake);
+    }
+
+    bool interact(const std::string& action, int64_t v) override
+    {
+        if (action == "clear") {
+            screen.clear();
+            return false;
+        }
+        if (action != "key") return false;
+        typed.push_back(uint8_t(v));
+        return true;
+    }
+
+    void inspect(std::vector<sim::inspect_item>& out) const override
+    {
+        out.push_back({"screen", {}, screen});
+        out.push_back({"ier", sim::known(ier, 8), {}});
+        out.push_back({"lcr", sim::known(lcr, 8), {}});
+        out.push_back({"lsr", sim::known(lsr(), 8), {}});
+        out.push_back({"divisor", sim::known(uint64_t(dlm) << 8 | dll, 16), {}});
+        out.push_back({"rx fifo", sim::known(rx.size(), 5), {}});
+    }
+
+    int reg_bytes() const override { return 1; }
+
+private:
+    static constexpr uint8_t ier_rx = 1, ier_thre = 2, ier_ls = 4;
+    static constexpr uint8_t lcr_dlab = 0x80;
+    static constexpr uint8_t mcr_loop = 0x10;
+    static constexpr size_t fifo_size = 16;
+
+    // 10 bits at the divisor's baud rate, 115200 baud while it's 0
+    sim::time char_time() const
+    {
+        uint64_t div = uint64_t(dlm) << 8 | dll;
+        uint64_t baud = div ? std::max<uint64_t>(1, clock_hz / (16 * div)) : 115200;
+        return sim::time(10 * sim::seconds / baud);
+    }
+
+    uint8_t lsr() const { return uint8_t((rx.empty() ? 0 : 1) | (overrun ? 2 : 0) | 0x60); }
+
+    int trigger() const
+    {
+        static const int levels[4] = {1, 4, 8, 14};
+        return fifo_on ? levels[(fcr >> 6) & 3] : 1;
+    }
+
+    // the interrupt being reported: 0xC1 bits of iir, 1 for none
+    uint8_t iir_id() const
+    {
+        if ((ier & ier_ls) && overrun) return 0x6;
+        if ((ier & ier_rx) && (int(rx.size()) >= trigger() || (timeout && !rx.empty()))) return timeout && int(rx.size()) < trigger() ? 0xC : 0x4;
+        if ((ier & ier_thre) && thre) return 0x2;
+        return 0x1;
+    }
+
+    bool irq() const { return iir_id() != 0x1; }
+
+    void receive(uint8_t c)
+    {
+        size_t room = fifo_on ? fifo_size : 1;
+        if (rx.size() >= room) {
+            overrun = true;
+            if (!fifo_on) rx.back() = c;
+            return;
+        }
+        rx.push_back(c);
+        timeout = false;
+    }
+
+    void send(uint8_t c)
+    {
+        if (mcr & mcr_loop) {
+            receive(c);
+            last_rx_activity = now;
+            return;
+        }
+        // like a terminal: backspace removes, cr is dropped
+        if (c == '\b') {
+            if (!screen.empty() && screen.back() != '\n') screen.pop_back();
+        } else if (c != '\r') {
+            screen += char(c);
+        }
+        if (screen.size() > max_screen) screen.erase(0, screen.size() - max_screen);
+    }
+
+    void device_clear() override
+    {
+        rx.clear();
+        ier = lcr = mcr = scr = fcr = dll = dlm = 0;
+        fifo_on = overrun = timeout = false;
+        // nothing to send, but no interrupt until ier asks for one
+        thre = false;
+        next_rx = 0;
+        last_rx_activity = sim::never;
+    }
+
+    bool reg_read(uint64_t a, int bytes, uint64_t& v) override
+    {
+        if (bytes != 1) return false;
+        switch (a) {
+        case 0:
+            if (lcr & lcr_dlab) {
+                v = dll;
+            } else {
+                v = rx.empty() ? 0 : rx.front();
+                if (!rx.empty()) rx.pop_front();
+                timeout = false;
+                last_rx_activity = now;
+            }
+            break;
+        case 1: v = (lcr & lcr_dlab) ? dlm : ier; break;
+        case 2: {
+            auto id = iir_id();
+            v = id | (fifo_on ? 0xC0 : 0);
+            // reading iir clears the thre interrupt it reports
+            if (id == 0x2) thre = false;
+            break;
+        }
+        case 3: v = lcr; break;
+        case 4: v = mcr; break;
+        case 5:
+            v = lsr();
+            overrun = false;
+            break;
+        // dcd, dsr and cts on, or in loop mode what mcr drives
+        case 6: v = (mcr & mcr_loop) ? ((mcr & 0xC) << 4 | (mcr & 3) << 4) : 0xB0; break;
+        case 7: v = scr; break;
+        default: return false;
+        }
+        return true;
+    }
+
+    bool reg_write(uint64_t a, int bytes, uint64_t value64) override
+    {
+        if (bytes != 1) return false;
+        uint8_t v = uint8_t(value64);
+        switch (a) {
+        case 0:
+            if (lcr & lcr_dlab) {
+                dll = v;
+            } else {
+                send(v);
+                // sent at once: thr is empty again
+                thre = true;
+            }
+            break;
+        case 1:
+            if (lcr & lcr_dlab) {
+                dlm = v;
+            } else {
+                // enabling the thre interrupt while thr is empty raises it
+                if ((v & ier_thre) && !(ier & ier_thre)) thre = true;
+                ier = v & 0x0F;
+            }
+            break;
+        case 2:
+            if (bool(v & 1) != fifo_on) rx.clear();
+            fifo_on = v & 1;
+            fcr = v & 0xC1;
+            if (v & 2) rx.clear();
+            break;
+        case 3: lcr = v; break;
+        case 4: mcr = v & 0x1F; break;
+        case 7: scr = v; break;
+        default: break;
+        }
+        return true;
+    }
+
+    void device_outputs(std::span<value> ports) override { ports[3] = level(irq()); }
+
+    static constexpr size_t max_screen = 64000;
+
+    uint64_t clock_hz;
+    sim::time now = 0;
+    std::deque<uint8_t> rx;
+    // typed in the simulation's terminal, not received yet
+    std::deque<uint8_t> typed;
+    sim::time next_rx = 0;
+    sim::time last_rx_activity = sim::never;
+    uint8_t ier = 0, lcr = 0, mcr = 0, scr = 0, fcr = 0, dll = 0, dlm = 0;
+    bool fifo_on = false, overrun = false, timeout = false, thre = false;
+    std::string screen;
+};
+
+// the slave parts' axi parameters, AXI4 or AXI4-Lite
+model::cell_interface slave_part(const model::param_values& v, const std::string& title, std::vector<builder::box_pin> left, std::vector<builder::box_pin> right)
+{
+    auto proto = axi::protocol_of(v);
+    auto w = axi::usable(proto, axi::widths_of(v));
+    int total = axi::make_layout(proto, w).total;
+    left.insert(left.begin(), {{"s", direction::inout, total, "the cpu connects here, e.g. through a crossbar", {}, true}, axi::clock_pin(), axi::reset_pin()});
+    builder b;
+    b.box(title, left, right, {}, 6);
+    return axi::finish_ports(b, proto, w, {{"s", true}});
+}
+
+layout slave_layout(const model::param_values& v)
+{
+    auto proto = axi::protocol_of(v);
+    return axi::make_layout(proto, axi::usable(proto, axi::widths_of(v)));
+}
+
+class clint : public primitive {
+public:
+    std::string kind() const override { return "riscv_clint"; }
+    std::string name() const override { return "CLINT"; }
+    std::string category() const override { return "RISC-V"; }
+    std::string description() const override { return "core local interruptor: mtime, mtimecmp and msip per hart (riscv,clint0), a 64 KiB window"; }
+
+    std::vector<model::param_def> params() const override
+    {
+        auto r = axi::params();
+        r.push_back(model::int_param("harts", "Harts", 1, 1, 8));
+        r.push_back(model::int_param("timebase", "Timebase (Hz)", 10000000, 1, 1000000000, "mtime counts at this rate, the cpus' timebase"));
+        return r;
+    }
+
+    model::cell_interface build(const model::param_values& v) const override
+    {
+        int harts = (int)model::get_int(v, "harts");
+        std::vector<builder::box_pin> right;
+        for (int k = 0; k < harts; k++) {
+            auto n = harts > 1 ? std::to_string(k) : std::string();
+            right.push_back({"msip" + n, direction::output, 1, "software interrupt of hart " + std::to_string(k)});
+            right.push_back({"mtip" + n, direction::output, 1, "timer interrupt of hart " + std::to_string(k) + ": mtime >= mtimecmp"});
+        }
+        return slave_part(v, "CLINT", {}, right);
+    }
+
+    std::string check(const model::param_values& v) const override { return axi::check_widths(axi::protocol_of(v), axi::widths_of(v)); }
+
+    std::unique_ptr<sim::component> create(const model::param_values& v) const override
+    {
+        return std::make_unique<clint_component>(slave_layout(v), (int)model::get_int(v, "harts"), uint64_t(model::get_int(v, "timebase")));
+    }
+};
+
+class plic : public primitive {
+public:
+    std::string kind() const override { return "riscv_plic"; }
+    std::string name() const override { return "PLIC"; }
+    std::string category() const override { return "RISC-V"; }
+    std::string description() const override
+    {
+        return "platform level interrupt controller (riscv,plic0): level triggered sources, a machine and a supervisor context, a 4 MiB window";
+    }
+
+    std::vector<model::param_def> params() const override
+    {
+        auto r = axi::params();
+        r.push_back(model::int_param("sources", "Sources", 8, 1, 31, "interrupt inputs irq1.., riscv,ndev"));
+        return r;
+    }
+
+    model::cell_interface build(const model::param_values& v) const override
+    {
+        int n = (int)model::get_int(v, "sources");
+        std::vector<builder::box_pin> left;
+        for (int k = 1; k <= n; k++)
+            left.push_back({"irq" + std::to_string(k), direction::input, 1, "interrupt source " + std::to_string(k) + ", high while pending"});
+        return slave_part(v, "PLIC", left,
+            {{"meip", direction::output, 1, "machine external interrupt, to the cpu"}, {"seip", direction::output, 1, "supervisor external interrupt, to the cpu"}});
+    }
+
+    std::string check(const model::param_values& v) const override { return axi::check_widths(axi::protocol_of(v), axi::widths_of(v)); }
+
+    std::unique_ptr<sim::component> create(const model::param_values& v) const override
+    {
+        return std::make_unique<plic_component>(slave_layout(v), (int)model::get_int(v, "sources"));
+    }
+};
+
+class uart : public primitive {
+public:
+    std::string kind() const override { return "uart16550"; }
+    std::string name() const override { return "UART 16550"; }
+    std::string category() const override { return "RISC-V"; }
+    std::string description() const override { return "an ns16550a with a terminal in the simulation: 8 byte registers, a 16 byte receive fifo, an 8 byte window"; }
+
+    std::vector<model::param_def> params() const override
+    {
+        auto r = axi::params();
+        r.push_back(model::int_param("clock", "Clock (Hz)", 10000000, 1, 1000000000, "the baud clock, the device tree's clock-frequency"));
+        return r;
+    }
+
+    model::cell_interface build(const model::param_values& v) const override
+    {
+        return slave_part(v, "UART", {}, {{"irq", direction::output, 1, "interrupt, to the plic"}});
+    }
+
+    std::string check(const model::param_values& v) const override { return axi::check_widths(axi::protocol_of(v), axi::widths_of(v)); }
+
+    std::unique_ptr<sim::component> create(const model::param_values& v) const override
+    {
+        return std::make_unique<uart_component>(slave_layout(v), uint64_t(model::get_int(v, "clock")));
+    }
+};
+
 std::vector<model::param_def> cpu_params()
 {
     std::vector<model::param_def> r;
@@ -842,6 +1562,9 @@ public:
 void add_riscv(model::primitive_registry& r)
 {
     r.add(std::make_unique<cpu>());
+    r.add(std::make_unique<clint>());
+    r.add(std::make_unique<plic>());
+    r.add(std::make_unique<uart>());
 }
 
 }
