@@ -448,6 +448,7 @@ void app::draw_gui()
         if (auto& s = e->simulation()) {
             s->waveforms_gui(e->cell().name);
             s->displays_gui();
+            s->terminals_gui();
         }
     open_instance_tabs();
     properties_panel();

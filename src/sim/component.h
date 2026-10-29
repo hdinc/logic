@@ -109,6 +109,31 @@ struct pixel_buffer {
     uint64_t version = 0;
 };
 
+// what a terminal part sends, e.g. a uart: bytes for a terminal window. the
+// component appends on the simulation thread, the ui takes them while
+// drawing: both hold m. resets goes up when the component is reset, the
+// window clears its screen then.
+struct byte_stream {
+    std::mutex m;
+    std::string bytes;
+    uint64_t resets = 0;
+    // bytes the ui hasn't taken are dropped from the front beyond this
+    static constexpr size_t max_pending = size_t(1) << 22;
+
+    void append(char c)
+    {
+        std::lock_guard lk(m);
+        if (bytes.size() >= max_pending) bytes.erase(0, max_pending / 2);
+        bytes += c;
+    }
+    void reset()
+    {
+        std::lock_guard lk(m);
+        bytes.clear();
+        resets++;
+    }
+};
+
 struct memory_space {
     std::string name;
     // in bytes
@@ -192,6 +217,10 @@ public:
     // the picture of a display part, null for other components. the same
     // buffer for the component's whole life.
     virtual std::shared_ptr<pixel_buffer> pixels() const { return nullptr; }
+
+    // what a terminal part sends, null for other components. the same stream
+    // for the component's whole life. typed keys come as interact("key").
+    virtual std::shared_ptr<byte_stream> terminal() const { return nullptr; }
 
     // copies the internal state into bytes and back, for snapshots of the
     // whole simulation. false if the component doesn't support it.

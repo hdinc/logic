@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../sim/runner.h"
+#include "../ui/vt100.h"
 #include "../wave/ui/view.h"
 
 #include <Hd/Texture.h>
@@ -81,6 +82,13 @@ public:
     bool show_display(int component);
     bool has_display(int component) const;
 
+    // a terminal window for each terminal part (e.g. a uart), see
+    // simulator::terminals. they are open when the simulation starts and
+    // take the parts' output every frame, also while closed.
+    void terminals_gui();
+    bool show_terminal(int component);
+    bool has_terminal(int component) const;
+
     sim::runner run;
     model::id top;
     bool waveforms_visible = false;
@@ -109,6 +117,24 @@ private:
     };
     void display_gui(display_window& w);
     std::vector<display_window> displays;
+
+    struct terminal_window {
+        const sim::simulator::terminal* t = nullptr;
+        std::unique_ptr<ui::vt100> vt;
+        uint64_t resets = 0;
+        bool open = true;
+        // the screen's size from the window's, else 80 x 24
+        bool fit = false;
+        // the view stays at the bottom while new text comes
+        bool follow = true;
+        // a selection from the mouse, (line, column) of vt100::line_at
+        bool selecting = false;
+        std::optional<std::pair<size_t, int>> sel_from, sel_to;
+    };
+    void terminal_gui(terminal_window& w);
+    // bytes typed into a terminal, to its part
+    void send(const terminal_window& w, const std::string& bytes);
+    std::vector<terminal_window> terminals;
 
     const sim::scope* watch_scope = nullptr;
     int watch_instance = -1;

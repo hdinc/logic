@@ -231,6 +231,7 @@ void simulator::add_instance(scope& s, int index, std::unique_ptr<component> c, 
     s.components[index] = (int)instances.size();
     if (x.c->has_view()) viewers.push_back((int)instances.size());
     if (auto px = x.c->pixels()) m_displays.push_back({(int)instances.size(), x.path, std::move(px)});
+    if (auto t = x.c->terminal()) m_terminals.push_back({(int)instances.size(), x.path, std::move(t)});
     instances.push_back(std::move(x));
 }
 
@@ -438,6 +439,14 @@ bool simulator::interact(const scope& s, int instance, const std::string& action
     if (instance < 0 || instance >= (int)s.components.size() || s.components[instance] < 0) return false;
     int k = s.components[instance];
     if (instances[k].c->interact(action, value)) schedule(k);
+    settle();
+    return true;
+}
+
+bool simulator::interact(int component, const std::string& action, int64_t value)
+{
+    if (component < 0 || component >= (int)instances.size()) return false;
+    if (instances[component].c->interact(action, value)) schedule(component);
     settle();
     return true;
 }

@@ -6169,3 +6169,86 @@ RISC-V phase 3 of 7: the CLINT, PLIC and 16550 UART parts.
 
 - Phase 4: a VT100 terminal window per UART (`ui/vt100`), with keys sent as
   escape sequences.
+
+## 2026-10-29 23:50 +0300
+
+RISC-V phase 4 of 7: a VT100 terminal window for each UART.
+
+### Features implemented
+
+- **Terminal windows**: each terminal part (the `uart16550`) of a simulation
+  has a window "Terminal: <path>", open when the simulation starts, zoomable
+  like the framebuffer windows.
+  - Opened again from the canvas right-click menu (**Show terminal**) or the
+    Properties panel's **Show terminal** button.
+  - A VT100/xterm subset:
+    - cursor movement, erase, insert/delete of lines and characters;
+    - scroll regions;
+    - 16, 256 and 24-bit colors, bold, dim, underline, inverse;
+    - the alternate screen (vi, less), DECCKM, autowrap, insert mode;
+    - save/restore cursor;
+    - cursor position and device attribute reports (answered to the
+      program);
+    - UTF-8; OSC titles are skipped.
+  - Keys while the window has focus:
+    - Enter sends CR, Backspace DEL, Tab;
+    - arrows, Home/End, Insert/Delete and PageUp/PageDown, F1–F12 send
+      escape sequences (application cursor mode honoured);
+    - Ctrl+letter sends control characters, also Ctrl+[ \ ] Space;
+    - the app's shortcuts (Ctrl+S, F5, ...) don't fire while the terminal
+      has the keys.
+  - 5000 lines of history (scroll with the wheel or Shift+PageUp/PageDown;
+    the view follows new output while at the bottom).
+  - Mouse selection; Copy (Ctrl+Shift+C), Copy all, Paste (Shift+Insert,
+    Ctrl+Shift+V, the toolbar), Clear.
+  - 80 × 24, or **Fit window**.
+
+### How it works
+
+- `ui::vt100` (src/ui/vt100.{h,cpp}, logic_ui, no ImGui): a state machine
+  over bytes (ground, escape, CSI with parameters and private markers,
+  strings, charsets) into a main and an alternate screen of cells
+  (character, fg, bg, attributes). Lines scrolled off the top of the whole
+  main screen go into the history. Answers to queries are collected for
+  `take_reply()`.
+- New component hook `component::terminal()` returning a
+  `sim::byte_stream` (bytes + mutex + reset count), collected by the
+  simulator into `simulator::terminals()` like the displays. The UART appends
+  what it sends; its reset bumps the count and the window clears.
+- `sim_session::terminals_gui()` (called by the app with the displays):
+  - takes each stream's bytes every frame, also for closed windows, so the
+    screen is current when a window opens again;
+  - feeds the emulator and sends replies back;
+  - typed bytes go to the part with the new
+    `simulator::interact(component, "key", byte)` (flat component index)
+    through the runner.
+- Keys: while the window is focused it takes every keyboard key with
+  `SetKeyOwner(..., LockUntilRelease)`, so the app's shortcut checks (which
+  ask for any owner) see the keys as locked; the terminal reads them with its
+  own owner id. Characters come from `io.InputQueueCharacters`.
+- Drawing: runs of cells with one style as text on the draw list, only the
+  visible lines; the cursor is a block while focused.
+- The UART has no "screen" inspect item any more (escape sequences made the
+  Properties text unreadable); the stream replaces it.
+- New icons: copy, paste, terminal.
+
+### Testing
+
+- New ctest `vt100_test`:
+  - text, CR/LF, backspace, tab, deferred wrap and scrolling into the
+    history;
+  - UTF-8;
+  - CUP/ED/EL/DCH/ICH and cursor moves;
+  - SGR colors and attributes;
+  - the cursor position report;
+  - OSC skipping;
+  - scroll regions with reverse index and insert/delete lines;
+  - the alternate screen, DECCKM, cursor visibility, reset;
+  - resizing and copying text.
+- `riscv_test` reads the UART's stream.
+- All 12 ctest suites pass. The window is checked in the GUI with the Linux
+  example (next entry).
+
+### Next steps
+
+- Phase 5: bigger `axi_ram`, an `images` parameter, the Linux example.

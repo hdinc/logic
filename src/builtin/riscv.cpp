@@ -1136,8 +1136,8 @@ private:
 };
 
 // an ns16550a: 8 byte registers, a 16 byte receive fifo. sending takes no
-// time, received bytes come from the simulation's terminal at the baud rate
-// set by the divisor. ports: s, aclk, aresetn, irq.
+// time, the bytes go to a terminal window; typed bytes are received at the
+// baud rate set by the divisor. ports: s, aclk, aresetn, irq.
 class uart_component : public axi_regs {
 public:
     uart_component(const layout& l, uint64_t clock_hz)
@@ -1150,9 +1150,11 @@ public:
     void reset() override
     {
         axi_regs::reset();
-        screen.clear();
+        out->reset();
         typed.clear();
     }
+
+    std::shared_ptr<sim::byte_stream> terminal() const override { return out; }
 
     void eval(std::span<value> ports, sim::context& ctx) override
     {
@@ -1175,10 +1177,6 @@ public:
 
     bool interact(const std::string& action, int64_t v) override
     {
-        if (action == "clear") {
-            screen.clear();
-            return false;
-        }
         if (action != "key") return false;
         typed.push_back(uint8_t(v));
         return true;
@@ -1186,12 +1184,12 @@ public:
 
     void inspect(std::vector<sim::inspect_item>& out) const override
     {
-        out.push_back({"screen", {}, screen});
         out.push_back({"ier", sim::known(ier, 8), {}});
         out.push_back({"lcr", sim::known(lcr, 8), {}});
         out.push_back({"lsr", sim::known(lsr(), 8), {}});
         out.push_back({"divisor", sim::known(uint64_t(dlm) << 8 | dll, 16), {}});
         out.push_back({"rx fifo", sim::known(rx.size(), 5), {}});
+        out.push_back({"typed", sim::known(typed.size(), 32), {}});
     }
 
     int reg_bytes() const override { return 1; }
@@ -1248,13 +1246,7 @@ private:
             last_rx_activity = now;
             return;
         }
-        // like a terminal: backspace removes, cr is dropped
-        if (c == '\b') {
-            if (!screen.empty() && screen.back() != '\n') screen.pop_back();
-        } else if (c != '\r') {
-            screen += char(c);
-        }
-        if (screen.size() > max_screen) screen.erase(0, screen.size() - max_screen);
+        out->append(char(c));
     }
 
     void device_clear() override
@@ -1343,8 +1335,6 @@ private:
 
     void device_outputs(std::span<value> ports) override { ports[3] = level(irq()); }
 
-    static constexpr size_t max_screen = 64000;
-
     uint64_t clock_hz;
     sim::time now = 0;
     std::deque<uint8_t> rx;
@@ -1354,7 +1344,8 @@ private:
     sim::time last_rx_activity = sim::never;
     uint8_t ier = 0, lcr = 0, mcr = 0, scr = 0, fcr = 0, dll = 0, dlm = 0;
     bool fifo_on = false, overrun = false, timeout = false, thre = false;
-    std::string screen;
+    // what's sent, for the terminal window
+    std::shared_ptr<sim::byte_stream> out = std::make_shared<sim::byte_stream>();
 };
 
 // the slave parts' axi parameters, AXI4 or AXI4-Lite

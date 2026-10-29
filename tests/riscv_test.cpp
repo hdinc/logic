@@ -298,6 +298,27 @@ static std::string item_text(sim::simulator& s, int instance, const std::string&
     return {};
 }
 
+// what a uart sent so far, collected from its terminal stream
+struct uart_output {
+    std::shared_ptr<sim::byte_stream> stream;
+    std::string text;
+
+    uart_output(sim::simulator& s, int uart)
+    {
+        if (auto c = s.component_of(s.root(), uart)) stream = c->terminal();
+        CHECK(stream);
+    }
+    const std::string& get()
+    {
+        if (stream) {
+            std::lock_guard lk(stream->m);
+            text += stream->bytes;
+            stream->bytes.clear();
+        }
+        return text;
+    }
+};
+
 // the parts of the linux example's memory map: uart 0x01000000 (plic source
 // 1), clint 0x02000000, plic 0x03000000, ram 0x80000000
 struct soc_bench : bench {
@@ -347,12 +368,13 @@ static void test_devices(const std::filesystem::path& firmware)
     for (auto& p : s.problems())
         std::printf("  %s\n", p.c_str());
     CHECK(s.problems().empty());
+    uart_output out(s, b.uart);
     auto run_until_screen = [&](const std::string& text) {
         for (int k = 0; k < 200; k++) {
-            if (item_text(s, b.uart, "screen").find(text) != std::string::npos) return true;
+            if (out.get().find(text) != std::string::npos) return true;
             s.run_until(s.now() + 10 * sim::us);
         }
-        std::printf("  screen: '%s'\n", item_text(s, b.uart, "screen").c_str());
+        std::printf("  output: '%s'\n", out.get().c_str());
         return false;
     };
     CHECK(run_until_screen("hello\ntimer\nsoft\nready\n"));
@@ -364,7 +386,7 @@ static void test_devices(const std::filesystem::path& firmware)
     if (std::getenv("RISCV_TEST_DUMP"))
         for (int i : {b.uart, b.plic, b.cpu})
             for (auto& item : s.inspect(s.root(), i))
-                if (item.name != "screen") std::printf("  %s = %s\n", item.name.c_str(), item.v.width() ? sim::to_string(item.v).c_str() : item.text.c_str());
+                std::printf("  %s = %s\n", item.name.c_str(), item.v.width() ? sim::to_string(item.v).c_str() : item.text.c_str());
     value r;
     for (int k = 0; k < 10 && !(r.width() && r.to_u64()); k++) {
         s.run_until(s.now() + 10 * sim::us);

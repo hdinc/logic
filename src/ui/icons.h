@@ -47,6 +47,9 @@ inline constexpr const char* go = "\xef\x81\xa1"; // arrow-right
 inline constexpr const char* caret_right = "\xef\x83\x9a"; // caret-right
 inline constexpr const char* caret_down = "\xef\x83\x97"; // caret-down
 inline constexpr const char* unzoom = "\xef\x81\xa6"; // compress
+inline constexpr const char* copy = "\xef\x83\x85"; // copy
+inline constexpr const char* paste = "\xef\x83\xaa"; // paste
+inline constexpr const char* terminal = "\xef\x84\xa0"; // terminal
 
 }
 

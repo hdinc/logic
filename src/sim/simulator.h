@@ -143,6 +143,16 @@ public:
     // fixed once built, can be read from any thread
     const std::vector<display>& displays() const { return m_displays; }
 
+    // a component with a terminal, see component::terminal
+    struct terminal {
+        // flat component index
+        int component;
+        std::string path;
+        std::shared_ptr<byte_stream> stream;
+    };
+    // fixed once built, can be read from any thread
+    const std::vector<terminal>& terminals() const { return m_terminals; }
+
     // component::sample_view of every component that has a view, by flat
     // component index (scope::components). starts their next windows.
     std::map<int, std::vector<float>> sample_views();
@@ -153,6 +163,8 @@ public:
     // passes a user action to the instance's component and settles, false
     // if it has no component
     bool interact(const scope& s, int instance, const std::string& action, int64_t value);
+    // the same by flat component index
+    bool interact(int component, const std::string& action, int64_t value);
     // the reason a component paused the simulation, see state::paused
     const std::string& paused() const { return cur.paused; }
     // forgets the pause, so that running loops that stop at a pause go on.
@@ -290,6 +302,7 @@ private:
     // instances whose components have a view
     std::vector<int> viewers;
     std::vector<display> m_displays;
+    std::vector<terminal> m_terminals;
     std::vector<net_info> nets;
     std::vector<alias> aliases;
     std::vector<net_pull> pulls;

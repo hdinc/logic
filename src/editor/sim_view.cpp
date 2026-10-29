@@ -582,6 +582,7 @@ void sim_view::instance_menu()
     if (menu_instance >= 0 && menu_instance < (int)sc.components.size()) {
         int k = sc.components[menu_instance];
         if (k >= 0 && s->has_display(k) && Selectable("Show framebuffer")) s->show_display(k);
+        if (k >= 0 && s->has_terminal(k) && Selectable("Show terminal")) s->show_terminal(k);
     }
     if (child) {
         TextDisabled("%s", scope_label(*child).c_str());
@@ -737,6 +738,10 @@ void sim_view::instance_panel()
     if (!w.valid) {
         TextDisabled(sc.child(selected) ? "a subcircuit, double click to look inside" : "nothing to show");
         return;
+    }
+    if (int k = selected < (int)sc.components.size() ? sc.components[selected] : -1; k >= 0 && s->has_terminal(k)) {
+        if (Button((std::string(ui::icon::terminal) + " Show terminal").c_str())) s->show_terminal(k);
+        SetItemTooltip("What the part sends, and typing to it");
     }
 
     // the state the component tells
